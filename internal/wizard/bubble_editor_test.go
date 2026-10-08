@@ -1,6 +1,7 @@
 package wizard
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -317,7 +318,7 @@ func TestBubbleEditorQuitWithoutSaveCancels(t *testing.T) {
 	model := editorModel{mode: editorMenu}
 	next, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	model = next.(editorModel)
-	if model.err != errEditorCancelled {
+	if !errors.Is(model.err, errEditorCancelled) {
 		t.Fatalf("err = %v, want %v", model.err, errEditorCancelled)
 	}
 	if cmd == nil {

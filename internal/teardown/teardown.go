@@ -34,13 +34,13 @@ var orphanRx = regexp.MustCompile(`^simsquad-[a-z0-9-]+-(ios|android)-\d+$`)
 // directly.
 func MatchOrphan(name string) bool { return orphanRx.MatchString(name) }
 
-// TeardownSquad shuts down + deletes every device in the squad, drops the
+// Squad shuts down + deletes every device in the squad, drops the
 // per-squad state file, and removes the squad from the registry. Physical
 // Android devices are never deleted — only the app is uninstalled.
 //
 // A missing squad record is not an error; the registry entry (if any) is
 // still removed so a stale index doesn't accumulate.
-func TeardownSquad(name string, logger *progress.Logger) error {
+func Squad(name string, logger *progress.Logger) error {
 	rec, err := state.LoadRecord(name)
 	if err != nil {
 		return fmt.Errorf("teardown: load record %s: %w", name, err)

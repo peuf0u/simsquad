@@ -33,7 +33,7 @@ func newEquipCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			res, err := wizard.RunEquipWizard(wizard.WizardOptions{
+			res, err := wizard.RunEquipWizard(wizard.Options{
 				Force:      force,
 				Show:       show,
 				AddIOS:     addIOS,

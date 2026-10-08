@@ -68,7 +68,7 @@ func ExpectedAppPath(scheme string) string {
 func ReadBundleID(app string) (string, error) {
 	plist := filepath.Join(app, "Info.plist")
 	if _, err := os.Stat(plist); err != nil {
-		return "", fmt.Errorf("Info.plist missing under %s", app)
+		return "", fmt.Errorf("missing Info.plist under %s", app)
 	}
 	r, err := util.Run("plutil", []string{"-extract", "CFBundleIdentifier", "raw", "-o", "-", plist}, util.RunOpts{})
 	if err != nil {
@@ -324,7 +324,7 @@ func runXcodebuild(repo, project, scheme, destinationUDID, derived, logPath stri
 	if err != nil {
 		return fmt.Errorf("create build log: %w", err)
 	}
-	defer logf.Close()
+	defer func() { _ = logf.Close() }()
 
 	args := []string{
 		"build",

@@ -17,8 +17,8 @@ import (
 	"github.com/peuf0u/simsquad/internal/discover"
 )
 
-// WizardOptions configures the equip wizard.
-type WizardOptions struct {
+// Options configures the equip wizard.
+type Options struct {
 	CWD        string
 	Force      bool
 	Show       bool
@@ -26,8 +26,8 @@ type WizardOptions struct {
 	AddAndroid []contract.AndroidSpec
 }
 
-// WizardResult reports the files the wizard wrote.
-type WizardResult struct {
+// Result reports the files the wizard wrote.
+type Result struct {
 	ProjectFile string
 	LocalFile   string
 	Gitignore   string
@@ -62,13 +62,13 @@ var dottedAndroidImageRx = regexp.MustCompile(`;android-\d+\.\d+;`)
 
 // RunEquipWizard prompts for project defaults and writes simsquad.toml,
 // simsquad.local.toml, plus an idempotent .gitignore entry for the local file.
-func RunEquipWizard(opts WizardOptions) (WizardResult, error) {
+func RunEquipWizard(opts Options) (Result, error) {
 	cwd := opts.CWD
 	if cwd == "" {
 		var err error
 		cwd, err = os.Getwd()
 		if err != nil {
-			return WizardResult{}, fmt.Errorf("equip: getwd: %w", err)
+			return Result{}, fmt.Errorf("equip: getwd: %w", err)
 		}
 	}
 
@@ -79,13 +79,13 @@ func RunEquipWizard(opts WizardOptions) (WizardResult, error) {
 	}
 	state, err := loadState(configDir, hasConfig)
 	if err != nil {
-		return WizardResult{}, err
+		return Result{}, err
 	}
 	projectPath := filepath.Join(configDir, config.ProjectFile)
 	localPath := filepath.Join(configDir, config.LocalFile)
 
 	if opts.Show {
-		return WizardResult{
+		return Result{
 			ProjectFile: projectPath,
 			LocalFile:   localPath,
 			Summary:     summarize(configDir, state),
@@ -98,23 +98,23 @@ func RunEquipWizard(opts WizardOptions) (WizardResult, error) {
 	}
 
 	if !stdinIsTerminal() {
-		return WizardResult{}, errors.New("equip: interactive wizard requires stdin to be a terminal")
+		return Result{}, errors.New("equip: interactive wizard requires stdin to be a terminal")
 	}
 	if hasConfig {
 		if err := runBubbleEditor(&state, configDir); err != nil {
-			return WizardResult{}, err
+			return Result{}, err
 		}
 		return writeState(configDir, state, true)
 	}
 
 	if err := runProjectForm(&state); err != nil {
-		return WizardResult{}, err
+		return Result{}, err
 	}
 	if err := runIOSMatrix(&state); err != nil {
-		return WizardResult{}, err
+		return Result{}, err
 	}
 	if err := runAndroidMatrix(&state); err != nil {
-		return WizardResult{}, err
+		return Result{}, err
 	}
 	return writeState(configDir, state, opts.Force)
 }
@@ -151,27 +151,27 @@ func loadState(configDir string, hasConfig bool) (wizardState, error) {
 	return state, nil
 }
 
-func writeState(configDir string, state wizardState, overwrite bool) (WizardResult, error) {
+func writeState(configDir string, state wizardState, overwrite bool) (Result, error) {
 	projectPath := filepath.Join(configDir, config.ProjectFile)
 	localPath := filepath.Join(configDir, config.LocalFile)
 	if !overwrite {
 		for _, path := range []string{projectPath, localPath} {
 			if _, err := os.Stat(path); err == nil {
-				return WizardResult{}, fmt.Errorf("equip: %s exists; pass --force to overwrite", filepath.Base(path))
+				return Result{}, fmt.Errorf("equip: %s exists; pass --force to overwrite", filepath.Base(path))
 			}
 		}
 	}
 	if err := os.WriteFile(projectPath, []byte(renderProjectTOML(state)), 0o644); err != nil {
-		return WizardResult{}, fmt.Errorf("equip: write %s: %w", config.ProjectFile, err)
+		return Result{}, fmt.Errorf("equip: write %s: %w", config.ProjectFile, err)
 	}
 	if err := os.WriteFile(localPath, []byte(renderLocalTOML(state)), 0o644); err != nil {
-		return WizardResult{}, fmt.Errorf("equip: write %s: %w", config.LocalFile, err)
+		return Result{}, fmt.Errorf("equip: write %s: %w", config.LocalFile, err)
 	}
 	gitignore := filepath.Join(configDir, ".gitignore")
 	if err := ensureGitignoreEntry(gitignore, config.LocalFile); err != nil {
-		return WizardResult{}, err
+		return Result{}, err
 	}
-	return WizardResult{
+	return Result{
 		ProjectFile: projectPath,
 		LocalFile:   localPath,
 		Gitignore:   gitignore,
@@ -193,46 +193,6 @@ func defaults(cwd string) wizardState {
 		iosScheme:   iosScheme,
 		gradleTask:  ":app:assembleDebug",
 	}
-}
-
-func promptIOSSpec() (contract.IosSpec, error) {
-	var spec contract.IosSpec
-	if err := promptIOSDevice(&spec, discover.ListIosDeviceTypes()); err != nil {
-		return contract.IosSpec{}, err
-	}
-	if err := promptIOSRuntime(&spec, discover.ListIosRuntimes()); err != nil {
-		return contract.IosSpec{}, err
-	}
-	count := "1"
-	if err := huh.NewInput().
-		Title("iOS count").
-		Value(&count).
-		Validate(validatePositiveInt).
-		Run(); err != nil {
-		return contract.IosSpec{}, err
-	}
-	spec.Count, _ = strconv.Atoi(strings.TrimSpace(count))
-	return spec, nil
-}
-
-func promptAndroidEmulatorSpec() (contract.AndroidSpec, error) {
-	spec := contract.AndroidSpec{Target: contract.TargetEmulator}
-	if err := promptAndroidDevice(&spec, discover.ListAVDDeviceProfiles()); err != nil {
-		return contract.AndroidSpec{}, err
-	}
-	if err := promptAndroidImage(&spec, discover.ListInstalledAndroidImages()); err != nil {
-		return contract.AndroidSpec{}, err
-	}
-	count := "1"
-	if err := huh.NewInput().
-		Title("Android emulator count").
-		Value(&count).
-		Validate(validatePositiveInt).
-		Run(); err != nil {
-		return contract.AndroidSpec{}, err
-	}
-	spec.Count, _ = strconv.Atoi(strings.TrimSpace(count))
-	return spec, nil
 }
 
 func promptPhysicalAndroidSpec() (contract.AndroidSpec, error) {
@@ -499,55 +459,6 @@ func summarize(configDir string, state wizardState) ConfigSummary {
 		IOS:     iosSpecs,
 		Android: androidSpecs,
 	}
-}
-
-func formatConfigSummary(configDir string, state wizardState) string {
-	var b strings.Builder
-	b.WriteString("Directory: " + configDir + "\n\n")
-	b.WriteString("Project\n")
-	b.WriteString("  iOS repo: " + emptyLabel(state.iosRepo) + "\n")
-	b.WriteString("  Android repo: " + emptyLabel(state.androidRepo) + "\n")
-	b.WriteString("  iOS scheme: " + emptyLabel(state.iosScheme) + "\n")
-	b.WriteString("  Gradle task: " + emptyLabel(state.gradleTask) + "\n\n")
-	b.WriteString("Env\n")
-	if len(state.env) == 0 {
-		b.WriteString("  (no env set)\n")
-	} else {
-		envKeys := make([]string, 0, len(state.env))
-		for k := range state.env {
-			envKeys = append(envKeys, k)
-		}
-		sort.Strings(envKeys)
-		for _, k := range envKeys {
-			b.WriteString("  " + k + ` = "` + state.env[k] + "\"\n")
-		}
-	}
-	b.WriteString("\niOS matrix\n")
-	if len(state.iosSpecs) == 0 {
-		b.WriteString("  none\n")
-	}
-	for i, spec := range state.iosSpecs {
-		b.WriteString(fmt.Sprintf("  %d. %s / %s x%d\n", i+1, spec.Device, spec.Runtime, spec.Count))
-	}
-	b.WriteString("\nAndroid matrix\n")
-	if len(state.androidSpec) == 0 {
-		b.WriteString("  none\n")
-	}
-	for i, spec := range state.androidSpec {
-		if spec.Target == contract.TargetPhysical {
-			b.WriteString(fmt.Sprintf("  %d. physical x%d\n", i+1, spec.Count))
-			continue
-		}
-		b.WriteString(fmt.Sprintf("  %d. %s / %s x%d\n", i+1, spec.Device, spec.Image, spec.Count))
-	}
-	return b.String()
-}
-
-func emptyLabel(value string) string {
-	if strings.TrimSpace(value) == "" {
-		return "(unset)"
-	}
-	return value
 }
 
 func validateNonEmpty(value string) error {

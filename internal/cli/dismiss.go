@@ -45,7 +45,7 @@ func runDismiss(cmd *cobra.Command, name string) error {
 	if !ok {
 		return fmt.Errorf("dismiss: no squad named %q", name)
 	}
-	if err := teardown.TeardownSquad(name, logger); err != nil {
+	if err := teardown.Squad(name, logger); err != nil {
 		return err
 	}
 	logger.Close()

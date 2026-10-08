@@ -121,7 +121,7 @@ func Build(opts BuildOptions) (BuildResult, error) {
 	if opts.NoBuild {
 		if preExisting == "" {
 			return BuildResult{}, fmt.Errorf(
-				"--no-build set but no APK under %s. Drop --no-build or run with --force-build first.",
+				"--no-build set but no APK under %s. drop --no-build or run with --force-build first",
 				filepath.Join(opts.Repo, APKOutputRel),
 			)
 		}
@@ -179,7 +179,7 @@ func runGradle(repo, gradlew, task, logPath string) error {
 	if err != nil {
 		return fmt.Errorf("create gradle log: %w", err)
 	}
-	defer logf.Close()
+	defer func() { _ = logf.Close() }()
 
 	args := []string{task, "-x", "test", "--no-daemon", "--console=plain"}
 	r, err := util.Run(gradlew, args, util.RunOpts{Dir: repo})

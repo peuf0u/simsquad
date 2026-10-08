@@ -90,7 +90,7 @@ ios_repo = "../myapp-ios"
 android_repo = "../myapp-android"
 `)
 
-	res, err := RunEquipWizard(WizardOptions{CWD: dir, Show: true})
+	res, err := RunEquipWizard(Options{CWD: dir, Show: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ android_gradle_task = ":app:assembleDebug"
 user = "alice"
 api = "staging"
 `)
-	res, err := RunEquipWizard(WizardOptions{CWD: dir, Show: true})
+	res, err := RunEquipWizard(Options{CWD: dir, Show: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ ios_scheme = "MyApp"
 android_gradle_task = ":app:assembleDebug"
 `)
 
-	res, err := RunEquipWizard(WizardOptions{
+	res, err := RunEquipWizard(Options{
 		CWD: dir,
 		AddIOS: []contract.IosSpec{
 			{Device: "iPhone 16 Pro", Runtime: "iOS 26.1", Count: 2},

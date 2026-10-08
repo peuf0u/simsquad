@@ -202,7 +202,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 			// it instead of forcing a manual dismiss in the build-debug retry
 			// loop. rec stays nil so the create branch below rebuilds it.
 			logger.Info("deploy: reset-empty", progress.F("name", existing.Name))
-			if terr := teardown.TeardownSquad(existing.Name, logger); terr != nil {
+			if terr := teardown.Squad(existing.Name, logger); terr != nil {
 				logger.Warn("deploy: reset-empty", progress.F("error", terr.Error()))
 			}
 		}
@@ -410,7 +410,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		// Build/provision produced nothing usable and we created this squad
 		// this run — don't leave a stale empty record to block or confuse the
 		// next deploy. (Done with the logger still open so it narrates.)
-		if terr := teardown.TeardownSquad(rec.Name, logger); terr != nil {
+		if terr := teardown.Squad(rec.Name, logger); terr != nil {
 			logger.Warn("deploy: cleanup-empty", progress.F("error", terr.Error()))
 		}
 	} else if err := state.TouchSquad(rec.Name); err != nil {
@@ -445,6 +445,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 //	0 — every device is ready
 //	2 — mixed: at least one device ready and at least one error
 //	1 — none ready (empty squad, or every slot errored)
+//
 // hasReadyDevice reports whether the squad has at least one provisioned,
 // ready device — the test for "is this squad worth preserving" when its matrix
 // no longer matches the requested one.

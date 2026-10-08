@@ -1253,7 +1253,7 @@ func (m editorModel) writeSpecLine(b *strings.Builder, idx int, line string) {
 	if selected {
 		line = editorSelectedStyle.Render(line)
 	}
-	b.WriteString(fmt.Sprintf("%s%d. %s\n", cursorPrefix(selected), idx+1, line))
+	fmt.Fprintf(b, "%s%d. %s\n", cursorPrefix(selected), idx+1, line)
 }
 
 func (m editorModel) fieldsView() string {
