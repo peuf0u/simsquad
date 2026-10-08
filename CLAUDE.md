@@ -16,7 +16,7 @@ Python source first.
 ## Locked decisions (don't re-litigate without strong reason)
 
 - **Module path:** `github.com/peuf0u/simsquad`. Owner: `peuf0u/simsquad`. Brew
-  tap will be `peuf0u/homebrew-tap` (`brew install peuf0u/tap/simsquad`).
+  tap is `peuf0u/homebrew-tap` (`brew install peuf0u/tap/simsquad`).
 - **License:** MIT.
 - **Go version:** 1.26 (the plan said 1.23; bumped because a transitive Charm
   dep needs ≥1.25, and there's no reason to lag behind the toolchain's latest).

@@ -6,6 +6,10 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-08
+
+First public release. Installable via `brew install peuf0u/tap/simsquad`.
+
 ### Added
 
 - `Device.ready_at` on the persisted record (and `status --name` output),

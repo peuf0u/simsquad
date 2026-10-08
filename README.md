@@ -26,11 +26,12 @@ only (it shells out to `xcrun simctl`, `xcodebuild`, `idb`, `adb`,
 ## Install
 
 ```sh
-make build          # → ./bin/simsquad
-make install        # → $GOBIN/simsquad
+brew install peuf0u/tap/simsquad
+# or
+go install github.com/peuf0u/simsquad/cmd/simsquad@latest
 ```
 
-A Homebrew tap (`peuf0u/homebrew-tap`, installed as `brew install peuf0u/tap/simsquad`) is planned for the public release.
+From a checkout: `make build` (→ `./bin/simsquad`) or `make install` (→ `$GOBIN`).
 
 ## Quickstart
 
