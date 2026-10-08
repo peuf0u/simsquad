@@ -4,17 +4,27 @@ on:
   push:
     tags:
       - "v*.*.*"
+  # Re-run a release for an existing tag (e.g. after a runner outage)
+  # without moving the tag.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release, e.g. v0.3.0"
+        required: true
 
 permissions:
   contents: write
 
 jobs:
   goreleaser:
-    runs-on: macos-latest
+    # CGO is off, so goreleaser cross-compiles darwin from Linux; hosted
+    # macOS runners can queue past the job-acquire timeout.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
