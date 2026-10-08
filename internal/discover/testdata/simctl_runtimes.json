@@ -1,0 +1,43 @@
+{
+  "runtimes": [
+    {
+      "bundlePath": "/Library/Developer/CoreSimulator/Volumes/iOS_22F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 17.0.simruntime",
+      "buildversion": "21A325",
+      "platform": "iOS",
+      "runtimeRoot": "/Library/Developer/CoreSimulator/Volumes/iOS_22F77/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 17.0.simruntime/Contents/Resources/RuntimeRoot",
+      "identifier": "com.apple.CoreSimulator.SimRuntime.iOS-17-0",
+      "version": "17.0",
+      "isInternal": false,
+      "isAvailable": true,
+      "name": "iOS 17.0",
+      "supportedDeviceTypes": []
+    },
+    {
+      "bundlePath": "/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.4.simruntime",
+      "platform": "iOS",
+      "runtimeRoot": "/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.4.simruntime/Contents/Resources/RuntimeRoot",
+      "identifier": "com.apple.CoreSimulator.SimRuntime.iOS-26-4",
+      "version": "26.4",
+      "isInternal": false,
+      "isAvailable": true,
+      "name": "iOS 26.4",
+      "supportedDeviceTypes": []
+    },
+    {
+      "bundlePath": "/Library/Developer/CoreSimulator/Profiles/Runtimes/watchOS 11.0.simruntime",
+      "platform": "watchOS",
+      "identifier": "com.apple.CoreSimulator.SimRuntime.watchOS-11-0",
+      "version": "11.0",
+      "isAvailable": true,
+      "name": "watchOS 11.0"
+    },
+    {
+      "bundlePath": "/missing.simruntime",
+      "platform": "iOS",
+      "identifier": "com.apple.CoreSimulator.SimRuntime.iOS-18-0",
+      "version": "18.0",
+      "isAvailable": false,
+      "name": "iOS 18.0"
+    }
+  ]
+}

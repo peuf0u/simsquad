@@ -1,0 +1,92 @@
+# simsquad.toml — example configuration
+#
+# Copy to `simsquad.toml` (team defaults, commit to git) and edit. Anything
+# developer-specific — chiefly the absolute repo paths — belongs in
+# `simsquad.local.toml` instead (gitignored; same schema, deep-merged on top).
+#
+# Resolution precedence, highest to lowest:
+#   CLI flag  >  env var  >  simsquad.local.toml  >  simsquad.toml  >  default
+#
+# `simsquad equip` writes both files for you interactively.
+
+# ---------------------------------------------------------------------------
+# [project] — what to build and where.
+# ---------------------------------------------------------------------------
+[project]
+# Absolute paths to the app repos. Relative paths resolve against this config
+# file's directory; ~ is expanded. Usually set these in simsquad.local.toml so
+# each developer can point at their own checkout.
+#   ios_repo     = "~/code/myapp-ios"
+#   android_repo = "~/code/myapp-android"
+
+# xcodebuild scheme (default "App") and Gradle assemble task
+# (default ":app:assembleDebug"). Override per-invocation with
+# --ios-scheme / --gradle-task.
+ios_scheme          = "MyApp"
+android_gradle_task = ":app:assembleDevDebug"
+
+# ---------------------------------------------------------------------------
+# [env] — project-wide test context, applied to every squad at deploy time.
+# ---------------------------------------------------------------------------
+# Free-form string map. simsquad never interprets these — they're passed
+# through to consumers (qa-run, CI, your AI agent) verbatim.
+#
+# Precedence: if ANY `--env KEY=VALUE` flag is passed to `deploy`, this
+# [env] block is ignored entirely and only the CLI values apply (mirrors
+# how --ios-spec replaces the [[ios.sims]] matrix). Use `simsquad set-env`
+# to mutate a live squad's env after deploy.
+#
+# Put real secrets in simsquad.local.toml, not here.
+[env]
+api = "staging"
+# user         = "alice"      # better in simsquad.local.toml
+# feature_flag = "new_ui"
+
+# ---------------------------------------------------------------------------
+# [[ios.sims]] / [[android.sims]] — the device matrices.
+# ---------------------------------------------------------------------------
+# Both matrices act as defaults. Precedence: passing ANY spec flag to
+# `deploy` (--ios-spec or --android-spec) replaces the TOML matrix for BOTH
+# platforms — omitting a platform's flag in that case skips it for this
+# run. Examples:
+#
+#   simsquad deploy --name=foo                        # both from TOML
+#   simsquad deploy --name=foo --ios-spec 'iPhone 17:iOS 26.4:1'
+#                                                     # iOS from flag; Android skipped
+#   simsquad deploy --name=foo --android-spec '…'     # Android from flag; iOS skipped
+#   simsquad deploy --name=foo --ios-spec '…' --android-spec '…'
+#                                                     # both from flags
+#
+# [[ios.sims]] — one table per row; repeatable.
+# device  = simctl device type (human name is fine: "iPhone 17")
+# runtime = simctl runtime ("iOS 26.4"); normalised to the full identifier
+# count   = how many fresh sims of this kind to create
+[[ios.sims]]
+device  = "iPhone 17"
+runtime = "iOS 26.4"
+count   = 2
+
+[[ios.sims]]
+device  = "iPhone 16 Pro"
+runtime = "iOS 26.1"
+count   = 1
+
+# [[android.sims]] — one table per row; repeatable. (Spec-flag precedence
+# rule is described above the [[ios.sims]] block.)
+# device = AVD device profile ("pixel_7")
+# image  = avdmanager system-image id. Avoid dotted API levels like
+#          "android-36.1" — avdmanager rejects them; use e.g. android-34.
+# count  = how many emulators to create
+# target = "emulator" (default) or "physical". Physical rows claim plugged-in
+#          adb devices instead of creating emulators; device/image are ignored.
+[[android.sims]]
+device = "pixel_7"
+image  = "system-images;android-34;google_apis;arm64-v8a"
+count  = 1
+target = "emulator"
+
+# [[android.sims]]
+# device = "physical"
+# image  = "physical"
+# count  = 1
+# target = "physical"

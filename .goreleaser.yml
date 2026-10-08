@@ -1,0 +1,69 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: simsquad
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: simsquad
+    main: ./cmd/simsquad
+    binary: simsquad
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .Date }}
+
+archives:
+  - id: simsquad
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+
+brews:
+  - name: simsquad
+    # Tap publish is parked until this repo is public, peuf0u/homebrew-tap
+    # exists, and the HOMEBREW_TAP_GITHUB_TOKEN secret (a PAT with push
+    # access to the tap) is set on this repo. Flip to false to go live;
+    # users then run `brew install peuf0u/tap/simsquad`.
+    skip_upload: true
+    repository:
+      owner: peuf0u
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: https://github.com/peuf0u/simsquad
+    description: "Single-binary device-pool provisioner for parallel mobile QA."
+    license: MIT
+    install: |
+      bin.install "simsquad"
+    test: |
+      system "#{bin}/simsquad", "--version"

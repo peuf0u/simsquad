@@ -1,0 +1,26 @@
+# Binaries
+/simsquad
+/dist/
+/bin/
+
+# Go
+*.test
+*.out
+coverage.txt
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Local config — never commit per-developer paths
+simsquad.local.toml
+
+# Test artifacts
+/tmp/
+
+# Local agent context — may name internal/client paths
+CLAUDE.local.md
