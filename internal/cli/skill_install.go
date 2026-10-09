@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 
@@ -51,9 +50,7 @@ func newSkillInstallCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("skill install: %w", err)
 			}
-			enc := json.NewEncoder(cmd.OutOrStdout())
-			enc.SetIndent("", "  ")
-			return enc.Encode(res)
+			return writeJSON(cmd, res)
 		},
 	}
 	cmd.Flags().StringVar(&dir, "dir", "", "write the skills to this directory instead of .agents/skills (for other agent tools)")

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -84,14 +83,10 @@ func newRunReportCmd() *cobra.Command {
 	}
 }
 
-// marshalReport encodes the report like every simsquad JSON: 2-space
-// indent, non-ASCII and HTML characters verbatim.
+// marshalReport encodes the report like every simsquad JSON.
 func marshalReport(rep *contract.Report) ([]byte, error) {
 	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetIndent("", "  ")
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(rep); err != nil {
+	if err := encodeJSON(&buf, rep); err != nil {
 		return nil, fmt.Errorf("encode report: %w", err)
 	}
 	return buf.Bytes(), nil

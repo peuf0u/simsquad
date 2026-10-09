@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -53,9 +52,7 @@ func newSkillStatusCmd() *cobra.Command {
 			st := compareSkills(in)
 			st.Mobilecli = probeMobilecli()
 
-			enc := json.NewEncoder(cmd.OutOrStdout())
-			enc.SetIndent("", "  ")
-			if err := enc.Encode(st); err != nil {
+			if err := writeJSON(cmd, st); err != nil {
 				return err
 			}
 			if st.SkillContract > st.BinaryContract {
