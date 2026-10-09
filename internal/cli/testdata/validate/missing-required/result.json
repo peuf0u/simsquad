@@ -1,0 +1,41 @@
+{
+  "device": {
+    "platform": "ios",
+    "name": "simsquad-qa-app-ios-0",
+    "model": "iPhone 17",
+    "os_version": "iOS 26.4",
+    "bundle_id": "com.example.app"
+  },
+  "exploration": {
+    "status": "completed",
+    "actions": [
+      {
+        "index": 1,
+        "kind": "tap",
+        "target": "Log in",
+        "observation": "Magic link sent screen appears.",
+        "screenshot": "screenshots/step-001.png"
+      }
+    ],
+    "findings": [
+      {
+        "type": "bug",
+        "severity": "high",
+        "title": "Magic link does not return to app",
+        "evidence": [
+          "screenshots/step-001.png"
+        ],
+        "repro_steps": [
+          "Tap Log in",
+          "Open the magic link from Mail"
+        ],
+        "expected": "The app opens signed in.",
+        "actual": "Safari opens the web login page."
+      },
+      {
+        "type": "note",
+        "title": "Animation feels slow"
+      }
+    ]
+  }
+}

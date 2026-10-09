@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/peuf0u/simsquad/schemas/result.schema.json",
+  "title": "Worker result",
+  "description": "One device's scenario results and exploration, written by a worker into its worker dir as result.json. Path fields are relative to the worker dir. `simsquad run validate` additionally enforces the evidence rule: every bug and question finding and every blocked scenario has non-empty evidence, bugs have a severity, and every referenced screenshot exists inside the worker dir.",
+  "type": "object",
+  "required": ["device", "scenarios", "exploration"],
+  "additionalProperties": false,
+  "properties": {
+    "device": {
+      "type": "object",
+      "required": ["platform", "id"],
+      "additionalProperties": true,
+      "properties": {
+        "platform": { "enum": ["ios", "android"] },
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" },
+        "model": { "type": "string" },
+        "os_version": { "type": "string" },
+        "bundle_id": { "type": "string" }
+      }
+    },
+    "scenarios": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/scenario" }
+    },
+    "exploration": { "$ref": "#/$defs/exploration" }
+  },
+  "$defs": {
+    "scenario": {
+      "type": "object",
+      "required": ["name", "status", "observation"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["passed", "failed", "blocked"] },
+        "observation": { "type": "string" },
+        "evidence": { "$ref": "#/$defs/evidence" }
+      }
+    },
+    "exploration": {
+      "type": "object",
+      "required": ["status", "actions", "findings"],
+      "additionalProperties": false,
+      "properties": {
+        "status": { "enum": ["completed", "blocked", "error"] },
+        "blocked_reason": { "type": "string" },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["index", "kind", "observation"],
+            "additionalProperties": false,
+            "properties": {
+              "index": { "type": "integer", "minimum": 1 },
+              "kind": { "type": "string", "minLength": 1 },
+              "target": { "type": "string" },
+              "observation": { "type": "string" },
+              "screenshot": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "findings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/finding" }
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "required": ["type", "title"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "enum": ["bug", "question", "note"] },
+        "severity": { "enum": ["high", "medium", "low"] },
+        "title": { "type": "string", "minLength": 1 },
+        "evidence": { "$ref": "#/$defs/evidence" },
+        "repro_steps": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "expected": { "type": "string" },
+        "actual": { "type": "string" }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}
