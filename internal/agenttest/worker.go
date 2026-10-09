@@ -89,6 +89,8 @@ func RunWorker(ctx context.Context, w Worker) (string, error) {
 
 	select {
 	case err := <-done:
+		// The group is not killed after a normal exit: mobilecli's per-user
+		// daemon may live in it and is shared by parallel workers.
 		if err == nil {
 			return StatusOK, nil
 		}
