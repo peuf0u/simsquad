@@ -112,6 +112,7 @@ feature on a squad).
 | Command | Action | Key flags |
 |---|---|---|
 | `skill install` | Write both skills into the app repo; emit `{dir, version, contract, files}` | `--dir`, `--force` |
+| `skill status` | Check the installed skills and `mobilecli` fit this binary | `--dir` |
 
 Run it from the app repo (the enclosing git work tree is the root):
 
@@ -137,6 +138,32 @@ interface between the skills and the CLI changes. Put project knowledge in
 `qa/README.md`, not in the skill files: install refuses to overwrite a skill
 file that was edited by hand unless `--force` is given. Re-running install
 is safe.
+
+`skill status` tells you, and the simsquad-test skill's first step, whether
+the installed skills and the device driver fit this binary:
+
+```sh
+simsquad skill status > skill-status.json
+```
+
+```json
+{
+  "installed": true,
+  "skill_contract": 1,
+  "binary_contract": 1,
+  "in_sync": true,
+  "mobilecli": { "found": true, "version": "1.0.13", "minimum": "1.0.13", "meets_minimum": true }
+}
+```
+
+- Same skill contract as the binary: `in_sync: true`, exit `0`.
+- Older skills, or none installed: exit `0` with a `warning` telling you to
+  re-run `simsquad skill install`.
+- Newer skills: exit `1`, so a skill never calls commands this simsquad
+  doesn't have. Upgrade simsquad.
+- `mobilecli` is looked up on `PATH` and its version compared with the
+  minimum simsquad was tested with (1.0.13). If you installed simsquad with
+  `go install`, install that mobilecli version or newer yourself.
 
 ## Test runs
 
