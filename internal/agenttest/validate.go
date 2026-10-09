@@ -7,6 +7,7 @@ package agenttest
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -137,8 +138,8 @@ var errPrinter = message.NewPrinter(language.English)
 // schemaErrors flattens a jsonschema validation error into one message per
 // leaf cause, located by instance path.
 func schemaErrors(err error) []string {
-	verr, ok := err.(*jsonschema.ValidationError)
-	if !ok {
+	var verr *jsonschema.ValidationError
+	if !errors.As(err, &verr) {
 		return []string{err.Error()}
 	}
 	var out []string
