@@ -131,6 +131,18 @@ It writes:
   settings are kept; the entries are merged in.
 - `.codex/rules/simsquad.rules`: the same command allowances for Codex.
 - A `.simsquad/` line in `.gitignore`, added once.
+- `qa/README.md`, a scaffold for the **app notes** every worker reads
+  (navigation tricks, test accounts, known quirks), only when the file is
+  missing. Install never overwrites it, not even with `--force`.
+
+**Codex (experimental).** Deploys write outside the repo
+(`~/.cache/simsquad/`, `~/Library/Developer/`, the Android SDK, `~/.gradle`)
+and talk to the simulator services, and workers reset apps and reach
+mobilecli's on-device agent. Codex's default `workspace-write` sandbox
+blocks that, so run test runs from a session started with
+`codex --sandbox danger-full-access` (or `sandbox_mode =
+"danger-full-access"` in `~/.codex/config.toml`); the simsquad-test skill
+starts its workers with `codex exec --sandbox danger-full-access`.
 
 Every generated file starts with a do-not-edit header carrying the binary
 version and the **skill contract** number, which changes only when the
