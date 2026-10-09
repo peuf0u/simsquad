@@ -165,12 +165,19 @@ simsquad skill status > skill-status.json
   minimum simsquad was tested with (1.0.13). If you installed simsquad with
   `go install`, install that mobilecli version or newer yourself.
 
-### Test runs
+## Test runs
 
-`simsquad run` groups the commands that drive an agent test run. Like every
-other verb, each prints JSON on stdout and progress on stderr.
+The `run` group holds the deterministic steps the simsquad-test skill calls
+while verifying a feature on a squad. Like every verb, each emits JSON on
+stdout and human progress on stderr.
 
-#### `run new` — start a test run
+| Command | Action | Key flags |
+|---|---|---|
+| `run new` | Start a test run from a Gherkin feature file; emit the run descriptor | `<feature-file>`, `--fresh` |
+| `run worker` | Run one headless worker under a hard deadline; emit `{status}` | `--dir` (req), `--timeout` seconds (req), `-- <command…>` |
+| `run validate` | Check a worker's `result.json`; emit `{valid, errors}` | `<worker-dir>` |
+
+### `run new` — start a test run
 
 `simsquad run new <feature-file> [--fresh]`, run from the app repo, reads a
 Gherkin feature file and sets up a test run:
@@ -196,7 +203,31 @@ simsquad run new qa/features/login.feature > run-new.json
   `run.json` (title, source, squad, platforms, deadline, worker model and
   the expanded scenarios).
 
-#### `run validate` — check a worker's result
+### `run worker` — run a headless worker
+
+```sh
+simsquad run worker --dir .simsquad/runs/<run-id>/workers/<device-id> \
+  --timeout 720 -- claude -p "$(cat prompt.md)" > worker.json
+```
+
+`run worker` starts the command in its own process group with its input
+closed (so `codex exec` can't wait for input forever) and sends the
+command's output to `<dir>/worker.log`. It deletes any `<dir>/status` left
+by an earlier attempt before starting, so a successful retry reads as a
+success. The outcome:
+
+| Worker | `<dir>/status` | stdout `status` |
+|---|---|---|
+| exits 0 in time | not written | `ok` |
+| exits non-zero | `error: worker exited <code>` | same |
+| still running at `--timeout` | `blocked: timeout` — the whole group, children included, is killed | same |
+
+A worker killed by a signal reports the negative signal number as its
+code (e.g. `-9`). `run worker` exits `0` whenever it recorded an outcome, so
+one bad worker doesn't derail a fan-out; it exits `1` only on misuse (no
+command, bad flags, unwritable dir).
+
+### `run validate` — check a worker's result
 
 `simsquad run validate <worker-dir>` validates `<worker-dir>/result.json`
 against the embedded result schema plus the evidence rule, and prints

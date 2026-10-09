@@ -22,6 +22,7 @@ func newRunCmd() *cobra.Command {
 func runSubcommands() []*cobra.Command {
 	return []*cobra.Command{
 		newRunNewCmd(),
+		newRunWorkerCmd(),
 		newRunValidateCmd(),
 	}
 }
