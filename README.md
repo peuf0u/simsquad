@@ -97,6 +97,42 @@ used.
 `deploy` exit codes: `0` = all devices ready · `2` = mixed (some ready, some
 errored) · `1` = none ready / bad args / build failed.
 
+## Agent skills
+
+The `skill` group installs the agent skills embedded in the binary into an
+app repo, so the team commits them and every clone gets them. Two skills
+ship: **simsquad** (everyday CLI use) and **simsquad-test** (verifying a
+feature on a squad).
+
+| Command | Action | Key flags |
+|---|---|---|
+| `skill install` | Write both skills into the app repo; emit `{dir, version, contract, files}` | `--dir`, `--force` |
+
+Run it from the app repo (the enclosing git work tree is the root):
+
+```sh
+simsquad skill install > skill-install.json
+```
+
+It writes:
+
+- `.agents/skills/simsquad/` and `.agents/skills/simsquad-test/` (Codex
+  discovers them here), with `.claude/skills/<skill>` links for Claude Code.
+  `--dir <dir>` writes the skills there instead, for other agent tools, and
+  makes no `.claude/skills` links.
+- `.claude/settings.json`: allows `mobilecli`, `simsquad` and writes under
+  `.simsquad/runs/`, so headless workers never wait on a prompt. Existing
+  settings are kept; the entries are merged in.
+- `.codex/rules/simsquad.rules`: the same command allowances for Codex.
+- A `.simsquad/` line in `.gitignore`, added once.
+
+Every generated file starts with a do-not-edit header carrying the binary
+version and the **skill contract** number, which changes only when the
+interface between the skills and the CLI changes. Put project knowledge in
+`qa/README.md`, not in the skill files: install refuses to overwrite a skill
+file that was edited by hand unless `--force` is given. Re-running install
+is safe.
+
 ## Configuration
 
 simsquad reads two optional TOML files from the nearest ancestor directory
