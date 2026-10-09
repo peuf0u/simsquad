@@ -61,6 +61,10 @@ brews:
     homepage: https://github.com/peuf0u/simsquad
     description: "Single-binary device-pool provisioner for parallel mobile QA."
     license: MIT
+    # mobilecli drives devices for agent testing (ADR 0002). The tap ships
+    # its formula, pinned to a tested mobile-next release.
+    dependencies:
+      - name: peuf0u/tap/mobilecli
     install: |
       bin.install "simsquad"
     test: |
