@@ -1,0 +1,33 @@
+{
+  "name": "qa-app",
+  "created_at": "2026-06-12T16:55:00Z",
+  "builds": {
+    "ios": {"app_path": "/tmp/App.app", "bundle_id": "com.example.app", "git_sha": "abc1234"}
+  },
+  "devices": [
+    {
+      "platform": "ios",
+      "name": "simsquad-qa-app-ios-0",
+      "udid": "ABC-123",
+      "bundle_id": "com.example.app",
+      "status": "ready",
+      "ready_at": "2026-06-12T16:58:00Z",
+      "device_type": "iPhone 17",
+      "runtime": "iOS 26.4"
+    },
+    {
+      "platform": "ios",
+      "name": "simsquad-qa-app-ios-1",
+      "udid": "DEF-456",
+      "bundle_id": "com.example.app",
+      "status": "ready",
+      "ready_at": "2026-06-12T16:58:30Z",
+      "device_type": "iPhone 17 Pro",
+      "runtime": "iOS 26.4"
+    }
+  ],
+  "env": {
+    "PERSONA": "alice | admin",
+    "API_STAGE": "staging"
+  }
+}

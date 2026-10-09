@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/peuf0u/simsquad/schemas/report.schema.json",
+  "title": "Test run report",
+  "description": "One test run's results across the squad, written by `simsquad run report` as report.json. Path fields are relative to the run dir. `run report` additionally checks that summary.counts match the matrix and the device rows.",
+  "type": "object",
+  "required": ["run_id", "feature_title", "feature_file", "started_at", "finished_at", "squad", "summary", "matrix", "devices"],
+  "additionalProperties": false,
+  "properties": {
+    "run_id": { "type": "string", "minLength": 1 },
+    "feature_title": { "type": "string" },
+    "feature_file": { "type": "string" },
+    "source": { "type": "string", "description": "The feature's Source: line as written: ticket key, URL or free text." },
+    "started_at": { "type": "string", "minLength": 1 },
+    "finished_at": { "type": "string", "minLength": 1 },
+    "squad": {
+      "type": "object",
+      "required": ["name", "env"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "env": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["verdict", "counts"],
+      "additionalProperties": false,
+      "properties": {
+        "verdict": { "enum": ["passed", "failed", "infra"] },
+        "reason": { "type": "string" },
+        "counts": { "$ref": "#/$defs/counts" }
+      }
+    },
+    "matrix": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["scenario", "results"],
+        "additionalProperties": false,
+        "properties": {
+          "scenario": { "type": "string", "minLength": 1 },
+          "exploration": { "type": "boolean" },
+          "results": {
+            "type": "object",
+            "description": "Status per device id.",
+            "additionalProperties": { "enum": ["passed", "failed", "blocked", "skipped"] }
+          }
+        }
+      }
+    },
+    "devices": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["platform", "id", "worker_status", "scenarios", "findings"],
+        "additionalProperties": false,
+        "properties": {
+          "platform": { "enum": ["ios", "android"] },
+          "id": { "type": "string", "minLength": 1 },
+          "name": { "type": "string" },
+          "model": { "type": "string" },
+          "os_version": { "type": "string" },
+          "bundle_id": { "type": "string" },
+          "worker_status": {
+            "enum": ["ok", "blocked", "error"],
+            "description": "Timebox kill -> blocked; non-zero exit, missing or invalid result.json -> error."
+          },
+          "worker_reason": { "type": "string" },
+          "validation_errors": { "type": "array", "items": { "type": "string" } },
+          "scenarios": { "type": "array", "items": { "$ref": "result.schema.json#/$defs/scenario" } },
+          "findings": { "type": "array", "items": { "$ref": "result.schema.json#/$defs/finding" } },
+          "exploration": { "$ref": "result.schema.json#/$defs/exploration" }
+        }
+      }
+    },
+    "undeployed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["platform", "name", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "platform": { "type": "string" },
+          "name": { "type": "string" },
+          "id": { "type": "string" },
+          "status": { "type": "string" },
+          "error": { "type": "string" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "counts": {
+      "type": "object",
+      "required": ["devices", "workers_ok", "scenarios_passed", "scenarios_failed", "scenarios_blocked", "bugs", "questions", "notes"],
+      "additionalProperties": false,
+      "properties": {
+        "devices": { "type": "integer", "minimum": 0 },
+        "workers_ok": { "type": "integer", "minimum": 0 },
+        "scenarios_passed": { "type": "integer", "minimum": 0 },
+        "scenarios_failed": { "type": "integer", "minimum": 0 },
+        "scenarios_blocked": { "type": "integer", "minimum": 0 },
+        "bugs": { "type": "integer", "minimum": 0 },
+        "questions": { "type": "integer", "minimum": 0 },
+        "notes": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

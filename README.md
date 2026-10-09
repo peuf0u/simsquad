@@ -176,6 +176,7 @@ stdout and human progress on stderr.
 | `run new` | Start a test run from a Gherkin feature file; emit the run descriptor | `<feature-file>`, `--fresh` |
 | `run worker` | Run one headless worker under a hard deadline; emit `{status}` | `--dir` (req), `--timeout` seconds (req), `-- <command…>` |
 | `run validate` | Check a worker's `result.json`; emit `{valid, errors}` | `<worker-dir>` |
+| `run report` | Write `report.json` + `report.md`; emit `{verdict, report_json, report_md, counts}`; exit 0/1/2 | `<run-dir>` |
 
 ### `run new` — start a test run
 
@@ -232,6 +233,40 @@ command, bad flags, unwritable dir).
 `simsquad run validate <worker-dir>` validates `<worker-dir>/result.json`
 against the embedded result schema plus the evidence rule, and prints
 `{"valid", "errors"}`. It exits `1` when the result is invalid.
+
+### `run report` — verdict and reports
+
+```sh
+simsquad deploy --name qa-app > .simsquad/runs/<run-id>/deploy.json
+# … one `run worker` per ready device into workers/<device-id>/ …
+simsquad run report .simsquad/runs/<run-id> > report-summary.json
+# {"verdict", "report_json", "report_md", "counts"}
+```
+
+`run report <run-dir>` reads `run.json`, `deploy.json` (the deploy output,
+source of the device rows and env) and each ready device's
+`workers/<device-id>/` (`result.json`, `status`). It writes:
+
+- `report.json`, valid against the embedded report schema: feature title,
+  source, squad and env, a scenario × device matrix
+  (`passed` / `failed` / `blocked` / `skipped` per device), each device's
+  worker status, scenarios and findings, and the counts. Paths are relative
+  to the run dir.
+- `report.md`, pasteable into a PR: verdict, source link, env keys and
+  values as they are, the matrix, bugs by severity, per-device results.
+
+A status file overrides even a valid result; a missing or invalid
+`result.json` marks the worker `error` and is recorded with its
+validation errors. A scenario a worker didn't report counts as blocked.
+
+| Verdict | Exit | When |
+|---|---|---|
+| `passed` | `0` | every scenario passed on every device, zero bugs |
+| `failed` | `1` | a failed or blocked scenario, a bug, or a blocked/errored worker |
+| `infra` | `2` | `deploy.json` missing or unparseable, no ready device, no worker results, or every worker blocked/errored |
+
+Writing `report.json` marks the run finished, freeing its squad for the
+next `run new`.
 
 ## Configuration
 

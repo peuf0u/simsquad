@@ -1,0 +1,107 @@
+{
+  "run_id": "login-magic-link-20260612-170000",
+  "feature_title": "Login with magic link",
+  "feature_file": "qa/features/login-magic-link.feature",
+  "source": "https://github.com/acme/app/issues/456",
+  "started_at": "2026-06-12T17:00:00Z",
+  "finished_at": "FINISHED_AT",
+  "squad": {
+    "name": "qa-app",
+    "env": {
+      "API_STAGE": "staging",
+      "PERSONA": "alice | admin"
+    }
+  },
+  "summary": {
+    "verdict": "failed",
+    "counts": {
+      "devices": 2,
+      "workers_ok": 1,
+      "scenarios_passed": 2,
+      "scenarios_failed": 0,
+      "scenarios_blocked": 2,
+      "bugs": 1,
+      "questions": 0,
+      "notes": 0
+    }
+  },
+  "matrix": [
+    {
+      "scenario": "App launches",
+      "results": {
+        "ABC-123": "passed",
+        "DEF-456": "blocked"
+      }
+    },
+    {
+      "scenario": "Explore magic link login",
+      "exploration": true,
+      "results": {
+        "ABC-123": "passed",
+        "DEF-456": "blocked"
+      }
+    }
+  ],
+  "devices": [
+    {
+      "platform": "ios",
+      "id": "ABC-123",
+      "name": "simsquad-qa-app-ios-0",
+      "model": "iPhone 17",
+      "os_version": "iOS 26.4",
+      "bundle_id": "com.example.app",
+      "worker_status": "ok",
+      "scenarios": [
+        {
+          "name": "App launches",
+          "status": "passed",
+          "observation": "Home screen shows",
+          "evidence": [
+            "workers/ABC-123/screenshots/smoke-01.png"
+          ]
+        }
+      ],
+      "findings": [
+        {
+          "type": "bug",
+          "severity": "high",
+          "title": "Magic link stays in browser",
+          "evidence": [
+            "workers/ABC-123/screenshots/step-001.png"
+          ],
+          "repro_steps": [
+            "Launch",
+            "Open login",
+            "Tap link"
+          ],
+          "expected": "Returns to app",
+          "actual": "Browser stays"
+        }
+      ],
+      "exploration": {
+        "status": "completed",
+        "actions": [
+          {
+            "index": 1,
+            "kind": "tap",
+            "target": "Přihlásit se",
+            "observation": "Login opened",
+            "screenshot": "workers/ABC-123/screenshots/step-001.png"
+          }
+        ]
+      }
+    },
+    {
+      "platform": "ios",
+      "id": "DEF-456",
+      "name": "simsquad-qa-app-ios-1",
+      "model": "iPhone 17 Pro",
+      "os_version": "iOS 26.4",
+      "bundle_id": "com.example.app",
+      "worker_status": "blocked",
+      "worker_reason": "blocked: timeout",
+      "scenarios": [],
+      "findings": []
+    }
+  ]
+}
