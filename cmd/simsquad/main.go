@@ -6,6 +6,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"io"
 	"os"
 	"os/signal"
 	"runtime/debug"
@@ -31,12 +33,27 @@ func main() {
 	defer cancel()
 
 	resolveVersion()
-	opts := []fang.Option{fang.WithVersion(version)}
+	cli.Version = version
+	opts := []fang.Option{
+		fang.WithVersion(version),
+		fang.WithErrorHandler(func(w io.Writer, styles fang.Styles, err error) {
+			// An ExitError's JSON is already on stdout; there is nothing to say.
+			var exitErr *cli.ExitError
+			if errors.As(err, &exitErr) {
+				return
+			}
+			fang.DefaultErrorHandler(w, styles, err)
+		}),
+	}
 	if commit != "" {
 		opts = append(opts, fang.WithCommit(commit))
 	}
 
 	if err := fang.Execute(ctx, cli.NewRootCmd(), opts...); err != nil {
+		var exitErr *cli.ExitError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.Code)
+		}
 		// fang already prints a styled error; just propagate the exit code.
 		os.Exit(1)
 	}
