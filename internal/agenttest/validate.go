@@ -96,13 +96,15 @@ func evidenceErrors(dir string, res *contract.WorkerResult) []string {
 			errs = appendMissing(errs, dir, fmt.Sprintf("%s.evidence[%d]", loc, j), p)
 		}
 	}
-	for i, a := range res.Exploration.Actions {
-		if a.Screenshot != "" {
-			errs = appendMissing(errs, dir, fmt.Sprintf("$.exploration.actions[%d].screenshot", i), a.Screenshot)
+	if res.Exploration != nil {
+		for i, a := range res.Exploration.Actions {
+			if a.Screenshot != "" {
+				errs = appendMissing(errs, dir, fmt.Sprintf("$.exploration.actions[%d].screenshot", i), a.Screenshot)
+			}
 		}
 	}
-	for i, f := range res.Exploration.Findings {
-		loc := fmt.Sprintf("$.exploration.findings[%d]", i)
+	for i, f := range res.Findings {
+		loc := fmt.Sprintf("$.findings[%d]", i)
 		if f.Type == contract.FindingBug && f.Severity == "" {
 			errs = append(errs, loc+": bug finding requires severity")
 		}

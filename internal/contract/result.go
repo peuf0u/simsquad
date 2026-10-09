@@ -31,13 +31,15 @@ const (
 	FindingNote     = "note"
 )
 
-// WorkerResult is a worker's result.json: one device's scenario results and
-// exploration. Its shape is fixed by ResultSchema; paths in Evidence and
-// Screenshot are relative to the worker dir.
+// WorkerResult is a worker's result.json: one device's scenario results,
+// findings and exploration. Its shape is fixed by ResultSchema; paths in
+// Evidence and Screenshot are relative to the worker dir. Exploration is nil
+// unless the run has an @explore scenario.
 type WorkerResult struct {
-	Device      WorkerDevice      `json:"device"`
-	Scenarios   []WorkerScenario  `json:"scenarios"`
-	Exploration WorkerExploration `json:"exploration"`
+	Device      WorkerDevice       `json:"device"`
+	Scenarios   []WorkerScenario   `json:"scenarios"`
+	Findings    []WorkerFinding    `json:"findings"`
+	Exploration *WorkerExploration `json:"exploration,omitempty"`
 }
 
 // WorkerDevice identifies the device a result was produced on. The schema
@@ -59,13 +61,12 @@ type WorkerScenario struct {
 	Evidence    []string `json:"evidence,omitempty"`
 }
 
-// WorkerExploration is the timeboxed free-testing section and every finding
-// the worker reports.
+// WorkerExploration is the timeboxed free-testing section of an @explore
+// scenario. Findings made while exploring go in WorkerResult.Findings.
 type WorkerExploration struct {
-	Status        string          `json:"status"`
-	BlockedReason string          `json:"blocked_reason,omitempty"`
-	Actions       []WorkerAction  `json:"actions"`
-	Findings      []WorkerFinding `json:"findings"`
+	Status        string         `json:"status"`
+	BlockedReason string         `json:"blocked_reason,omitempty"`
+	Actions       []WorkerAction `json:"actions"`
 }
 
 // WorkerAction is one step the worker took while exploring.

@@ -13,7 +13,7 @@
       "status": "passed",
       "observation": "Login screen shows the email field and the Send link button.",
       "evidence": [
-        "screenshots/missing.png"
+        "screenshots/scenario-01.png"
       ]
     }
   ],
@@ -36,17 +36,5 @@
       "type": "note",
       "title": "Animation feels slow"
     }
-  ],
-  "exploration": {
-    "status": "completed",
-    "actions": [
-      {
-        "index": 1,
-        "kind": "tap",
-        "target": "Log in",
-        "observation": "Magic link sent screen appears.",
-        "screenshot": "screenshots/step-001.png"
-      }
-    ]
-  }
+  ]
 }

@@ -60,8 +60,8 @@ func TestRunValidateRejectsInvalidResults(t *testing.T) {
 			// pilot test_result_semantic_errors
 			fixture: "semantic",
 			want: []string{
-				"$.exploration.findings[0]: bug finding requires severity",
-				"$.exploration.findings[0]: bug finding requires non-empty evidence",
+				"$.findings[0]: bug finding requires severity",
+				"$.findings[0]: bug finding requires non-empty evidence",
 				"$.exploration.actions[0].screenshot: file does not exist: screenshots/ghost.png",
 			},
 		},
@@ -75,20 +75,20 @@ func TestRunValidateRejectsInvalidResults(t *testing.T) {
 		},
 		{
 			fixture: "question-without-evidence",
-			want:    []string{"$.exploration.findings[2]: question finding requires non-empty evidence"},
+			want:    []string{"$.findings[2]: question finding requires non-empty evidence"},
 		},
 		{
 			// "blocked" is a scenario status now, not a finding type.
 			fixture: "finding-type-blocked",
-			want:    []string{"$.exploration.findings[1].type"},
+			want:    []string{"$.findings[1].type"},
 		},
 		{
 			fixture: "evidence-outside-worker-dir",
-			want:    []string{"$.exploration.findings[0].evidence[0]: path is outside the worker folder"},
+			want:    []string{"$.findings[0].evidence[0]: path is outside the worker folder"},
 		},
 		{
 			fixture: "missing-required",
-			want:    []string{"scenarios", "$.device", "id"},
+			want:    []string{"scenarios", "findings", "$.device", "id"},
 		},
 		{
 			fixture: "unparseable",
@@ -124,9 +124,15 @@ func TestRunValidateReportsMissingResultAsInvalid(t *testing.T) {
 	}
 }
 
-func TestRunValidateAcceptsGoodResult(t *testing.T) {
-	got, code := runValidate(t, "testdata/validate/good")
-	if code != 0 || !got.Valid || got.Errors == nil || len(got.Errors) != 0 {
-		t.Fatalf("got %+v exit %d, want valid with errors [] and exit 0", got, code)
+// TestRunValidateAcceptsGoodResults covers a run with an @explore scenario
+// and a scripted-only run, whose result has no exploration section.
+func TestRunValidateAcceptsGoodResults(t *testing.T) {
+	for _, fixture := range []string{"good", "good-without-exploration"} {
+		t.Run(fixture, func(t *testing.T) {
+			got, code := runValidate(t, filepath.Join("testdata/validate", fixture))
+			if code != 0 || !got.Valid || got.Errors == nil || len(got.Errors) != 0 {
+				t.Fatalf("got %+v exit %d, want valid with errors [] and exit 0", got, code)
+			}
+		})
 	}
 }

@@ -2,9 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/peuf0u/simsquad/schemas/result.schema.json",
   "title": "Worker result",
-  "description": "One device's scenario results and exploration, written by a worker into its worker dir as result.json. Path fields are relative to the worker dir. `simsquad run validate` additionally enforces the evidence rule: every bug and question finding and every blocked scenario has non-empty evidence, bugs have a severity, and every referenced screenshot exists inside the worker dir.",
+  "description": "One device's scenario results, findings and, when the run has an @explore scenario, exploration; written by a worker into its worker dir as result.json. Path fields are relative to the worker dir. `simsquad run validate` additionally enforces the evidence rule: every bug and question finding and every blocked scenario has non-empty evidence, bugs have a severity, and every referenced screenshot exists inside the worker dir.",
   "type": "object",
-  "required": ["device", "scenarios", "exploration"],
+  "required": ["device", "scenarios", "findings"],
   "additionalProperties": false,
   "properties": {
     "device": {
@@ -24,6 +24,10 @@
       "type": "array",
       "items": { "$ref": "#/$defs/scenario" }
     },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    },
     "exploration": { "$ref": "#/$defs/exploration" }
   },
   "$defs": {
@@ -40,7 +44,7 @@
     },
     "exploration": {
       "type": "object",
-      "required": ["status", "actions", "findings"],
+      "required": ["status", "actions"],
       "additionalProperties": false,
       "properties": {
         "status": { "enum": ["completed", "blocked", "error"] },
@@ -59,10 +63,6 @@
               "screenshot": { "type": "string", "minLength": 1 }
             }
           }
-        },
-        "findings": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/finding" }
         }
       }
     },
