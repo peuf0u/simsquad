@@ -31,6 +31,11 @@ brew install peuf0u/tap/simsquad
 go install github.com/peuf0u/simsquad/cmd/simsquad@latest
 ```
 
+Homebrew also installs [mobilecli](https://github.com/mobile-next/mobilecli)
+(from the same tap), which agent testing uses to drive devices. With
+`go install` or a source build, install mobilecli 1.0.13 or newer yourself and
+put it on `PATH`. Node.js is not required.
+
 From a checkout: `make build` (→ `./bin/simsquad`) or `make install` (→ `$GOBIN`).
 
 ## Quickstart
