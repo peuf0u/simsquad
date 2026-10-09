@@ -1,0 +1,26 @@
+{
+  "run_id": "login-magic-link-20260612-170000",
+  "created_at": "2026-06-12T17:00:00Z",
+  "feature_title": "Login with magic link",
+  "feature_file": "qa/features/login-magic-link.feature",
+  "source": "https://github.com/acme/app/issues/456",
+  "squad_name": "qa-app",
+  "fresh": false,
+  "platforms": ["ios"],
+  "deadline_seconds": 1020,
+  "worker_model": "sonnet",
+  "scenarios": [
+    {
+      "name": "App launches",
+      "steps": ["Given the app is installed", "When I launch it", "Then the home screen shows"],
+      "tags": [],
+      "platforms": ["ios"]
+    }
+  ],
+  "exploration": {
+    "name": "Explore magic link login",
+    "charter": "Try the magic link flow from the login screen.",
+    "tags": ["@explore"],
+    "platforms": ["ios"]
+  }
+}

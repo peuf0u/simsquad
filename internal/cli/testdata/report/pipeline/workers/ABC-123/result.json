@@ -1,0 +1,40 @@
+{
+  "device": {
+    "platform": "ios",
+    "id": "ABC-123",
+    "model": "iPhone 17",
+    "os_version": "iOS 26.4",
+    "bundle_id": "com.example.app"
+  },
+  "scenarios": [
+    {
+      "name": "App launches",
+      "status": "passed",
+      "observation": "Home screen shows",
+      "evidence": ["screenshots/smoke-01.png"]
+    }
+  ],
+  "exploration": {
+    "status": "completed",
+    "actions": [
+      {
+        "index": 1,
+        "kind": "tap",
+        "target": "Přihlásit se",
+        "observation": "Login opened",
+        "screenshot": "screenshots/step-001.png"
+      }
+    ]
+  },
+  "findings": [
+    {
+      "type": "bug",
+      "severity": "high",
+      "title": "Magic link stays in browser",
+      "evidence": ["screenshots/step-001.png"],
+      "repro_steps": ["Launch", "Open login", "Tap link"],
+      "expected": "Returns to app",
+      "actual": "Browser stays"
+    }
+  ]
+}

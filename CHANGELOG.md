@@ -22,6 +22,11 @@ All notable changes are recorded here. The format follows
 - `simsquad run validate <worker-dir>` checks `result.json` against the
   embedded result schema and the evidence rule; emits `{valid, errors}` and
   exits `1` when invalid.
+- `simsquad run report <run-dir>` aggregates the workers' results into
+  `report.json` (embedded report schema: feature title, source, env,
+  scenario × device matrix, findings) and `report.md`, emits
+  `{verdict, report_json, report_md, counts}` and exits `0` passed,
+  `1` failed, `2` infra. Writing `report.json` marks the run finished.
 - `[agent]` table in `simsquad.toml`: `worker_model`, `test_squad`,
   `dev_squad`. `simsquad equip` keeps it when rewriting the config.
 
