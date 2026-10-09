@@ -138,6 +138,36 @@ interface between the skills and the CLI changes. Put project knowledge in
 file that was edited by hand unless `--force` is given. Re-running install
 is safe.
 
+## Test runs
+
+The `run` group holds the deterministic steps the simsquad-test skill calls
+while verifying a feature on a squad. Like every verb, each emits JSON on
+stdout and human progress on stderr.
+
+| Command | Action | Key flags |
+|---|---|---|
+| `run worker` | Run one headless worker under a hard deadline; emit `{status}` | `--dir` (req), `--timeout` seconds (req), `-- <command…>` |
+
+```sh
+simsquad run worker --dir .simsquad/runs/<run-id>/workers/<device-id> \
+  --timeout 720 -- claude -p "$(cat prompt.md)" > worker.json
+```
+
+`run worker` starts the command in its own process group with its input
+closed (so `codex exec` can't wait for input forever) and sends the
+command's output to `<dir>/worker.log`. The outcome:
+
+| Worker | `<dir>/status` | stdout `status` |
+|---|---|---|
+| exits 0 in time | not written | `ok` |
+| exits non-zero | `error: worker exited <code>` | same |
+| still running at `--timeout` | `blocked: timeout` — the whole group, children included, is killed | same |
+
+A worker killed by a signal reports the negative signal number as its
+code (e.g. `-9`). `run worker` exits `0` whenever it recorded an outcome, so
+one bad worker doesn't derail a fan-out; it exits `1` only on misuse (no
+command, bad flags, unwritable dir).
+
 ## Configuration
 
 simsquad reads two optional TOML files from the nearest ancestor directory
