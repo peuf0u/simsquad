@@ -105,6 +105,32 @@ func TestTestSkillWalksTheTestRunProcedureInOrder(t *testing.T) {
 	}
 }
 
+// TestTestSkillWorkerCommandCarriesItsPermissions guards the two ways dry run
+// 002 saw a Claude worker fail to start: `claude -p` ignores
+// .claude/settings.json in a folder nobody has trusted interactively, so the
+// worker command must pass every rule itself; and Claude Code can't check a
+// `$(…)` substitution before running it, so it asks for approval.
+func TestTestSkillWorkerCommandCarriesItsPermissions(t *testing.T) {
+	skill, _ := installedTestSkill(t)
+	start := strings.Index(skill, "-- claude -p")
+	if start < 0 {
+		t.Fatal("skill has no `-- claude -p` worker command")
+	}
+	end := strings.Index(skill[start:], "```")
+	if end < 0 {
+		t.Fatal("worker command block is not closed")
+	}
+	cmd := skill[start : start+end]
+	for _, rule := range skills.ClaudeAllow {
+		if !strings.Contains(cmd, `"`+rule+`"`) {
+			t.Errorf("Claude worker command does not pass --allowedTools %q", rule)
+		}
+	}
+	if strings.Contains(skill, "$(") {
+		t.Error("skill uses a $(…) command substitution")
+	}
+}
+
 // redirectRe matches a shell output redirection (`>`, `>>`, `2>`, `&>`).
 var redirectRe = regexp.MustCompile(`(?:^|\s)[0-9&]?>`)
 

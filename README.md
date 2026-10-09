@@ -229,7 +229,8 @@ simsquad run new qa/features/login.feature > run-new.json
 
 ```sh
 simsquad run worker --dir .simsquad/runs/<run-id>/workers/<device-id> \
-  --timeout 720 -- claude -p "$(cat prompt.md)" > worker.json
+  --timeout 720 --out worker.json \
+  -- claude -p "Read prompt.md and follow it." --allowedTools "Bash(mobilecli:*)"
 ```
 
 `run worker` starts the command in its own process group with its input

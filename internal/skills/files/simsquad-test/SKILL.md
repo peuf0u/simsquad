@@ -175,15 +175,22 @@ One worker per device, all at once. For each device, with `DEVICE_ID` its
    ```sh
    simsquad run worker --dir "$RUN_DIR/workers/$DEVICE_ID" --timeout "$DEADLINE" \
      --out "$RUN_DIR/workers/$DEVICE_ID/worker.json" \
-     -- claude -p "$(cat "$RUN_DIR/workers/$DEVICE_ID/prompt.md")" --model "$WORKER_MODEL"
+     -- claude -p "Read $RUN_DIR/workers/$DEVICE_ID/prompt.md and follow it." \
+     --allowedTools "Bash(mobilecli:*)" "Bash(simsquad reset:*)" "Bash(simsquad run validate:*)" \
+     "Edit(.simsquad/runs/**)" "Write(.simsquad/runs/**)" \
+     --model "$WORKER_MODEL"
    ```
+
+   Pass the `--allowedTools` list exactly as shown: a headless worker
+   can't answer a permission prompt, and `claude -p` ignores the project's
+   `.claude/settings.json` in a folder nobody has trusted interactively.
 
    In Codex:
 
    ```sh
    simsquad run worker --dir "$RUN_DIR/workers/$DEVICE_ID" --timeout "$DEADLINE" \
      --out "$RUN_DIR/workers/$DEVICE_ID/worker.json" \
-     -- codex exec --sandbox danger-full-access --model "$WORKER_MODEL" "$(cat "$RUN_DIR/workers/$DEVICE_ID/prompt.md")"
+     -- codex exec --sandbox danger-full-access --model "$WORKER_MODEL" "Read $RUN_DIR/workers/$DEVICE_ID/prompt.md and follow it."
    ```
 
    When `worker_model` is empty, leave out `--model` and its value.
