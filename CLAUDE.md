@@ -204,3 +204,17 @@ These are recorded in detail in the plan; the highlights:
   `_spec_matches` (Day 4) and runtime-identifier resolution (Day 2).
 - Comments explain *why*, not *what*. Code that names a landmine cites the
   Python source line and the failure mode it prevents.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues on `peuf0u/simsquad`, managed with the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default triage labels (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`), plus `spec` for spec issues, which get only the `spec` label and never a triage label. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: root `GLOSSARY.md` plus `docs/adr/`. See `docs/agents/domain.md`.
