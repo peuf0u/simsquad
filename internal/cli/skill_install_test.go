@@ -28,13 +28,14 @@ func newAppRepo(t *testing.T) string {
 	return dir
 }
 
-// runSkill executes `simsquad skill <args>` through the real root command,
-// stamped with a fixed binary version the way fang stamps it (the commit
-// is folded into root.Version).
+// runSkill executes `simsquad skill <args>` through the real root command
+// with a fixed binary version.
 func runSkill(t *testing.T, args ...string) (string, error) {
 	t.Helper()
+	prev := Version
+	Version = "9.9.9"
+	t.Cleanup(func() { Version = prev })
 	root := NewRootCmd()
-	root.Version = "9.9.9 (abc1234)"
 	out := &bytes.Buffer{}
 	root.SetOut(out)
 	root.SetErr(&bytes.Buffer{})

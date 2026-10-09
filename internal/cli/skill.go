@@ -43,13 +43,3 @@ func repoRoot() string {
 	wd, _ := os.Getwd()
 	return wd
 }
-
-// binaryVersion is the version fang stamps on the root command, or "dev"
-// for builds and tests that set none. fang folds the commit in as
-// "v0.4.0 (abc1234)"; only the version itself goes into skill headers.
-func binaryVersion(cmd *cobra.Command) string {
-	if f := strings.Fields(cmd.Root().Version); len(f) > 0 {
-		return f[0]
-	}
-	return "dev"
-}

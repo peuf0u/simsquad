@@ -45,7 +45,7 @@ func newSkillInstallCmd() *cobra.Command {
 				Root:    repoRoot(),
 				Dir:     dir,
 				Force:   force,
-				Version: binaryVersion(cmd),
+				Version: Version,
 			})
 			if err != nil {
 				return fmt.Errorf("skill install: %w", err)
