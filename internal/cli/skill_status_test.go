@@ -40,20 +40,25 @@ func withMobilecli(t *testing.T, version string) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/usr/bin:/bin")
 }
 
-// setInstalledContract rewrites the contract number in each installed
-// skill's header, as if a different simsquad had installed them.
+// setInstalledContract rewrites the contract number in the header of every
+// installed skill file, as if a different simsquad had installed them.
 func setInstalledContract(t *testing.T, repo string, n int) {
 	t.Helper()
 	for _, name := range skills.Names {
-		p := filepath.Join(repo, skills.DefaultDir, name, "SKILL.md")
-		b := readFile(t, p)
-		from := "skill contract " + strconv.Itoa(skills.Contract) + "."
-		if !strings.Contains(b, from) {
-			t.Fatalf("%s: no %q in header", p, from)
+		paths, err := filepath.Glob(filepath.Join(repo, skills.DefaultDir, name, "*.md"))
+		if err != nil || len(paths) == 0 {
+			t.Fatalf("%s: no skill files (%v)", name, err)
 		}
-		b = strings.Replace(b, from, "skill contract "+strconv.Itoa(n)+".", 1)
-		if err := os.WriteFile(p, []byte(b), 0o644); err != nil {
-			t.Fatal(err)
+		for _, p := range paths {
+			b := readFile(t, p)
+			from := "skill contract " + strconv.Itoa(skills.Contract) + "."
+			if !strings.Contains(b, from) {
+				t.Fatalf("%s: no %q in header", p, from)
+			}
+			b = strings.Replace(b, from, "skill contract "+strconv.Itoa(n)+".", 1)
+			if err := os.WriteFile(p, []byte(b), 0o644); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 }

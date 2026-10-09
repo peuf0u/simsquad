@@ -18,9 +18,11 @@ type Installed struct {
 	// skills disagree (a partial upgrade), it is the highest one found, so
 	// a caller comparing it with Contract errs towards refusing.
 	Contract int
-	// Missing lists skills in Names with no SKILL.md, or with no header.
+	// Missing lists the generated files ("<skill>/<path>") of every skill in
+	// Names that are absent or have no header.
 	Missing []string
-	// Edited is true when any skill file was changed by hand since install.
+	// Edited is true when any generated skill file was changed by hand
+	// since install.
 	Edited bool
 }
 
@@ -35,26 +37,33 @@ func ReadInstalled(root, dir string) (*Installed, error) {
 	res := &Installed{Dir: in.dir}
 	found := false
 	for _, name := range Names {
-		b, err := os.ReadFile(filepath.Join(in.dir, name, "SKILL.md"))
-		if errors.Is(err, os.ErrNotExist) {
-			res.Missing = append(res.Missing, name)
-			continue
-		}
+		files, err := skillFiles(name)
 		if err != nil {
-			return nil, fmt.Errorf("skills: read %s: %w", name, err)
+			return nil, fmt.Errorf("skills: list %s: %w", name, err)
 		}
-		h, body, ok := parse(string(b))
-		if !ok {
-			res.Missing = append(res.Missing, name)
-			res.Edited = true
-			continue
-		}
-		found = true
-		if checksum(body) != h.Sum {
-			res.Edited = true
-		}
-		if h.Contract >= res.Contract {
-			res.Contract, res.Version = h.Contract, h.Version
+		for _, f := range files {
+			rel := name + "/" + f
+			b, err := os.ReadFile(filepath.Join(in.dir, name, filepath.FromSlash(f)))
+			if errors.Is(err, os.ErrNotExist) {
+				res.Missing = append(res.Missing, rel)
+				continue
+			}
+			if err != nil {
+				return nil, fmt.Errorf("skills: read %s: %w", rel, err)
+			}
+			h, body, ok := parse(string(b))
+			if !ok {
+				res.Missing = append(res.Missing, rel)
+				res.Edited = true
+				continue
+			}
+			found = true
+			if checksum(body) != h.Sum {
+				res.Edited = true
+			}
+			if h.Contract >= res.Contract {
+				res.Contract, res.Version = h.Contract, h.Version
+			}
 		}
 	}
 	if !found {
