@@ -111,8 +111,8 @@ type deployOpts struct {
 // runDeploy is the deploy command entry point: build, provision, persist,
 // emit. Per-slot failures populate Device.ErrorMessage; the function only
 // returns an error when inputs are unusable. Exit code is derived from the
-// final device set via exitCodeFromDevices and applied through os.Exit when
-// non-zero so callers redirecting stdout get the JSON contract regardless.
+// final device set via exitCodeFromDevices and returned as an ExitError when
+// non-zero, after the JSON contract is on stdout (and in the --out file).
 func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 	if opts.name == "" {
 		return errors.New("deploy: --name is required")
@@ -423,19 +423,11 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 	if err := writeJSON(cmd, pub); err != nil {
 		return err
 	}
-	// All defers up to this point have a chance to fire because os.Exit below
-	// is conditional. SilenceUsage avoids cobra reprinting --help on the
-	// non-zero exit; we already printed the JSON contract.
-	cmd.SilenceErrors = true
-	cmd.SilenceUsage = true
+	// The JSON contract (and its --out copy) is already written; main turns
+	// the ExitError into the process status without an error banner, and
+	// the deferred destination-sim cleanup runs on the way out.
 	if code != 0 {
-		// Run the deferred destination-sim cleanup before exiting.
-		if iosDestCreated && iosDestUDID != "" {
-			_ = ios.DeleteDestinationSim(iosDestUDID)
-			iosDestCreated = false
-		}
-		logger.Close()
-		os.Exit(code)
+		return &ExitError{Code: code}
 	}
 	return nil
 }

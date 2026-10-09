@@ -20,7 +20,7 @@ import (
 // the interface between the skills and the CLI changes (commands, flags or
 // JSON fields the skills rely on). A patch release that leaves that
 // interface alone keeps the number, so committed skills keep working.
-const Contract = 1
+const Contract = 2
 
 // DefaultDir is where Install writes the skills, relative to the app repo
 // root. Codex discovers skills there; Claude Code reaches them through the

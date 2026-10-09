@@ -34,6 +34,7 @@ func NewRootCmd() *cobra.Command {
 	// off-brand. Users who want completions can still generate them via the
 	// cobra API; we just don't advertise it as a top-level verb.
 	root.CompletionOptions.DisableDefaultCmd = true
+	addOutFlag(root)
 
 	root.AddCommand(
 		newDeployCmd(),
