@@ -273,8 +273,8 @@ validation errors. A scenario a worker didn't report counts as blocked.
 
 | Verdict | Exit | When |
 |---|---|---|
-| `passed` | `0` | every scenario passed on every device, zero bugs |
-| `failed` | `1` | a failed or blocked scenario, a bug, or a blocked/errored worker |
+| `passed` | `0` | every scenario passed on every device, zero bugs, every device deployed |
+| `failed` | `1` | a failed or blocked scenario, a bug, a blocked/errored worker, or a device deploy couldn't get ready |
 | `infra` | `2` | `deploy.json` missing or unparseable, no ready device, no worker results, or every worker blocked/errored |
 
 Writing `report.json` marks the run finished, freeing its squad for the

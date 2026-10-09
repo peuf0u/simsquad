@@ -388,7 +388,8 @@ func TestRunReportVerdicts(t *testing.T) {
 }
 
 // TestRunReportListsUndeployedDevices: a device deploy couldn't get ready
-// had no worker; it is listed, not counted, and the ready devices decide.
+// had no worker; it is listed, not counted, and it stops a passed verdict —
+// the run never tested the app on it.
 func TestRunReportListsUndeployedDevices(t *testing.T) {
 	dir := copyRunFixture(t, "pipeline")
 	p := filepath.Join(dir, "deploy.json")
@@ -401,8 +402,11 @@ func TestRunReportListsUndeployedDevices(t *testing.T) {
 	writeWorkerFile(t, dir, "ABC-123", "result.json", passingResult("ABC-123"))
 
 	got, code := runReport(t, dir)
-	if got.Verdict != "passed" || code != 0 || got.Counts["devices"] != 1 {
-		t.Fatalf("got verdict %q exit %d counts %v, want passed / 0 with 1 device", got.Verdict, code, got.Counts)
+	if got.Verdict != "failed" || code != 1 || got.Counts["devices"] != 1 {
+		t.Fatalf("got verdict %q exit %d counts %v, want failed / 1 with 1 device", got.Verdict, code, got.Counts)
+	}
+	if rep := loadReport(t, got.ReportJSON); !strings.Contains(rep.Summary.Reason, "simsquad-qa-app-ios-1") {
+		t.Errorf("reason = %q, want it to name the undeployed device", rep.Summary.Reason)
 	}
 	if md := readFile(t, got.ReportMD); !strings.Contains(md, "simctl install failed") {
 		t.Errorf("report.md doesn't list the undeployed device:\n%s", md)

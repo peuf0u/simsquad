@@ -54,7 +54,11 @@ func RenderReport(rep *contract.Report) string {
 	line("Run `%s` · squad `%s` · %s → %s", rep.RunID, rep.Squad.Name, rep.StartedAt, rep.FinishedAt)
 	line("")
 	if rep.Summary.Reason != "" {
-		line("**Infra:** %s", rep.Summary.Reason)
+		label := "Reason"
+		if rep.Summary.Verdict == contract.VerdictInfra {
+			label = "Infra"
+		}
+		line("**%s:** %s", label, rep.Summary.Reason)
 		line("")
 	}
 	line("**%d device(s)** · scenarios %d passed / %d failed / %d blocked · **%d bug(s)** · %d question(s) · %d note(s)",

@@ -223,7 +223,8 @@ The project squad stays up, so the next run skips the cold boot.
 
 Read `report.json` and tell the user:
 
-- The verdict, and for infra the `summary.reason`.
+- The verdict, and its `summary.reason` when there is one (infra, or
+  devices deploy couldn't get ready).
 - The counts: scenarios passed, failed and blocked; bugs, questions, notes.
 - The top findings: bugs by severity (high first), then questions, each
   with its title, device and evidence path.

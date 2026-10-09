@@ -280,10 +280,11 @@ func countReport(rep *contract.Report) contract.ReportCounts {
 
 // decideVerdict applies the spec's rules. infra: deploy failed, no ready
 // device, or no worker left a usable result. passed: every scenario passed
-// on every device, zero bugs and every worker ok. Anything else is failed —
-// including blocked scenarios and partial worker loss, which pilot also
-// counted as failed: neither is "every scenario passed", and neither is an
-// infrastructure-only outcome while some worker did test the app.
+// on every device, zero bugs, every worker ok and every device of the run's
+// platforms deployed. Anything else is failed — including blocked
+// scenarios, partial worker loss and undeployed devices: none is "every
+// scenario passed", and none is an infrastructure-only outcome while some
+// worker did test the app.
 func decideVerdict(rep *contract.Report, deployErr error, workersRan bool) (string, string) {
 	c := rep.Summary.Counts
 	switch {
@@ -296,10 +297,25 @@ func decideVerdict(rep *contract.Report, deployErr error, workersRan bool) (stri
 	case c.WorkersOK == 0:
 		return contract.VerdictInfra, "every worker was blocked or errored"
 	case c.ScenariosFailed > 0 || c.ScenariosBlocked > 0 || c.Bugs > 0 || c.WorkersOK < c.Devices:
-		return contract.VerdictFailed, ""
+		return contract.VerdictFailed, undeployedReason(rep.Undeployed)
+	case len(rep.Undeployed) > 0:
+		return contract.VerdictFailed, undeployedReason(rep.Undeployed)
 	default:
 		return contract.VerdictPassed, ""
 	}
+}
+
+// undeployedReason names the devices deploy couldn't get ready, or is ""
+// when there are none.
+func undeployedReason(undeployed []contract.ReportUndeployed) string {
+	if len(undeployed) == 0 {
+		return ""
+	}
+	names := make([]string, len(undeployed))
+	for i, u := range undeployed {
+		names[i] = fmt.Sprintf("%s (%s)", u.Name, u.Status)
+	}
+	return "not deployed: " + strings.Join(names, ", ")
 }
 
 // workersRan reports whether any worker dir exists in the run.
