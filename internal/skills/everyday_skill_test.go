@@ -61,18 +61,20 @@ func TestEverydaySkillCoversDevSquadCommands(t *testing.T) {
 	}
 }
 
-func TestEverydaySkillRedirectsStdoutOnly(t *testing.T) {
+func TestEverydaySkillWritesJSONWithOutNotRedirection(t *testing.T) {
 	skill := installedEverydaySkill(t)
-	if strings.Contains(skill, "2>&1") {
-		t.Error("skill contains 2>&1")
+	for _, line := range shellLines(skill) {
+		if redirectRe.MatchString(line) {
+			t.Errorf("skill redirects output: %s", line)
+		}
 	}
 	inv := skillInvocations(skill)
 	if len(inv) == 0 {
 		t.Fatal("skill has no command examples")
 	}
 	for _, line := range inv {
-		if !strings.Contains(line, " > ") {
-			t.Errorf("example does not redirect stdout: %s", line)
+		if !strings.Contains(line, " --out ") {
+			t.Errorf("example does not write its JSON with --out: %s", line)
 		}
 	}
 }
@@ -101,7 +103,7 @@ func TestEverydaySkillUsesOnlyRealFlags(t *testing.T) {
 			continue
 		}
 		for _, f := range flagRe.FindAllStringSubmatch(m[2], -1) {
-			if cmd.Flags().Lookup(f[1]) == nil {
+			if cmd.Flags().Lookup(f[1]) == nil && cmd.InheritedFlags().Lookup(f[1]) == nil {
 				t.Errorf("`simsquad %s` has no --%s flag: %s", m[1], f[1], line)
 			}
 		}

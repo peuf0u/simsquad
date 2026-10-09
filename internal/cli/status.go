@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -59,9 +60,17 @@ func runStatusOne(cmd *cobra.Command, name string) error {
 }
 
 // writeJSON encodes v as 2-space indented JSON with a trailing newline to the
-// command's stdout. Used by every verb that produces a JSON contract.
+// command's stdout, and tees the same bytes to the --out file when set. Used
+// by every verb that produces a JSON contract.
 func writeJSON(cmd *cobra.Command, v any) error {
-	return encodeJSON(cmd.OutOrStdout(), v)
+	var buf bytes.Buffer
+	if err := encodeJSON(&buf, v); err != nil {
+		return err
+	}
+	if _, err := cmd.OutOrStdout().Write(buf.Bytes()); err != nil {
+		return err
+	}
+	return writeOutFile(cmd, buf.Bytes())
 }
 
 // encodeJSON writes v as every simsquad JSON is written: 2-space indent,

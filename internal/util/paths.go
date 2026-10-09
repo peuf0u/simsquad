@@ -6,6 +6,8 @@
 package util
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 )
@@ -51,18 +53,30 @@ func EnsureCacheRoot() error {
 // imports a clearly-named helper instead of hardcoding the layout.
 func BuildCacheRoot() string { return CacheRoot() }
 
-// IOSDerivedDataDir is the stable --derivedDataPath xcodebuild writes into.
-// Incremental builds are fast when nothing changed because we keep the same
-// derived tree across runs.
-func IOSDerivedDataDir() string {
-	return filepath.Join(BuildCacheRoot(), "derived", "ios")
+// IOSDerivedDataDir is the stable --derivedDataPath xcodebuild writes into
+// for one app repo: derived/ios/<repo-basename>-<short hash of abs path>.
+// Incremental builds stay fast because the same repo always maps to the same
+// tree. It is per repo because a shared tree let one project's products
+// shadow another's at link time: a source-built Lottie.swiftmodule left by one
+// app made a second app (linking the binary Lottie.framework) fail with
+// undefined Lottie symbols (issue #15). The hash keeps two repos with the same
+// basename apart; the basename keeps the folder recognisable.
+func IOSDerivedDataDir(repo string) string {
+	abs, err := filepath.Abs(repo)
+	if err != nil {
+		abs = filepath.Clean(repo)
+	}
+	sum := sha256.Sum256([]byte(abs))
+	key := filepath.Base(abs) + "-" + hex.EncodeToString(sum[:])[:8]
+	return filepath.Join(BuildCacheRoot(), "derived", "ios", key)
 }
 
-// IOSBuildLogPath is the file xcodebuild's stdout/stderr is captured into when
-// the build fails. Always written to the same location so users have a stable
-// "Full log: …" pointer.
-func IOSBuildLogPath() string {
-	return filepath.Join(BuildCacheRoot(), "derived", "last-build-ios.log")
+// IOSBuildLogPath is the file xcodebuild's stdout/stderr is captured into for
+// a repo's build. It lives in that repo's derived tree so parallel builds of
+// different repos can't overwrite each other's log, while each repo still has
+// a stable "Full log: …" pointer.
+func IOSBuildLogPath(repo string) string {
+	return filepath.Join(IOSDerivedDataDir(repo), "last-build-ios.log")
 }
 
 // AndroidBuildLogPath mirrors IOSBuildLogPath for gradle.

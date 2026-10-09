@@ -87,15 +87,15 @@ func TestSkillInstallWritesBothSkillsAndLinksClaude(t *testing.T) {
 	if got.Version != "9.9.9" {
 		t.Errorf("version = %q, want 9.9.9", got.Version)
 	}
-	if got.Contract != 1 {
-		t.Errorf("contract = %d, want 1", got.Contract)
+	if got.Contract != 2 {
+		t.Errorf("contract = %d, want 2", got.Contract)
 	}
 	for _, skill := range []string{"simsquad", "simsquad-test"} {
 		body := readFile(t, filepath.Join(wantDir, skill, "SKILL.md"))
 		if !strings.HasPrefix(body, "---\nname: "+skill+"\n") {
 			t.Errorf("%s SKILL.md lacks frontmatter naming it:\n%s", skill, body)
 		}
-		for _, want := range []string{"simsquad 9.9.9", "skill contract 1", "qa/README.md"} {
+		for _, want := range []string{"simsquad 9.9.9", "skill contract 2", "qa/README.md"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s SKILL.md header lacks %q", skill, want)
 			}

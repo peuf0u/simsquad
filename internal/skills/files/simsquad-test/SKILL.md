@@ -12,8 +12,10 @@ infra). Workers drive the devices; you handle setup, bookkeeping and the
 reply, and keep your hands off the devices while workers run.
 
 Every simsquad command answers with JSON on stdout and progress on stderr.
-Redirect stdout only (`> file.json`) into the run folder, read the JSON
-from that file, and leave stderr on the terminal for the user.
+`--out <file>` also writes that JSON to a file (creating its folder); read
+the JSON from the file, and leave stderr on the terminal for the user. Run
+the commands exactly as shown, so each one stays a plain simsquad call the
+user has already allowed.
 
 Run everything from the app repo root (the folder holding `simsquad.toml`).
 The examples use shell variables for the values you read from earlier
@@ -23,8 +25,7 @@ commands.
 ## 1. Check the setup
 
 ```sh
-mkdir -p .simsquad
-simsquad skill status > .simsquad/skill-status.json
+simsquad skill status --out .simsquad/skill-status.json
 ```
 
 - Exit `1`: these skills are newer than the installed simsquad. Stop and
@@ -95,15 +96,16 @@ Then decide whether to wait:
 ## 4. Start the run
 
 ```sh
-simsquad run new .simsquad/drafts/<slug>.feature > .simsquad/run-new.json
+simsquad run new .simsquad/drafts/<slug>.feature --out .simsquad/run-new.json
 ```
 
 Add `--fresh` when the user asks for an isolated squad. A saved feature
 file runs from its `qa/features/` path. The output gives `run_id`,
 `run_dir` (absolute), `squad_name`, `fresh`, `platforms`,
 `deadline_seconds` and `worker_model`; keep them for the next steps. The
-run folder holds a copy of the feature file (`feature.feature`), so delete
-the draft now: a one-off lives only in its run folder.
+run folder holds a copy of the feature file (`feature.feature`). Leave the
+draft where it is: `.simsquad/` is gitignored, and the next draft with the
+same slug overwrites it.
 
 When `run new` refuses, fix the cause and run it again:
 
@@ -118,7 +120,7 @@ When `run new` refuses, fix the cause and run it again:
 ## 5. Deploy
 
 ```sh
-simsquad deploy --name "$SQUAD" --force-build > "$RUN_DIR/deploy.json"
+simsquad deploy --name "$SQUAD" --force-build --out "$RUN_DIR/deploy.json"
 ```
 
 This rebuilds the app from the working tree and installs it on the
@@ -127,13 +129,16 @@ only source of devices and env, so pass no other flags. It can take
 minutes.
 
 - Exit `0`: every device is ready. Exit `2`: some are; carry on with them.
-- Exit `1`: nothing is ready or the build failed. Go to step 9; the
-  report records an infra verdict.
+- Exit `1`: nothing is ready or the build failed. Go straight to step 9;
+  the report records an infra verdict. Diagnosing the failure is the
+  user's call: in your reply (step 11), quote `builds.ios.error` or
+  `builds.android.error` from `deploy.json`, which ends with the full
+  build log path, and leave the log unread.
 
 ## 6. List the devices
 
 ```sh
-simsquad devices --name "$SQUAD" --ready > "$RUN_DIR/devices.json"
+simsquad devices --name "$SQUAD" --ready --out "$RUN_DIR/devices.json"
 ```
 
 Keep the rows whose `platform` is in the run's `platforms`. Each row has
@@ -169,16 +174,23 @@ One worker per device, all at once. For each device, with `DEVICE_ID` its
 
    ```sh
    simsquad run worker --dir "$RUN_DIR/workers/$DEVICE_ID" --timeout "$DEADLINE" \
-     -- claude -p "$(cat "$RUN_DIR/workers/$DEVICE_ID/prompt.md")" --model "$WORKER_MODEL" \
-     > "$RUN_DIR/workers/$DEVICE_ID/worker.json"
+     --out "$RUN_DIR/workers/$DEVICE_ID/worker.json" \
+     -- claude -p "Read $RUN_DIR/workers/$DEVICE_ID/prompt.md and follow it." \
+     --allowedTools "Bash(mobilecli:*)" "Bash(simsquad reset:*)" "Bash(simsquad run validate:*)" \
+     "Edit(.simsquad/runs/**)" "Write(.simsquad/runs/**)" \
+     --model "$WORKER_MODEL"
    ```
+
+   Pass the `--allowedTools` list exactly as shown: a headless worker
+   can't answer a permission prompt, and `claude -p` ignores the project's
+   `.claude/settings.json` in a folder nobody has trusted interactively.
 
    In Codex:
 
    ```sh
    simsquad run worker --dir "$RUN_DIR/workers/$DEVICE_ID" --timeout "$DEADLINE" \
-     -- codex exec --sandbox danger-full-access --model "$WORKER_MODEL" "$(cat "$RUN_DIR/workers/$DEVICE_ID/prompt.md")" \
-     > "$RUN_DIR/workers/$DEVICE_ID/worker.json"
+     --out "$RUN_DIR/workers/$DEVICE_ID/worker.json" \
+     -- codex exec --sandbox danger-full-access --model "$WORKER_MODEL" "Read $RUN_DIR/workers/$DEVICE_ID/prompt.md and follow it."
    ```
 
    When `worker_model` is empty, leave out `--model` and its value.
@@ -191,7 +203,7 @@ its time limit at the latest. `worker.json` holds `{"status": …}`: `ok`,
 ## 8. Validate each worker
 
 ```sh
-simsquad run validate "$RUN_DIR/workers/$DEVICE_ID" > "$RUN_DIR/workers/$DEVICE_ID/validation.json"
+simsquad run validate "$RUN_DIR/workers/$DEVICE_ID" --out "$RUN_DIR/workers/$DEVICE_ID/validation.json"
 ```
 
 Exit `1` means the worker's `result.json` is missing or invalid; `errors`
@@ -201,7 +213,7 @@ they are. The report records an invalid worker as an error.
 ## 9. Write the report
 
 ```sh
-simsquad run report "$RUN_DIR" > "$RUN_DIR/report-summary.json"
+simsquad run report "$RUN_DIR" --out "$RUN_DIR/report-summary.json"
 ```
 
 Run it on every path that got past step 4, including a failed deploy: the
@@ -214,7 +226,7 @@ until it exists. Exit `0` passed, `1` failed, `2` infra. The output gives
 Only when `run new` said `fresh: true`:
 
 ```sh
-simsquad dismiss --name "$SQUAD" > "$RUN_DIR/dismiss.json"
+simsquad dismiss --name "$SQUAD" --out "$RUN_DIR/dismiss.json"
 ```
 
 The project squad stays up, so the next run skips the cold boot.
@@ -224,7 +236,8 @@ The project squad stays up, so the next run skips the cold boot.
 Read `report.json` and tell the user:
 
 - The verdict, and its `summary.reason` when there is one (infra, or
-  devices deploy couldn't get ready).
+  devices deploy couldn't get ready). After a deploy exit `1`, add the
+  build error and log path from step 5.
 - The counts: scenarios passed, failed and blocked; bugs, questions, notes.
 - The top findings: bugs by severity (high first), then questions, each
   with its title, device and evidence path.

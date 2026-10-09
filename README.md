@@ -74,6 +74,14 @@ simsquad dismiss --name=login-tests
   only (`> squad.json`). Using `2>&1` mixes progress events into the JSON and
   breaks parsers.
 
+- **`--out <file>` writes the JSON to a file too.** Every command accepts
+  it; stdout is unchanged. The file is created or truncated (parent
+  folders are created), written whenever the command emits JSON (including
+  a non-zero exit such as deploy's `2`), and removed when the command fails
+  before emitting any. Agent harnesses that gate shell redirection behind
+  an approval prompt (Claude Code) need it: the bundled skills use
+  `--out` instead of `>`.
+
 ## Verbs
 
 | Command | Action | Key flags |
@@ -162,8 +170,8 @@ simsquad skill status > skill-status.json
 ```json
 {
   "installed": true,
-  "skill_contract": 1,
-  "binary_contract": 1,
+  "skill_contract": 2,
+  "binary_contract": 2,
   "in_sync": true,
   "mobilecli": { "found": true, "version": "1.0.13", "minimum": "1.0.13", "meets_minimum": true }
 }
@@ -221,7 +229,8 @@ simsquad run new qa/features/login.feature > run-new.json
 
 ```sh
 simsquad run worker --dir .simsquad/runs/<run-id>/workers/<device-id> \
-  --timeout 720 -- claude -p "$(cat prompt.md)" > worker.json
+  --timeout 720 --out worker.json \
+  -- claude -p "Read prompt.md and follow it." --allowedTools "Bash(mobilecli:*)"
 ```
 
 `run worker` starts the command in its own process group with its input
@@ -323,7 +332,8 @@ keep `derived/`.
   `android-36.1` (any `.N` suffix) break `avdmanager`; install a plain level
   (e.g. `android-34`) via `sdkmanager`. simsquad pre-flights a warning.
 - **Never `2>&1`.** It merges stderr progress into the stdout JSON contract.
-  Redirect stdout only: `simsquad deploy … > squad.json`.
+  Redirect stdout only (`simsquad deploy … > squad.json`), or use
+  `--out squad.json`.
 - **Physical Android devices** are claimed by adb serial; simsquad never
   deletes a physical device, only uninstalls the app on teardown.
 

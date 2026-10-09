@@ -105,16 +105,97 @@ func TestTestSkillWalksTheTestRunProcedureInOrder(t *testing.T) {
 	}
 }
 
-func TestTestSkillRedirectsStdoutOnly(t *testing.T) {
+// TestTestSkillWorkerCommandCarriesItsPermissions guards the two ways dry run
+// 002 saw a Claude worker fail to start: `claude -p` ignores
+// .claude/settings.json in a folder nobody has trusted interactively, so the
+// worker command must pass every rule itself; and Claude Code can't check a
+// `$(…)` substitution before running it, so it asks for approval.
+func TestTestSkillWorkerCommandCarriesItsPermissions(t *testing.T) {
+	skill, _ := installedTestSkill(t)
+	start := strings.Index(skill, "-- claude -p")
+	if start < 0 {
+		t.Fatal("skill has no `-- claude -p` worker command")
+	}
+	end := strings.Index(skill[start:], "```")
+	if end < 0 {
+		t.Fatal("worker command block is not closed")
+	}
+	cmd := skill[start : start+end]
+	for _, rule := range skills.ClaudeAllow {
+		if !strings.Contains(cmd, `"`+rule+`"`) {
+			t.Errorf("Claude worker command does not pass --allowedTools %q", rule)
+		}
+	}
+	if strings.Contains(skill, "$(") {
+		t.Error("skill uses a $(…) command substitution")
+	}
+}
+
+// redirectRe matches a shell output redirection (`>`, `>>`, `2>`, `&>`).
+var redirectRe = regexp.MustCompile(`(?:^|\s)[0-9&]?>`)
+
+// shellLines returns every line inside the doc's ```sh fences.
+func shellLines(doc string) []string {
+	var out []string
+	inSh, inFence := false, false
+	for _, line := range strings.Split(doc, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") {
+			inFence = !inFence
+			inSh = inFence && trimmed == "```sh"
+			continue
+		}
+		if inSh {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+// Claude Code asks for approval on any shell redirection, even of an
+// allowed command, so the skills write JSON with --out instead (issue #16).
+func TestTestSkillWritesJSONWithOutNotRedirection(t *testing.T) {
 	skill, worker := installedTestSkill(t)
 	for name, doc := range map[string]string{"SKILL.md": skill, "worker.md": worker} {
-		if strings.Contains(doc, "2>&1") {
-			t.Errorf("%s contains 2>&1", name)
+		for _, line := range shellLines(doc) {
+			if redirectRe.MatchString(line) {
+				t.Errorf("%s redirects output: %s", name, line)
+			}
 		}
 	}
 	for _, line := range fencedCommands(skill, "simsquad") {
-		if !strings.Contains(line, " > ") {
-			t.Errorf("example does not redirect stdout: %s", line)
+		if !strings.Contains(line, " --out ") {
+			t.Errorf("example does not write its JSON with --out: %s", line)
+		}
+	}
+}
+
+// Deleting a file needs approval in Claude Code, so no step asks for one.
+func TestTestSkillNeverDeletesFiles(t *testing.T) {
+	skill, worker := installedTestSkill(t)
+	for name, doc := range map[string]string{"SKILL.md": skill, "worker.md": worker} {
+		for _, line := range shellLines(doc) {
+			if regexp.MustCompile(`(?:^|[\s;&|])rm\s`).MatchString(line) {
+				t.Errorf("%s removes files: %s", name, line)
+			}
+		}
+		if m := regexp.MustCompile(`(?i)\bdelete\s+(the|this|that)\s+(draft|file)`).FindString(doc); m != "" {
+			t.Errorf("%s asks to %q", name, m)
+		}
+	}
+}
+
+// A failed deploy goes straight to the report: the build log path is the
+// user's to read, not the orchestrator's to debug (issue #16).
+func TestTestSkillSendsFailedDeployStraightToReport(t *testing.T) {
+	skill, _ := installedTestSkill(t)
+	m := regexp.MustCompile(`(?s)## 5\. Deploy\n(.*?)\n## `).FindStringSubmatch(skill)
+	if m == nil {
+		t.Fatal("skill has no `## 5. Deploy` step")
+	}
+	for _, want := range []string{"step 9", "builds", "log"} {
+		if !strings.Contains(m[1], want) {
+			t.Errorf("deploy step does not mention %q", want)
 		}
 	}
 }
@@ -127,7 +208,6 @@ func TestTestSkillUsesOnlyRealSimsquadCommandsAndFlags(t *testing.T) {
 	for _, line := range append(fencedCommands(skill, "simsquad"), fencedCommands(worker, "simsquad")...) {
 		// Flags after `--` belong to the wrapped worker command.
 		own, _, _ := strings.Cut(line, " -- ")
-		own, _, _ = strings.Cut(own, " > ")
 		fields := strings.Fields(own)[1:]
 		var words []string
 		for _, f := range fields {
@@ -150,7 +230,7 @@ func TestTestSkillUsesOnlyRealSimsquadCommandsAndFlags(t *testing.T) {
 			}
 		}
 		for _, f := range flagRe.FindAllStringSubmatch(own, -1) {
-			if cmd.Flags().Lookup(f[1]) == nil {
+			if cmd.Flags().Lookup(f[1]) == nil && cmd.InheritedFlags().Lookup(f[1]) == nil {
 				t.Errorf("`%s` has no --%s flag: %s", cmd.CommandPath(), f[1], line)
 			}
 		}

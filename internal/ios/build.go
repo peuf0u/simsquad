@@ -55,9 +55,9 @@ func AppSubpath(scheme string) string {
 }
 
 // ExpectedAppPath returns the fallback .app path for a scheme-named product
-// under IOSDerivedDataDir. See AppSubpath for why this is a fallback.
-func ExpectedAppPath(scheme string) string {
-	return filepath.Join(util.IOSDerivedDataDir(), AppSubpath(scheme))
+// under the repo's IOSDerivedDataDir. See AppSubpath for why this is a fallback.
+func ExpectedAppPath(repo, scheme string) string {
+	return filepath.Join(util.IOSDerivedDataDir(repo), AppSubpath(scheme))
 }
 
 // ReadBundleID extracts CFBundleIdentifier from Info.plist inside the .app.
@@ -121,7 +121,7 @@ func Build(opts BuildOptions) (BuildResult, error) {
 		return BuildResult{AppPath: app, BundleID: bid, GitSHA: sha, Reused: true}, nil
 	}
 
-	preExisting := dirHasApp(filepath.Join(util.IOSDerivedDataDir(), simulatorProductsSubdir))
+	preExisting := dirHasApp(filepath.Join(util.IOSDerivedDataDir(opts.Repo), simulatorProductsSubdir))
 	switch {
 	case opts.Logger != nil && preExisting && !opts.Force:
 		opts.Logger.Info("ios-build: incremental", progress.F("sha", sha))
@@ -135,11 +135,11 @@ func Build(opts BuildOptions) (BuildResult, error) {
 		return BuildResult{}, errors.New("no destination UDID for xcodebuild — pair --ios with at least one slot")
 	}
 
-	derived := util.IOSDerivedDataDir()
+	derived := util.IOSDerivedDataDir(opts.Repo)
 	if err := os.MkdirAll(derived, 0o755); err != nil {
 		return BuildResult{}, fmt.Errorf("mkdir derived: %w", err)
 	}
-	logPath := util.IOSBuildLogPath()
+	logPath := util.IOSBuildLogPath(opts.Repo)
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return BuildResult{}, fmt.Errorf("mkdir log dir: %w", err)
 	}
@@ -256,7 +256,7 @@ func readBuildSettings(repo, project, scheme string, pinnedArgs []string) (build
 		// Same derived path as the build, or TARGET_BUILD_DIR resolves to the
 		// developer's default DerivedData and we'd locate/install a stale .app
 		// from there instead of the one we just built into the cache.
-		"-derivedDataPath", util.IOSDerivedDataDir(),
+		"-derivedDataPath", util.IOSDerivedDataDir(repo),
 		"-skipMacroValidation",
 		"-skipPackagePluginValidation",
 	}
@@ -277,7 +277,7 @@ func readBuildSettings(repo, project, scheme string, pinnedArgs []string) (build
 // that worked before.
 func locateProduct(repo, project, scheme string, pinnedArgs []string) (app, bundleID string, err error) {
 	if bs, serr := readBuildSettings(repo, project, scheme, pinnedArgs); serr == nil {
-		if a, aerr := appFromSettings(bs); aerr == nil {
+		if a, aerr := appFromSettings(repo, bs); aerr == nil {
 			bid := bs.BundleID
 			if bid == "" {
 				bid, _ = ReadBundleID(a)
@@ -288,7 +288,7 @@ func locateProduct(repo, project, scheme string, pinnedArgs []string) (app, bund
 		}
 	}
 	// Fallback: the historical <scheme>.app assumption.
-	fallback := ExpectedAppPath(scheme)
+	fallback := ExpectedAppPath(repo, scheme)
 	if !isDir(fallback) {
 		return "", "", fmt.Errorf("no .app found for scheme %q (looked via build settings and at %s)", scheme, fallback)
 	}
@@ -300,8 +300,8 @@ func locateProduct(repo, project, scheme string, pinnedArgs []string) (app, bund
 }
 
 // appFromSettings turns build settings into an existing .app path, trying the
-// reported TARGET_BUILD_DIR first, then the default derived products dir.
-func appFromSettings(bs buildSettings) (string, error) {
+// reported TARGET_BUILD_DIR first, then the repo's derived products dir.
+func appFromSettings(repo string, bs buildSettings) (string, error) {
 	if bs.ProductName == "" {
 		return "", errors.New("empty product name")
 	}
@@ -309,7 +309,7 @@ func appFromSettings(bs buildSettings) (string, error) {
 	if bs.BuildDir != "" {
 		dirs = append(dirs, bs.BuildDir)
 	}
-	dirs = append(dirs, filepath.Join(util.IOSDerivedDataDir(), simulatorProductsSubdir))
+	dirs = append(dirs, filepath.Join(util.IOSDerivedDataDir(repo), simulatorProductsSubdir))
 	for _, d := range dirs {
 		app := filepath.Join(d, bs.ProductName)
 		if isDir(app) {

@@ -37,19 +37,18 @@ The examples below use `SQUAD` for that name.
 
 ## Reading output
 
-Redirect stdout only, into a file under `.simsquad/dev/` (`.simsquad/` is
-gitignored), then read the JSON from that file. Create the folder first:
-
-```sh
-mkdir -p .simsquad/dev
-```
+Every example passes `--out <file>`, which also writes the command's JSON
+to a file under `.simsquad/dev/` (`.simsquad/` is gitignored; the folder is
+created as needed). Read the JSON from that file. Run the commands exactly
+as shown, so each one stays a plain simsquad call the user has already
+allowed.
 
 The progress lines on stderr are for the user; the JSON file is the answer.
 
 ## Put the current build on devices
 
 ```sh
-simsquad deploy --name "$SQUAD" --preserve-data > .simsquad/dev/deploy.json
+simsquad deploy --name "$SQUAD" --preserve-data --out .simsquad/dev/deploy.json
 ```
 
 - Run it from the project root. It builds incrementally, installs on the
@@ -72,7 +71,7 @@ simsquad deploy --name "$SQUAD" --preserve-data > .simsquad/dev/deploy.json
 ## List running devices
 
 ```sh
-simsquad devices --name "$SQUAD" > .simsquad/dev/devices.json
+simsquad devices --name "$SQUAD" --out .simsquad/dev/devices.json
 ```
 
 Each row has `platform`, `id` (simulator UDID or emulator serial), `name`,
@@ -81,7 +80,7 @@ devices only, `--platform ios` or `--platform android` for one platform. For
 every squad on this machine, drop `--name`:
 
 ```sh
-simsquad devices > .simsquad/dev/devices-all.json
+simsquad devices --out .simsquad/dev/devices-all.json
 ```
 
 ## Reset the app
@@ -89,8 +88,8 @@ simsquad devices > .simsquad/dev/devices-all.json
 Terminates the app and wipes its data, without reinstalling:
 
 ```sh
-simsquad reset --name "$SQUAD" > .simsquad/dev/reset.json
-simsquad reset --name "$SQUAD" --device "$DEVICE_ID" > .simsquad/dev/reset.json
+simsquad reset --name "$SQUAD" --out .simsquad/dev/reset.json
+simsquad reset --name "$SQUAD" --device "$DEVICE_ID" --out .simsquad/dev/reset.json
 ```
 
 Take `DEVICE_ID` from the `id` field of `devices`. Reset wipes what the user
@@ -99,8 +98,8 @@ set up by hand, so run it only when they ask for it.
 ## Squad status
 
 ```sh
-simsquad status > .simsquad/dev/status.json
-simsquad status --name "$SQUAD" > .simsquad/dev/status.json
+simsquad status --out .simsquad/dev/status.json
+simsquad status --name "$SQUAD" --out .simsquad/dev/status.json
 ```
 
 Without `--name` it lists every squad; with it, the full record of one.
@@ -112,8 +111,8 @@ copied onto every device row. Changing it never touches the devices or the
 app:
 
 ```sh
-simsquad set-env --name "$SQUAD" --set api=staging --unset persona > .simsquad/dev/env.json
-simsquad set-env --name "$SQUAD" --clear --set user=alice > .simsquad/dev/env.json
+simsquad set-env --name "$SQUAD" --set api=staging --unset persona --out .simsquad/dev/env.json
+simsquad set-env --name "$SQUAD" --clear --set user=alice --out .simsquad/dev/env.json
 ```
 
 `--set KEY=VALUE` and `--unset KEY` repeat; `--clear` wipes every key first.
@@ -121,7 +120,7 @@ simsquad set-env --name "$SQUAD" --clear --set user=alice > .simsquad/dev/env.js
 ## Tear the devices down
 
 ```sh
-simsquad dismiss --name "$SQUAD" > .simsquad/dev/dismiss.json
+simsquad dismiss --name "$SQUAD" --out .simsquad/dev/dismiss.json
 ```
 
 Shuts down and deletes the squad's simulators and emulators. Run it only
