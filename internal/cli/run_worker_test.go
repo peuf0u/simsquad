@@ -53,6 +53,23 @@ func TestRunWorkerCleanExitWritesNoStatus(t *testing.T) {
 	}
 }
 
+func TestRunWorkerSuccessfulRetryClearsOldStatus(t *testing.T) {
+	dir := t.TempDir()
+	if _, _, err := runWorker(t, "--dir", dir, "--timeout", "10", "--", "sh", "-c", "exit 3"); err != nil {
+		t.Fatalf("first attempt: %v", err)
+	}
+	stdout, _, err := runWorker(t, "--dir", dir, "--timeout", "10", "--", "true")
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if got := decodeWorkerStatus(t, stdout); got != "ok" {
+		t.Errorf("retry status = %q, want ok", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "status")); !os.IsNotExist(err) {
+		t.Errorf("stale status file survived a successful retry (stat err %v)", err)
+	}
+}
+
 func readStatusFile(t *testing.T, dir string) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(dir, "status"))

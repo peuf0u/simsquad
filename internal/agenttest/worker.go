@@ -54,6 +54,11 @@ func RunWorker(ctx context.Context, w Worker) (string, error) {
 	if err := os.MkdirAll(w.Dir, 0o755); err != nil {
 		return "", fmt.Errorf("create worker dir: %w", err)
 	}
+	// A status file overrides even a valid result.json, so a line left by an
+	// earlier attempt would make a successful retry read as blocked/error.
+	if err := os.Remove(filepath.Join(w.Dir, StatusFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("clear old worker status: %w", err)
+	}
 	logf, err := os.OpenFile(filepath.Join(w.Dir, LogFile), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return "", fmt.Errorf("open worker log: %w", err)

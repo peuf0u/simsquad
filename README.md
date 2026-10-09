@@ -182,7 +182,9 @@ simsquad run worker --dir .simsquad/runs/<run-id>/workers/<device-id> \
 
 `run worker` starts the command in its own process group with its input
 closed (so `codex exec` can't wait for input forever) and sends the
-command's output to `<dir>/worker.log`. The outcome:
+command's output to `<dir>/worker.log`. It deletes any `<dir>/status` left
+by an earlier attempt before starting, so a successful retry reads as a
+success. The outcome:
 
 | Worker | `<dir>/status` | stdout `status` |
 |---|---|---|
