@@ -6,6 +6,13 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `simsquad skill install [--dir] [--force]` writes the simsquad and
+  simsquad-test agent skills into the app repo, links them for Claude Code,
+  writes worker permissions for Claude Code and Codex, and ignores
+  `.simsquad/`. Skill text is a placeholder for now.
+
 ## [0.3.0] - 2026-10-08
 
 First public release. Installable via `brew install peuf0u/tap/simsquad`.
