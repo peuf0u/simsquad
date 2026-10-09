@@ -183,6 +183,18 @@ func (c *Config) Env() map[string]string {
 	return out
 }
 
+// AgentWorkerModel returns `[agent].worker_model`: the model id workers run
+// on, passed to the worker command as given and never validated.
+func (c *Config) AgentWorkerModel() string { return c.GetString("agent.worker_model") }
+
+// AgentTestSquad returns `[agent].test_squad`, the squad name test runs use
+// instead of `qa-<repo>`; "" when unset.
+func (c *Config) AgentTestSquad() string { return c.GetString("agent.test_squad") }
+
+// AgentDevSquad returns `[agent].dev_squad`, the squad name everyday agent
+// use takes instead of `dev-<repo>`; "" when unset.
+func (c *Config) AgentDevSquad() string { return c.GetString("agent.dev_squad") }
+
 // AndroidSpecs reads `[[android.sims]]` and returns the Android provisioning
 // matrix. Emulator entries require non-empty device + image; physical entries
 // tolerate placeholders.

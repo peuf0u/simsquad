@@ -20,5 +20,7 @@ func newRunCmd() *cobra.Command {
 // runSubcommands lists the `run` subcommands. Each ticket appends its own
 // constructor here.
 func runSubcommands() []*cobra.Command {
-	return []*cobra.Command{}
+	return []*cobra.Command{
+		newRunNewCmd(),
+	}
 }
