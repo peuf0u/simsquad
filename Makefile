@@ -1,7 +1,7 @@
 .PHONY: build test lint fmt tidy install clean help
 
 BINARY := simsquad
-PKG    := github.com/Patrez/simsquad
+PKG    := github.com/peuf0u/simsquad
 GOBIN  ?= $(shell go env GOBIN)
 ifeq ($(GOBIN),)
 GOBIN := $(shell go env GOPATH)/bin
