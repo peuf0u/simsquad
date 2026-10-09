@@ -11,8 +11,8 @@ import (
 
 // Headless workers can't answer permission prompts, so a prompt stalls them
 // until their deadline. Install grants the minimum a worker needs, and
-// nothing more: running mobilecli and simsquad, and writing its results
-// under .simsquad/runs/.
+// nothing more: running mobilecli, the two simsquad commands worker.md runs
+// (reset and run validate), and writing its results under .simsquad/runs/.
 
 // ClaudeSettingsFile is the shared Claude Code project settings file. It
 // belongs to the team, so Install merges its entries in rather than owning
@@ -20,12 +20,15 @@ import (
 const ClaudeSettingsFile = ".claude/settings.json"
 
 // ClaudeAllow lists the permission rules Install adds to ClaudeSettingsFile.
-// A leading "/" in Edit/Write rules anchors the path at the project root.
+// Edit/Write paths without a leading "/" resolve against the cwd, which is
+// the repo root for workers; "/path" would resolve against the settings
+// file's directory (.claude/) instead.
 var ClaudeAllow = []string{
 	"Bash(mobilecli:*)",
-	"Bash(simsquad:*)",
-	"Edit(/.simsquad/runs/**)",
-	"Write(/.simsquad/runs/**)",
+	"Bash(simsquad reset:*)",
+	"Bash(simsquad run validate:*)",
+	"Edit(.simsquad/runs/**)",
+	"Write(.simsquad/runs/**)",
 }
 
 // CodexRulesFile is the Codex execution-policy file Install owns. Codex
@@ -33,10 +36,11 @@ var ClaudeAllow = []string{
 // covers .simsquad/runs/, so the rules only need to allow the commands.
 const CodexRulesFile = ".codex/rules/simsquad.rules"
 
-const codexRules = `# Lets headless simsquad-test workers run the device driver and simsquad
-# without an approval prompt.
+const codexRules = `# Lets headless simsquad-test workers run the device driver and the
+# simsquad commands they need without an approval prompt.
 prefix_rule(pattern = ["mobilecli"], decision = "allow")
-prefix_rule(pattern = ["simsquad"], decision = "allow")
+prefix_rule(pattern = ["simsquad", "reset"], decision = "allow")
+prefix_rule(pattern = ["simsquad", "run", "validate"], decision = "allow")
 `
 
 func (in *installer) planCodexRules() error {

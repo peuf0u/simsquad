@@ -126,8 +126,9 @@ It writes:
   discovers them here), with `.claude/skills/<skill>` links for Claude Code.
   `--dir <dir>` writes the skills there instead, for other agent tools, and
   makes no `.claude/skills` links.
-- `.claude/settings.json`: allows `mobilecli`, `simsquad` and writes under
-  `.simsquad/runs/`, so headless workers never wait on a prompt. Existing
+- `.claude/settings.json`: allows `mobilecli`, `simsquad reset`,
+  `simsquad run validate` and writes under `.simsquad/runs/`, so headless
+  workers never wait on a prompt. Existing
   settings are kept; the entries are merged in.
 - `.codex/rules/simsquad.rules`: the same command allowances for Codex.
 - A `.simsquad/` line in `.gitignore`, added once.
