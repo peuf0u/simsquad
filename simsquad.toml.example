@@ -43,6 +43,20 @@ api = "staging"
 # feature_flag = "new_ui"
 
 # ---------------------------------------------------------------------------
+# [agent] — agent testing (`simsquad run …`, the generated skills).
+# ---------------------------------------------------------------------------
+# All keys optional. `simsquad equip` preserves this table when it rewrites
+# the file.
+[agent]
+# Model id for workers, passed to the worker command as given (never
+# validated). Empty = the agent tool's default.
+# worker_model = "sonnet"
+# Squad for test runs (default "qa-<repo>") and for everyday agent use
+# (default "dev-<repo>"). Set them when two repos share a folder name.
+# test_squad = "qa-myapp"
+# dev_squad  = "dev-myapp"
+
+# ---------------------------------------------------------------------------
 # [[ios.sims]] / [[android.sims]] — the device matrices.
 # ---------------------------------------------------------------------------
 # Both matrices act as defaults. Precedence: passing ANY spec flag to

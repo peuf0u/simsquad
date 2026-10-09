@@ -6,6 +6,30 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `simsquad skill install [--dir] [--force]` writes the simsquad and
+  simsquad-test agent skills into the app repo, links them for Claude Code,
+  writes worker permissions for Claude Code and Codex, and ignores
+  `.simsquad/`. Skill text is a placeholder for now.
+- `simsquad run new <feature-file> [--fresh]` reads a Gherkin feature file,
+  picks the squad and platforms, computes the worker deadline and creates
+  `.simsquad/runs/<run-id>/` with `run.json` and a copy of the feature.
+- `simsquad run worker --dir <worker-dir> --timeout <seconds> -- <command…>`
+  runs one headless worker in its own process group, kills the whole group
+  at the deadline and records `blocked: timeout` or
+  `error: worker exited <code>` in the worker's status file.
+- `simsquad run validate <worker-dir>` checks `result.json` against the
+  embedded result schema and the evidence rule; emits `{valid, errors}` and
+  exits `1` when invalid.
+- `simsquad run report <run-dir>` aggregates the workers' results into
+  `report.json` (embedded report schema: feature title, source, env,
+  scenario × device matrix, findings) and `report.md`, emits
+  `{verdict, report_json, report_md, counts}` and exits `0` passed,
+  `1` failed, `2` infra. Writing `report.json` marks the run finished.
+- `[agent]` table in `simsquad.toml`: `worker_model`, `test_squad`,
+  `dev_squad`. `simsquad equip` keeps it when rewriting the config.
+
 ## [0.3.0] - 2026-10-08
 
 First public release. Installable via `brew install peuf0u/tap/simsquad`.

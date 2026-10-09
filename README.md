@@ -31,6 +31,11 @@ brew install peuf0u/tap/simsquad
 go install github.com/peuf0u/simsquad/cmd/simsquad@latest
 ```
 
+Homebrew also installs [mobilecli](https://github.com/mobile-next/mobilecli)
+(from the same tap), which agent testing uses to drive devices. With
+`go install` or a source build, install mobilecli 1.0.13 or newer yourself and
+put it on `PATH`. Node.js is not required.
+
 From a checkout: `make build` (→ `./bin/simsquad`) or `make install` (→ `$GOBIN`).
 
 ## Quickstart
@@ -97,6 +102,186 @@ used.
 `deploy` exit codes: `0` = all devices ready · `2` = mixed (some ready, some
 errored) · `1` = none ready / bad args / build failed.
 
+## Agent skills
+
+The `skill` group installs the agent skills embedded in the binary into an
+app repo, so the team commits them and every clone gets them. Two skills
+ship: **simsquad** (everyday CLI use) and **simsquad-test** (verifying a
+feature on a squad).
+
+| Command | Action | Key flags |
+|---|---|---|
+| `skill install` | Write both skills into the app repo; emit `{dir, version, contract, files}` | `--dir`, `--force` |
+| `skill status` | Check the installed skills and `mobilecli` fit this binary | `--dir` |
+
+Run it from the app repo (the enclosing git work tree is the root):
+
+```sh
+simsquad skill install > skill-install.json
+```
+
+It writes:
+
+- `.agents/skills/simsquad/` and `.agents/skills/simsquad-test/` (Codex
+  discovers them here), with `.claude/skills/<skill>` links for Claude Code.
+  `--dir <dir>` writes the skills there instead, for other agent tools, and
+  makes no `.claude/skills` links.
+- `.claude/settings.json`: allows `mobilecli`, `simsquad reset`,
+  `simsquad run validate` and writes under `.simsquad/runs/`, so headless
+  workers never wait on a prompt. Existing
+  settings are kept; the entries are merged in.
+- `.codex/rules/simsquad.rules`: the same command allowances for Codex.
+- A `.simsquad/` line in `.gitignore`, added once.
+- `qa/README.md`, a scaffold for the **app notes** every worker reads
+  (navigation tricks, test accounts, known quirks), only when the file is
+  missing. Install never overwrites it, not even with `--force`.
+
+**Codex (experimental).** Deploys write outside the repo
+(`~/.cache/simsquad/`, `~/Library/Developer/`, the Android SDK, `~/.gradle`)
+and talk to the simulator services, and workers reset apps and reach
+mobilecli's on-device agent. Codex's default `workspace-write` sandbox
+blocks that, so run test runs from a session started with
+`codex --sandbox danger-full-access` (or `sandbox_mode =
+"danger-full-access"` in `~/.codex/config.toml`); the simsquad-test skill
+starts its workers with `codex exec --sandbox danger-full-access`.
+
+Every generated file starts with a do-not-edit header carrying the binary
+version and the **skill contract** number, which changes only when the
+interface between the skills and the CLI changes. Put project knowledge in
+`qa/README.md`, not in the skill files: install refuses to overwrite a skill
+file that was edited by hand unless `--force` is given. Re-running install
+is safe.
+
+`skill status` tells you, and the simsquad-test skill's first step, whether
+the installed skills and the device driver fit this binary:
+
+```sh
+simsquad skill status > skill-status.json
+```
+
+```json
+{
+  "installed": true,
+  "skill_contract": 1,
+  "binary_contract": 1,
+  "in_sync": true,
+  "mobilecli": { "found": true, "version": "1.0.13", "minimum": "1.0.13", "meets_minimum": true }
+}
+```
+
+- Same skill contract as the binary: `in_sync: true`, exit `0`.
+- Older skills, or none installed: exit `0` with a `warning` telling you to
+  re-run `simsquad skill install`.
+- Newer skills: exit `1`, so a skill never calls commands this simsquad
+  doesn't have. Upgrade simsquad.
+- `mobilecli` is looked up on `PATH` and its version compared with the
+  minimum simsquad was tested with (1.0.13). If you installed simsquad with
+  `go install`, install that mobilecli version or newer yourself.
+
+## Test runs
+
+The `run` group holds the deterministic steps the simsquad-test skill calls
+while verifying a feature on a squad. Like every verb, each emits JSON on
+stdout and human progress on stderr.
+
+| Command | Action | Key flags |
+|---|---|---|
+| `run new` | Start a test run from a Gherkin feature file; emit the run descriptor | `<feature-file>`, `--fresh` |
+| `run worker` | Run one headless worker under a hard deadline; emit `{status}` | `--dir` (req), `--timeout` seconds (req), `-- <command…>` |
+| `run validate` | Check a worker's `result.json`; emit `{valid, errors}` | `<worker-dir>` |
+| `run report` | Write `report.json` + `report.md`; emit `{verdict, report_json, report_md, counts}`; exit 0/1/2 | `<run-dir>` |
+
+### `run new` — start a test run
+
+`simsquad run new <feature-file> [--fresh]`, run from the app repo, reads a
+Gherkin feature file and sets up a test run:
+
+```sh
+simsquad run new qa/features/login.feature > run-new.json
+# {"run_id", "run_dir", "squad_name", "fresh", "platforms", "deadline_seconds", "worker_model"}
+```
+
+- Background steps are prepended to every scenario, Scenario Outlines expand
+  to one scenario per Examples row, and tags are inherited from the feature.
+  `@ios` / `@android` restrict platforms, `@explore` marks the exploration
+  (its description is the charter). Other tags are kept and ignored. The
+  description's `Source:` line is recorded.
+- Squad: `qa-<repo>` (the folder holding `simsquad.toml`), or
+  `[agent].test_squad`; `--fresh` adds a unique suffix for an isolated squad.
+- Platforms: the equipped platforms the tags allow. A tag naming an
+  unequipped platform, malformed Gherkin, or a squad still used by a run
+  without a `report.json` is refused before anything is written.
+- Deadline per worker: `120 + Σ(60 + 30 × steps)` over the scenarios of the
+  busiest platform, `+ 600` when it has an exploration.
+- Creates `.simsquad/runs/<run-id>/` with `feature.feature` (a copy) and
+  `run.json` (title, source, squad, platforms, deadline, worker model and
+  the expanded scenarios).
+
+### `run worker` — run a headless worker
+
+```sh
+simsquad run worker --dir .simsquad/runs/<run-id>/workers/<device-id> \
+  --timeout 720 -- claude -p "$(cat prompt.md)" > worker.json
+```
+
+`run worker` starts the command in its own process group with its input
+closed (so `codex exec` can't wait for input forever) and sends the
+command's output to `<dir>/worker.log`. It deletes any `<dir>/status` left
+by an earlier attempt before starting, so a successful retry reads as a
+success. The outcome:
+
+| Worker | `<dir>/status` | stdout `status` |
+|---|---|---|
+| exits 0 in time | not written | `ok` |
+| exits non-zero | `error: worker exited <code>` | same |
+| still running at `--timeout` | `blocked: timeout` — the whole group, children included, is killed | same |
+
+A worker killed by a signal reports the negative signal number as its
+code (e.g. `-9`). `run worker` exits `0` whenever it recorded an outcome, so
+one bad worker doesn't derail a fan-out; it exits `1` only on misuse (no
+command, bad flags, unwritable dir).
+
+### `run validate` — check a worker's result
+
+`simsquad run validate <worker-dir>` validates `<worker-dir>/result.json`
+against the embedded result schema plus the evidence rule, and prints
+`{"valid", "errors"}`. It exits `1` when the result is invalid.
+
+### `run report` — verdict and reports
+
+```sh
+simsquad deploy --name qa-app > .simsquad/runs/<run-id>/deploy.json
+# … one `run worker` per ready device into workers/<device-id>/ …
+simsquad run report .simsquad/runs/<run-id> > report-summary.json
+# {"verdict", "report_json", "report_md", "counts"}
+```
+
+`run report <run-dir>` reads `run.json`, `deploy.json` (the deploy output,
+source of the device rows and env) and each ready device's
+`workers/<device-id>/` (`result.json`, `status`). It writes:
+
+- `report.json`, valid against the embedded report schema: feature title,
+  source, squad and env, a scenario × device matrix
+  (`passed` / `failed` / `blocked` / `skipped` per device), each device's
+  worker status, scenarios and findings, and the counts. Paths are relative
+  to the run dir.
+- `report.md`, pasteable into a PR: verdict, source link, env keys and
+  values as they are, the matrix, bugs by severity, per-device results.
+
+A status file overrides even a valid result; a missing or invalid
+`result.json` marks the worker `error` and is recorded with its
+validation errors. A scenario a worker didn't report counts as blocked.
+
+| Verdict | Exit | When |
+|---|---|---|
+| `passed` | `0` | every scenario passed on every device, zero bugs, every device deployed |
+| `failed` | `1` | a failed or blocked scenario, a bug, a blocked/errored worker, or a device deploy couldn't get ready |
+| `infra` | `2` | `deploy.json` missing or unparseable, no ready device, no worker results, or every worker blocked/errored |
+
+Writing `report.json` marks the run finished, freeing its squad for the
+next `run new`. A missing or unparseable `run.json` exits `2` without
+writing a report.
+
 ## Configuration
 
 simsquad reads two optional TOML files from the nearest ancestor directory
@@ -107,7 +292,8 @@ containing either:
 
 Run `simsquad equip` for an interactive setup wizard, or copy
 [`simsquad.toml.example`](simsquad.toml.example) and edit. See that file for the
-full annotated schema (`[project]`, `[env]`, `[[ios.sims]]`, `[[android.sims]]`).
+full annotated schema (`[project]`, `[env]`, `[agent]`, `[[ios.sims]]`,
+`[[android.sims]]`).
 
 **Precedence**, highest to lowest:
 

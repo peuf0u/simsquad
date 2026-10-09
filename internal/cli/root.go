@@ -44,6 +44,8 @@ func NewRootCmd() *cobra.Command {
 		newDevicesCmd(),
 		newSetEnvCmd(),
 		newResetCmd(),
+		newRunCmd(),
+		newSkillCmd(),
 	)
 
 	return root

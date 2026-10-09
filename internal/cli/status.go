@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
 
 	"github.com/spf13/cobra"
@@ -60,7 +61,13 @@ func runStatusOne(cmd *cobra.Command, name string) error {
 // writeJSON encodes v as 2-space indented JSON with a trailing newline to the
 // command's stdout. Used by every verb that produces a JSON contract.
 func writeJSON(cmd *cobra.Command, v any) error {
-	enc := json.NewEncoder(cmd.OutOrStdout())
+	return encodeJSON(cmd.OutOrStdout(), v)
+}
+
+// encodeJSON writes v as every simsquad JSON is written: 2-space indent,
+// trailing newline, non-ASCII and HTML characters verbatim.
+func encodeJSON(w io.Writer, v any) error {
+	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	enc.SetEscapeHTML(false)
 	return enc.Encode(v)

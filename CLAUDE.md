@@ -29,6 +29,9 @@ Python source first.
   `sweep`, `equip`. Each emits JSON on stdout; nothing else does. (`reset`
   was added after two consumers — a first real-app integration and simsquad-pilot
   — needed a clean app instance between scenarios without re-provisioning.)
+  Two command groups sit beside them for agent testing (spec #1), each
+  emitting JSON on stdout too: `skill` (`install`, `status`) and `run`
+  (`new`, `worker`, `validate`, `report`).
   Lease/claim/release and TTL/GC machinery were considered and cut — they're
   not in any of the real usage scenarios (see "Usage scenarios" below).
 - **Squad = named test context = env × device matrix.** A squad has a `name`
@@ -98,6 +101,9 @@ output by JSON key. Renaming a field is a breaking change.
 | Consumer device view (`devices`) | `internal/contract.DeviceView` | Uniform `{platform, id, name, model, os_version, bundle_id?, status, ready_at, env?}`. Platform-tagged; same shape iOS + Android. `env` is the squad's env copied onto every row. |
 | Env block | `map[string]string` on `SquadRecord` / `SquadPublic` / `DeviceView` | Free-form test context. Set via `deploy --env KEY=VALUE` or `simsquad.toml [env]`; mutated via `simsquad set-env --set/--unset/--clear`. Execution layer never reads it. |
 | Exit codes | `internal/cli/deploy.go::exitCodeFromDevices` | `0` = all ready; `2` = mixed; `1` = none ready / bad args / build failed. |
+| Run record | `internal/contract.RunRecord` | `<repo>/.simsquad/runs/<run-id>/run.json`, written by `run new`. |
+| Worker result | `internal/contract.WorkerResult` + `internal/contract/schemas/result.schema.json` | `workers/<device-id>/result.json`; checked by `run validate`. |
+| Report | `internal/contract.Report` + `internal/contract/schemas/report.schema.json` | `report.json` from `run report`; exit `0` passed / `1` failed / `2` infra. |
 
 `devices` (no `--name`) emits `{"squads": [{name, devices}, …]}` — mirrors
 how `status` lists all squads.
@@ -138,6 +144,11 @@ internal/
   teardown/                   # (Day 3) shared by dismiss + sweep
   wizard/                     # equip TUI — huh for first-run, bubbletea
                               # editor (bubble_editor.go) for re-edits
+  agenttest/                  # run worker supervision, result validation,
+                              # report + verdict
+  feature/                    # Gherkin feature files → scenarios
+  runsetup/                   # `run new`: squad/platform choice, run folder
+  skills/                     # embedded agent skills + `skill install/status`
 ```
 
 ## Plan & roadmap
