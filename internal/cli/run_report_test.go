@@ -387,6 +387,41 @@ func TestRunReportVerdicts(t *testing.T) {
 	}
 }
 
+// TestRunReportUnusableRunRecord: without a readable run.json there is no
+// run to report on. That is an infrastructure failure, exit 2, explained on
+// stderr, and no report is written.
+func TestRunReportUnusableRunRecord(t *testing.T) {
+	for name, mutate := range map[string]func(t *testing.T, dir string){
+		"missing": func(t *testing.T, dir string) { removeFile(t, filepath.Join(dir, "run.json")) },
+		"unparseable": func(t *testing.T, dir string) {
+			if err := os.WriteFile(filepath.Join(dir, "run.json"), []byte("{"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := copyRunFixture(t, "pipeline")
+			mutate(t, dir)
+			root := NewRootCmd()
+			stderr := &bytes.Buffer{}
+			root.SetOut(&bytes.Buffer{})
+			root.SetErr(stderr)
+			root.SetArgs([]string{"run", "report", dir})
+			err := root.Execute()
+			var ee *ExitError
+			if !errors.As(err, &ee) || ee.Code != 2 {
+				t.Fatalf("err = %v, want exit 2", err)
+			}
+			if !strings.Contains(stderr.String(), "run.json") {
+				t.Errorf("stderr = %q, want it to name run.json", stderr.String())
+			}
+			if _, err := os.Stat(filepath.Join(dir, "report.json")); err == nil {
+				t.Error("report.json written for an unusable run")
+			}
+		})
+	}
+}
+
 // TestRunReportListsUndeployedDevices: a device deploy couldn't get ready
 // had no worker; it is listed, not counted, and it stops a passed verdict —
 // the run never tested the app on it.

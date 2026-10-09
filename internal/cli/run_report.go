@@ -37,6 +37,7 @@ func newRunReportCmd() *cobra.Command {
 			"                   an undeployed device\n" +
 			"  infra  (exit 2)  deploy failed, no ready device, or no worker left a\n" +
 			"                   usable result\n\n" +
+			"A missing or unparseable run.json exits 2 with no report and no stdout.\n" +
 			"Writing report.json marks the run finished.\n\n" +
 			"stdout: {\"verdict\", \"report_json\", \"report_md\", \"counts\"}.\n\n" +
 			"  simsquad run report .simsquad/runs/<run-id> > report-summary.json",
@@ -45,7 +46,10 @@ func newRunReportCmd() *cobra.Command {
 			runDir := args[0]
 			rep, err := agenttest.BuildReport(runDir, time.Now())
 			if err != nil {
-				return err
+				// Only an unusable run.json fails BuildReport: there is no
+				// run to report on, which is an infrastructure outcome.
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "simsquad run report: %v\n", err)
+				return &ExitError{Code: verdictExitCode[contract.VerdictInfra]}
 			}
 			raw, err := marshalReport(rep)
 			if err != nil {

@@ -279,7 +279,8 @@ validation errors. A scenario a worker didn't report counts as blocked.
 | `infra` | `2` | `deploy.json` missing or unparseable, no ready device, no worker results, or every worker blocked/errored |
 
 Writing `report.json` marks the run finished, freeing its squad for the
-next `run new`.
+next `run new`. A missing or unparseable `run.json` exits `2` without
+writing a report.
 
 ## Configuration
 
