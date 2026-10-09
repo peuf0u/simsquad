@@ -14,6 +14,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -148,7 +149,7 @@ func resolvePlatforms(s feature.Scenario, equipped []string) ([]string, error) {
 		return equipped, nil
 	}
 	for _, p := range s.Platforms {
-		if !contains(equipped, p) {
+		if !slices.Contains(equipped, p) {
 			return nil, fmt.Errorf("scenario %q is tagged @%s but this repo has no %s equipment; add %s devices with `simsquad equip`", s.Name, p, displayName(p), displayName(p))
 		}
 	}
@@ -184,11 +185,11 @@ func deadline(rec contract.RunRecord) int {
 	for _, p := range rec.Platforms {
 		total := DeadlineBaseSeconds
 		for _, s := range rec.Scenarios {
-			if contains(s.Platforms, p) {
+			if slices.Contains(s.Platforms, p) {
 				total += DeadlinePerScenarioSeconds + DeadlinePerStepSeconds*len(s.Steps)
 			}
 		}
-		if rec.Exploration != nil && contains(rec.Exploration.Platforms, p) {
+		if rec.Exploration != nil && slices.Contains(rec.Exploration.Platforms, p) {
 			total += DeadlineExplorationSeconds
 		}
 		best = max(best, total)
@@ -254,15 +255,6 @@ func randomHex(n int) string {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
-}
-
-func contains(xs []string, x string) bool {
-	for _, v := range xs {
-		if v == x {
-			return true
-		}
-	}
-	return false
 }
 
 func displayName(platform string) string {
