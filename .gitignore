@@ -24,3 +24,6 @@ simsquad.local.toml
 
 # Local agent context — may name internal/client paths
 CLAUDE.local.md
+
+# Agent worktrees
+.claude/worktrees/
