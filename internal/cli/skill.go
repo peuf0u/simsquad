@@ -28,6 +28,7 @@ func newSkillCmd() *cobra.Command {
 func skillSubcommands() []*cobra.Command {
 	return []*cobra.Command{
 		newSkillInstallCmd(),
+		newSkillStatusCmd(),
 	}
 }
 
