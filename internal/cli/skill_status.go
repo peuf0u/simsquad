@@ -33,8 +33,9 @@ func newSkillStatusCmd() *cobra.Command {
 			"stdout: {installed, skill_contract, binary_contract, in_sync, warning?,\n" +
 			"         mobilecli: {found, version, minimum, meets_minimum}}.\n" +
 			"\n" +
-			"Exit codes: 0 = skills in sync, older (warning: re-run `simsquad skill\n" +
-			"install`) or not installed; 1 = skills newer than this binary, so a skill\n" +
+			"Exit codes: 0 = skills in sync, older, hand-edited or missing files\n" +
+			"(warning: re-run `simsquad skill install`) or not installed; 1 = skills\n" +
+			"newer than this binary, so a skill\n" +
 			"would call commands it doesn't have. Redirect stdout only (> out.json).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -83,7 +84,9 @@ func compareSkills(in *skills.Installed) contract.SkillStatus {
 	case in.Contract < skills.Contract:
 		st.Warning = fmt.Sprintf("skills use contract %d, older than this simsquad's %d; re-run `simsquad skill install`", in.Contract, skills.Contract)
 	case len(in.Missing) > 0:
-		st.Warning = fmt.Sprintf("skills missing: %v; re-run `simsquad skill install`", in.Missing)
+		st.Warning = fmt.Sprintf("skill files missing: %v; re-run `simsquad skill install`", in.Missing)
+	case in.Edited:
+		st.Warning = "skill files were edited by hand; put project knowledge in qa/README.md and re-run `simsquad skill install --force`"
 	default:
 		st.InSync = true
 	}

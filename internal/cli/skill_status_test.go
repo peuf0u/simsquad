@@ -152,6 +152,45 @@ func TestSkillStatusContractComparison(t *testing.T) {
 	})
 }
 
+// TestSkillStatusDamagedSkills: hand-edited or missing skill files at the
+// binary's contract are out of sync with a warning, but exit 0.
+func TestSkillStatusDamagedSkills(t *testing.T) {
+	cases := []struct {
+		name   string
+		damage func(t *testing.T, worker string)
+		warn   string
+	}{
+		{"edited", func(t *testing.T, worker string) {
+			if err := os.WriteFile(worker, []byte(readFile(t, worker)+"edit\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, "edited"},
+		{"missing", func(t *testing.T, worker string) {
+			if err := os.Remove(worker); err != nil {
+				t.Fatal(err)
+			}
+		}, "simsquad-test/worker.md"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newAppRepo(t)
+			withMobilecli(t, "1.0.13")
+			mustInstall(t)
+			tc.damage(t, filepath.Join(repo, skills.DefaultDir, "simsquad-test", "worker.md"))
+
+			got, err := skillStatus(t)
+			if c := exitCode(err); c != 0 {
+				t.Fatalf("exit = %d (err %v), want 0", c, err)
+			}
+			if got.InSync || !strings.Contains(got.Warning, tc.warn) ||
+				!strings.Contains(got.Warning, "simsquad skill install") {
+				t.Errorf("in_sync=%v warning=%q, want false with a warning mentioning %q and `simsquad skill install`",
+					got.InSync, got.Warning, tc.warn)
+			}
+		})
+	}
+}
+
 func TestSkillStatusMobilecli(t *testing.T) {
 	cases := []struct {
 		name      string
