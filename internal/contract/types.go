@@ -249,3 +249,28 @@ type SquadIndexEntry struct {
 type SquadIndex struct {
 	Squads map[string]SquadIndexEntry `json:"squads"`
 }
+
+// SkillStatus is the stdout of `simsquad skill status`: whether the agent
+// skills installed in the app repo and the mobilecli on PATH fit this
+// binary. The simsquad-test skill reads it as its first step.
+type SkillStatus struct {
+	Installed bool `json:"installed"`
+	// SkillContract is the contract the installed skills were written for
+	// (0 when none are installed); BinaryContract is this binary's.
+	SkillContract  int  `json:"skill_contract"`
+	BinaryContract int  `json:"binary_contract"`
+	InSync         bool `json:"in_sync"`
+	// Warning says what to do when the skills don't fit: re-run `skill
+	// install` (missing or older skills) or upgrade simsquad (newer skills).
+	Warning   string          `json:"warning,omitempty"`
+	Mobilecli MobilecliStatus `json:"mobilecli"`
+}
+
+// MobilecliStatus reports the mobilecli found on PATH against the minimum
+// version simsquad was tested with.
+type MobilecliStatus struct {
+	Found        bool   `json:"found"`
+	Version      string `json:"version,omitempty"`
+	Minimum      string `json:"minimum"`
+	MeetsMinimum bool   `json:"meets_minimum"`
+}
