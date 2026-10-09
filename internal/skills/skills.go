@@ -2,7 +2,8 @@
 // are embedded in the binary and installs them into an app repo (ADR 0001):
 // the skill files stamped with a generated-file header, the .claude/skills
 // links, the worker permissions for Claude Code and Codex, and the
-// .gitignore entry for run artifacts. It also reads the header of an
+// .gitignore entry for run artifacts, and a qa/README.md app notes scaffold
+// when the repo has none. It also reads the header of an
 // installed skill back, so callers can compare the installed skill contract
 // with Contract. The binary never interprets the skill text; it only copies
 // it out.

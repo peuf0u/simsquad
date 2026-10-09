@@ -1,6 +1,7 @@
 package skills
 
 import (
+	_ "embed"
 	"errors"
 	"fmt"
 	"os"
@@ -88,7 +89,7 @@ func Install(opts Options) (*Result, error) {
 	if err := in.checkHandEdits(); err != nil {
 		return nil, err
 	}
-	apply := []func() error{in.writeFiles, in.writeLinks, in.ignoreRunArtifacts}
+	apply := []func() error{in.writeFiles, in.writeLinks, in.ignoreRunArtifacts, in.scaffoldAppNotes}
 	for _, step := range apply {
 		if err := step(); err != nil {
 			return nil, err
@@ -244,6 +245,38 @@ func (in *installer) ignoreRunArtifacts() error {
 	}
 	if err := os.WriteFile(p, []byte(existing+RunsIgnore+"\n"), 0o644); err != nil {
 		return fmt.Errorf("skills: write .gitignore: %w", err)
+	}
+	in.touched = append(in.touched, in.display(p))
+	return nil
+}
+
+// AppNotesFile holds the app notes every worker reads. It belongs to the
+// team: Install creates a scaffold when it is missing and never touches it
+// again, not even under Force.
+const AppNotesFile = "qa/README.md"
+
+//go:embed scaffold/app-notes.md
+var appNotesScaffold []byte
+
+func (in *installer) scaffoldAppNotes() error {
+	p := filepath.Join(in.root, filepath.FromSlash(AppNotesFile))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return fmt.Errorf("skills: mkdir: %w", err)
+	}
+	// O_EXCL makes "never overwrite" atomic: an existing file is left alone.
+	f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	switch {
+	case errors.Is(err, os.ErrExist):
+	case err != nil:
+		return fmt.Errorf("skills: create %s: %w", AppNotesFile, err)
+	default:
+		_, werr := f.Write(appNotesScaffold)
+		if cerr := f.Close(); werr == nil {
+			werr = cerr
+		}
+		if werr != nil {
+			return fmt.Errorf("skills: write %s: %w", AppNotesFile, werr)
+		}
 	}
 	in.touched = append(in.touched, in.display(p))
 	return nil

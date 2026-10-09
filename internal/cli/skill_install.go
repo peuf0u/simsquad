@@ -25,6 +25,7 @@ func newSkillInstallCmd() *cobra.Command {
 			"  .claude/settings.json                      worker permissions (merged)\n" +
 			"  .codex/rules/simsquad.rules                worker permissions for Codex\n" +
 			"  .gitignore                                 gains a .simsquad/ line\n" +
+			"  qa/README.md                               app notes scaffold, only when missing\n" +
 			"\n" +
 			"Every generated file carries a do-not-edit header with the binary version\n" +
 			"and the skill contract number. Install refuses to overwrite a file that was\n" +
