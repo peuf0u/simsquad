@@ -67,8 +67,27 @@ image = "physical"
 count = 1
 target = "physical"
 `
-	if got := renderProjectTOML(state); got != want {
+	got, err := renderProjectTOML(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
 		t.Fatalf("renderProjectTOML() =\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// TestWriteStateFailsOnUnencodableAgentTable: an [agent] table that can't
+// be encoded fails equip instead of being silently dropped from the file.
+func TestWriteStateFailsOnUnencodableAgentTable(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	state := wizardState{projectAgent: map[string]any{"bad": func() {}}}
+	if _, err := writeState(dir, state, true); err == nil || !strings.Contains(err.Error(), "[agent]") {
+		t.Fatalf("writeState err = %v, want an [agent] encode error", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "simsquad.toml")); err == nil {
+		t.Error("simsquad.toml written without its [agent] table")
 	}
 }
 

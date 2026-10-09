@@ -180,17 +180,17 @@ func readAgentTable(path string) (map[string]any, error) {
 
 // renderAgentTable encodes a preserved [agent] table, preceded by a blank
 // line; "" when there is none.
-func renderAgentTable(agent map[string]any) string {
+func renderAgentTable(agent map[string]any) (string, error) {
 	if len(agent) == 0 {
-		return ""
+		return "", nil
 	}
 	var b strings.Builder
 	enc := toml.NewEncoder(&b)
 	enc.Indent = ""
 	if err := enc.Encode(map[string]any{"agent": agent}); err != nil {
-		return ""
+		return "", fmt.Errorf("encode [agent] table: %w", err)
 	}
-	return "\n" + b.String()
+	return "\n" + b.String(), nil
 }
 
 func writeState(configDir string, state wizardState, overwrite bool) (Result, error) {
@@ -203,10 +203,20 @@ func writeState(configDir string, state wizardState, overwrite bool) (Result, er
 			}
 		}
 	}
-	if err := os.WriteFile(projectPath, []byte(renderProjectTOML(state)), 0o644); err != nil {
+	// Render both files before writing either, so an encode error leaves
+	// the existing config untouched.
+	project, err := renderProjectTOML(state)
+	if err != nil {
+		return Result{}, fmt.Errorf("equip: %s: %w", config.ProjectFile, err)
+	}
+	local, err := renderLocalTOML(state)
+	if err != nil {
+		return Result{}, fmt.Errorf("equip: %s: %w", config.LocalFile, err)
+	}
+	if err := os.WriteFile(projectPath, []byte(project), 0o644); err != nil {
 		return Result{}, fmt.Errorf("equip: write %s: %w", config.ProjectFile, err)
 	}
-	if err := os.WriteFile(localPath, []byte(renderLocalTOML(state)), 0o644); err != nil {
+	if err := os.WriteFile(localPath, []byte(local), 0o644); err != nil {
 		return Result{}, fmt.Errorf("equip: write %s: %w", config.LocalFile, err)
 	}
 	gitignore := filepath.Join(configDir, ".gitignore")
@@ -518,7 +528,7 @@ func validatePositiveInt(value string) error {
 	return nil
 }
 
-func renderProjectTOML(state wizardState) string {
+func renderProjectTOML(state wizardState) (string, error) {
 	var b strings.Builder
 	b.WriteString("[project]\n")
 	b.WriteString("ios_scheme = " + strconv.Quote(state.iosScheme) + "\n")
@@ -534,7 +544,11 @@ func renderProjectTOML(state wizardState) string {
 			b.WriteString(k + " = " + strconv.Quote(state.env[k]) + "\n")
 		}
 	}
-	b.WriteString(renderAgentTable(state.projectAgent))
+	agent, err := renderAgentTable(state.projectAgent)
+	if err != nil {
+		return "", err
+	}
+	b.WriteString(agent)
 	for _, spec := range state.iosSpecs {
 		b.WriteString("\n[[ios.sims]]\n")
 		b.WriteString("device = " + strconv.Quote(spec.Device) + "\n")
@@ -548,16 +562,20 @@ func renderProjectTOML(state wizardState) string {
 		b.WriteString("count = " + strconv.Itoa(spec.Count) + "\n")
 		b.WriteString("target = " + strconv.Quote(string(spec.Target)) + "\n")
 	}
-	return b.String()
+	return b.String(), nil
 }
 
-func renderLocalTOML(state wizardState) string {
+func renderLocalTOML(state wizardState) (string, error) {
 	var b strings.Builder
 	b.WriteString("[project]\n")
 	b.WriteString("ios_repo = " + strconv.Quote(state.iosRepo) + "\n")
 	b.WriteString("android_repo = " + strconv.Quote(state.androidRepo) + "\n")
-	b.WriteString(renderAgentTable(state.localAgent))
-	return b.String()
+	agent, err := renderAgentTable(state.localAgent)
+	if err != nil {
+		return "", err
+	}
+	b.WriteString(agent)
+	return b.String(), nil
 }
 
 func ensureGitignoreEntry(path, entry string) error {
