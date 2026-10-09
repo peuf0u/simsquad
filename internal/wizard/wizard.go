@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"github.com/charmbracelet/huh"
 
 	"github.com/peuf0u/simsquad/internal/config"
@@ -56,6 +57,12 @@ type wizardState struct {
 	env         map[string]string
 	iosSpecs    []contract.IosSpec
 	androidSpec []contract.AndroidSpec
+	// projectAgent / localAgent are the raw [agent] tables of each file.
+	// The wizard doesn't edit them, but it rewrites both files wholesale, so
+	// it carries each table back into the file it came from (a local
+	// worker_model must not leak into the committed simsquad.toml).
+	projectAgent map[string]any
+	localAgent   map[string]any
 }
 
 var dottedAndroidImageRx = regexp.MustCompile(`;android-\d+\.\d+;`)
@@ -148,7 +155,42 @@ func loadState(configDir string, hasConfig bool) (wizardState, error) {
 	}
 	state.iosSpecs = cfg.IOSSpecs()
 	state.androidSpec = cfg.AndroidSpecs()
+	if state.projectAgent, err = readAgentTable(filepath.Join(configDir, config.ProjectFile)); err != nil {
+		return wizardState{}, err
+	}
+	if state.localAgent, err = readAgentTable(filepath.Join(configDir, config.LocalFile)); err != nil {
+		return wizardState{}, err
+	}
 	return state, nil
+}
+
+// readAgentTable returns the [agent] table of one TOML file, or nil when the
+// file or the table is absent.
+func readAgentTable(path string) (map[string]any, error) {
+	var doc map[string]any
+	if _, err := toml.DecodeFile(path, &doc); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("equip: parse %s: %w", filepath.Base(path), err)
+	}
+	agent, _ := doc["agent"].(map[string]any)
+	return agent, nil
+}
+
+// renderAgentTable encodes a preserved [agent] table, preceded by a blank
+// line; "" when there is none.
+func renderAgentTable(agent map[string]any) string {
+	if len(agent) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	enc := toml.NewEncoder(&b)
+	enc.Indent = ""
+	if err := enc.Encode(map[string]any{"agent": agent}); err != nil {
+		return ""
+	}
+	return "\n" + b.String()
 }
 
 func writeState(configDir string, state wizardState, overwrite bool) (Result, error) {
@@ -492,6 +534,7 @@ func renderProjectTOML(state wizardState) string {
 			b.WriteString(k + " = " + strconv.Quote(state.env[k]) + "\n")
 		}
 	}
+	b.WriteString(renderAgentTable(state.projectAgent))
 	for _, spec := range state.iosSpecs {
 		b.WriteString("\n[[ios.sims]]\n")
 		b.WriteString("device = " + strconv.Quote(spec.Device) + "\n")
@@ -513,6 +556,7 @@ func renderLocalTOML(state wizardState) string {
 	b.WriteString("[project]\n")
 	b.WriteString("ios_repo = " + strconv.Quote(state.iosRepo) + "\n")
 	b.WriteString("android_repo = " + strconv.Quote(state.androidRepo) + "\n")
+	b.WriteString(renderAgentTable(state.localAgent))
 	return b.String()
 }
 

@@ -165,6 +165,43 @@ simsquad skill status > skill-status.json
   minimum simsquad was tested with (1.0.13). If you installed simsquad with
   `go install`, install that mobilecli version or newer yourself.
 
+### Test runs
+
+`simsquad run` groups the commands that drive an agent test run. Like every
+other verb, each prints JSON on stdout and progress on stderr.
+
+#### `run new` — start a test run
+
+`simsquad run new <feature-file> [--fresh]`, run from the app repo, reads a
+Gherkin feature file and sets up a test run:
+
+```sh
+simsquad run new qa/features/login.feature > run-new.json
+# {"run_id", "run_dir", "squad_name", "fresh", "platforms", "deadline_seconds", "worker_model"}
+```
+
+- Background steps are prepended to every scenario, Scenario Outlines expand
+  to one scenario per Examples row, and tags are inherited from the feature.
+  `@ios` / `@android` restrict platforms, `@explore` marks the exploration
+  (its description is the charter). Other tags are kept and ignored. The
+  description's `Source:` line is recorded.
+- Squad: `qa-<repo>` (the folder holding `simsquad.toml`), or
+  `[agent].test_squad`; `--fresh` adds a unique suffix for an isolated squad.
+- Platforms: the equipped platforms the tags allow. A tag naming an
+  unequipped platform, malformed Gherkin, or a squad still used by a run
+  without a `report.json` is refused before anything is written.
+- Deadline per worker: `120 + Σ(60 + 30 × steps)` over the scenarios of the
+  busiest platform, `+ 600` when it has an exploration.
+- Creates `.simsquad/runs/<run-id>/` with `feature.feature` (a copy) and
+  `run.json` (title, source, squad, platforms, deadline, worker model and
+  the expanded scenarios).
+
+#### `run validate` — check a worker's result
+
+`simsquad run validate <worker-dir>` validates `<worker-dir>/result.json`
+against the embedded result schema plus the evidence rule, and prints
+`{"valid", "errors"}`. It exits `1` when the result is invalid.
+
 ## Configuration
 
 simsquad reads two optional TOML files from the nearest ancestor directory
@@ -175,7 +212,8 @@ containing either:
 
 Run `simsquad equip` for an interactive setup wizard, or copy
 [`simsquad.toml.example`](simsquad.toml.example) and edit. See that file for the
-full annotated schema (`[project]`, `[env]`, `[[ios.sims]]`, `[[android.sims]]`).
+full annotated schema (`[project]`, `[env]`, `[agent]`, `[[ios.sims]]`,
+`[[android.sims]]`).
 
 **Precedence**, highest to lowest:
 

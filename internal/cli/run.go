@@ -21,6 +21,7 @@ func newRunCmd() *cobra.Command {
 // constructor here.
 func runSubcommands() []*cobra.Command {
 	return []*cobra.Command{
+		newRunNewCmd(),
 		newRunValidateCmd(),
 	}
 }

@@ -216,3 +216,52 @@ func TestEnsureGitignoreEntryIsIdempotent(t *testing.T) {
 		t.Fatalf(".gitignore = %q, want %q", string(data), want)
 	}
 }
+
+func TestRunEquipWizardPreservesAgentTables(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "simsquad.toml"), `[project]
+ios_scheme = "MyApp"
+
+[agent]
+worker_model = "team-model"
+test_squad = "qa-shared"
+`)
+	writeFile(t, filepath.Join(dir, "simsquad.local.toml"), `[project]
+ios_repo = "."
+
+[agent]
+worker_model = "my-model"
+`)
+
+	if _, err := RunEquipWizard(Options{
+		CWD:    dir,
+		AddIOS: []contract.IosSpec{{Device: "iPhone 17", Runtime: "iOS 26.4", Count: 1}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	project := readTestFile(t, filepath.Join(dir, "simsquad.toml"))
+	for _, want := range []string{"[agent]", `worker_model = "team-model"`, `test_squad = "qa-shared"`, `device = "iPhone 17"`} {
+		if !strings.Contains(project, want) {
+			t.Fatalf("simsquad.toml missing %q:\n%s", want, project)
+		}
+	}
+	if strings.Contains(project, "my-model") {
+		t.Fatalf("local [agent] leaked into simsquad.toml:\n%s", project)
+	}
+	local := readTestFile(t, filepath.Join(dir, "simsquad.local.toml"))
+	if !strings.Contains(local, `worker_model = "my-model"`) || strings.Contains(local, "team-model") {
+		t.Fatalf("simsquad.local.toml [agent] not preserved as-is:\n%s", local)
+	}
+}
+
+func readTestFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
