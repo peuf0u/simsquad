@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/peuf0u/simsquad/internal/util"
 )
 
 func TestParseBuildSettings(t *testing.T) {
@@ -138,4 +140,29 @@ func TestResolvedFileArgs(t *testing.T) {
 			t.Errorf("expected the pin flag, got %v", args)
 		}
 	})
+}
+
+// Product lookup must only ever look in the repo's own derived tree; another
+// repo's leftover products must not be picked up (issue #15).
+func TestAppFromSettingsUsesRepoDerivedDir(t *testing.T) {
+	t.Setenv("SIMSQUAD_CACHE_DIR", t.TempDir())
+	repoA, repoB := "/work/a/app", "/work/b/app"
+
+	app := filepath.Join(util.IOSDerivedDataDir(repoA), simulatorProductsSubdir, "MyApp Beta.app")
+	if err := os.MkdirAll(app, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bs := buildSettings{ProductName: "MyApp Beta.app"}
+
+	got, err := appFromSettings(repoA, bs)
+	if err != nil || got != app {
+		t.Fatalf("appFromSettings(repoA) = %q, %v; want %q", got, err, app)
+	}
+	if got, err := appFromSettings(repoB, bs); err == nil {
+		t.Fatalf("repoB picked up repoA's product %q", got)
+	}
+	want := filepath.Join(util.IOSDerivedDataDir(repoA), simulatorProductsSubdir, "MyApp.app")
+	if got := ExpectedAppPath(repoA, "MyApp"); got != want {
+		t.Errorf("ExpectedAppPath = %q, want %q", got, want)
+	}
 }
