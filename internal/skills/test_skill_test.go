@@ -88,7 +88,8 @@ func TestTestSkillWalksTheTestRunProcedureInOrder(t *testing.T) {
 		"simsquad run report",
 		"simsquad dismiss --name",
 	} {
-		i := strings.Index(cmds, step)
+		// LastIndex: deploy's recovery path dismisses too, before step 10.
+		i := strings.LastIndex(cmds, step)
 		if i < 0 {
 			t.Errorf("procedure has no `%s` example", step)
 			continue
