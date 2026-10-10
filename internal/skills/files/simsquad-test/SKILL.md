@@ -14,8 +14,9 @@ reply, and keep your hands off the devices while workers run.
 Every simsquad command answers with JSON on stdout and progress on stderr.
 `--out <file>` also writes that JSON to a file (creating its folder); read
 the JSON from the file, and leave stderr on the terminal for the user. Run
-the commands exactly as shown, so each one stays a plain simsquad call the
-user has already allowed.
+the commands exactly as shown, one per call with nothing chained (no `;`,
+`&&` or `echo $?`; your tool reports the exit code), so each one stays a
+plain simsquad call the user has already allowed.
 
 Run everything from the app repo root (the folder holding `simsquad.toml`).
 The examples use shell variables for the values you read from earlier
@@ -129,7 +130,15 @@ only source of devices and env, so pass no other flags. It can take
 minutes.
 
 - Exit `0`: every device is ready. Exit `2`: some are; carry on with them.
-- Exit `1`: nothing is ready or the build failed. Go straight to step 9;
+- Exit `1` with an error that the squad is not reusable with the requested
+  matrix: the equipment changed since the squad was deployed. The squad
+  belongs to this run, so dismiss it and deploy again, once:
+
+  ```sh
+  simsquad dismiss --name "$SQUAD" --out "$RUN_DIR/dismiss.json"
+  ```
+
+- Any other exit `1`: nothing is ready or the build failed. Go straight to step 9;
   the report records an infra verdict. Diagnosing the failure is the
   user's call: in your reply (step 11), quote `builds.ios.error` or
   `builds.android.error` from `deploy.json`, which ends with the full

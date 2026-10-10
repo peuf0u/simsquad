@@ -88,7 +88,8 @@ func TestTestSkillWalksTheTestRunProcedureInOrder(t *testing.T) {
 		"simsquad run report",
 		"simsquad dismiss --name",
 	} {
-		i := strings.Index(cmds, step)
+		// LastIndex: deploy's recovery path dismisses too, before step 10.
+		i := strings.LastIndex(cmds, step)
 		if i < 0 {
 			t.Errorf("procedure has no `%s` example", step)
 			continue
@@ -197,6 +198,31 @@ func TestTestSkillSendsFailedDeployStraightToReport(t *testing.T) {
 		if !strings.Contains(m[1], want) {
 			t.Errorf("deploy step does not mention %q", want)
 		}
+	}
+}
+
+// After `simsquad equip` changes the equipment, deploy refuses the project
+// squad ("not reusable") until it's dismissed. Dry run 002 hit this the first
+// time Android was added; the skill must recover instead of reporting infra.
+func TestTestSkillRedeploysWhenEquipmentChanged(t *testing.T) {
+	skill, _ := installedTestSkill(t)
+	m := regexp.MustCompile(`(?s)## 5\. Deploy\n(.*?)\n## `).FindStringSubmatch(skill)
+	if m == nil {
+		t.Fatal("skill has no `## 5. Deploy` step")
+	}
+	for _, want := range []string{"not reusable", `simsquad dismiss --name "$SQUAD"`} {
+		if !strings.Contains(m[1], want) {
+			t.Errorf("deploy step does not mention %q", want)
+		}
+	}
+}
+
+// Dry run 002's orchestrator appended `echo "exit $?"` to a simsquad call,
+// which turned an allowed command into one needing approval.
+func TestTestSkillRunsCommandsUnchained(t *testing.T) {
+	skill, _ := installedTestSkill(t)
+	if !strings.Contains(skill, "nothing chained") {
+		t.Error("skill does not tell the agent to run commands unchained")
 	}
 }
 
