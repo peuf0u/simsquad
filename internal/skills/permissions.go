@@ -20,15 +20,15 @@ import (
 const ClaudeSettingsFile = ".claude/settings.json"
 
 // ClaudeAllow lists the permission rules Install adds to ClaudeSettingsFile.
-// Edit/Write paths without a leading "/" resolve against the cwd, which is
-// the repo root for workers; "/path" would resolve against the settings
-// file's directory (.claude/) instead.
+// The Edit rule also covers file writes: Claude Code never matches Write
+// rules against paths. Paths without a leading "/" resolve against the cwd,
+// which is the repo root for workers; "/path" would resolve against the
+// settings file's directory (.claude/) instead.
 var ClaudeAllow = []string{
 	"Bash(mobilecli:*)",
 	"Bash(simsquad reset:*)",
 	"Bash(simsquad run validate:*)",
 	"Edit(.simsquad/runs/**)",
-	"Write(.simsquad/runs/**)",
 }
 
 // CodexRulesFile is the Codex execution-policy file Install owns. Codex
