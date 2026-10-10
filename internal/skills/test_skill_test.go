@@ -200,6 +200,31 @@ func TestTestSkillSendsFailedDeployStraightToReport(t *testing.T) {
 	}
 }
 
+// After `simsquad equip` changes the equipment, deploy refuses the project
+// squad ("not reusable") until it's dismissed. Dry run 002 hit this the first
+// time Android was added; the skill must recover instead of reporting infra.
+func TestTestSkillRedeploysWhenEquipmentChanged(t *testing.T) {
+	skill, _ := installedTestSkill(t)
+	m := regexp.MustCompile(`(?s)## 5\. Deploy\n(.*?)\n## `).FindStringSubmatch(skill)
+	if m == nil {
+		t.Fatal("skill has no `## 5. Deploy` step")
+	}
+	for _, want := range []string{"not reusable", `simsquad dismiss --name "$SQUAD"`} {
+		if !strings.Contains(m[1], want) {
+			t.Errorf("deploy step does not mention %q", want)
+		}
+	}
+}
+
+// Dry run 002's orchestrator appended `echo "exit $?"` to a simsquad call,
+// which turned an allowed command into one needing approval.
+func TestTestSkillRunsCommandsUnchained(t *testing.T) {
+	skill, _ := installedTestSkill(t)
+	if !strings.Contains(skill, "nothing chained") {
+		t.Error("skill does not tell the agent to run commands unchained")
+	}
+}
+
 // Every simsquad command and flag the skill or the worker prompt shows must
 // exist on the binary, so neither teaches a command simsquad rejects.
 func TestTestSkillUsesOnlyRealSimsquadCommandsAndFlags(t *testing.T) {
