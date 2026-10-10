@@ -198,7 +198,6 @@ func TestSkillInstallWritesWorkerPermissionsForClaudeAndCodex(t *testing.T) {
 		"Bash(simsquad reset:*)",
 		"Bash(simsquad run validate:*)",
 		"Edit(.simsquad/runs/**)",
-		"Write(.simsquad/runs/**)",
 	}
 	if strings.Join(settings.Permissions.Allow, "|") != strings.Join(wantAllow, "|") {
 		t.Errorf("allow = %v, want %v", settings.Permissions.Allow, wantAllow)

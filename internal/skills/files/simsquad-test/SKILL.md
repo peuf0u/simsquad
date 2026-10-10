@@ -177,7 +177,7 @@ One worker per device, all at once. For each device, with `DEVICE_ID` its
      --out "$RUN_DIR/workers/$DEVICE_ID/worker.json" \
      -- claude -p "Read $RUN_DIR/workers/$DEVICE_ID/prompt.md and follow it." \
      --allowedTools "Bash(mobilecli:*)" "Bash(simsquad reset:*)" "Bash(simsquad run validate:*)" \
-     "Edit(.simsquad/runs/**)" "Write(.simsquad/runs/**)" \
+     "Edit(.simsquad/runs/**)" \
      --model "$WORKER_MODEL"
    ```
 
