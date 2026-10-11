@@ -328,9 +328,10 @@ keep `derived/`.
 ## Known limitations
 
 - **macOS only.** Relies on Xcode / Android SDK command-line tools.
-- **`avdmanager` rejects dotted API levels.** System images like
-  `android-36.1` (any `.N` suffix) break `avdmanager`; install a plain level
-  (e.g. `android-34`) via `sdkmanager`. simsquad pre-flights a warning.
+- **Older `avdmanager` rejects dotted API levels.** Outdated Android
+  command-line tools reject system images like `android-36.1` (any `.N`
+  suffix). Update them, or install a plain level (e.g. `android-34`) via
+  `sdkmanager`. simsquad pre-flights a warning.
 - **Never `2>&1`.** It merges stderr progress into the stdout JSON contract.
   Redirect stdout only (`simsquad deploy … > squad.json`), or use
   `--out squad.json`.

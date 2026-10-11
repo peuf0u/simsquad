@@ -186,8 +186,11 @@ These are recorded in detail in the plan; the highlights:
    `idb file rm` only for the data-container wipe. Don't "fix" this backwards.
 3. **`simctl create` rejects runtime short forms.** Normalise via
    `discover.ResolveRuntimeIdentifier` before invoking simctl.
-4. **`avdmanager` chokes on `android-36.1`** (any system image with a `.N`
-   suffix). Pre-flight warning + README "Known limitations" entry.
+4. **Older `avdmanager` chokes on `android-36.1`** (any system image with a
+   `.N` suffix). Current cmdline-tools accept it (dry run 002). Pre-flight
+   warning + README "Known limitations" entry. avdmanager reads images from
+   the SDK it was installed into, so `android.AVDManager` prefers the SDK's
+   own copy and points a `$PATH` copy at the SDK (`AVDManagerEnv`).
 5. **Orphan emulator on boot timeout.** Only `Setpgid` after the boot poll
    passes; on timeout, kill the captured `*exec.Cmd`.
 6. **`2>&1` would break stdout JSON parsing.** Docs and `--help` text must

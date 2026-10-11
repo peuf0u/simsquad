@@ -88,8 +88,8 @@ count   = 1
 # [[android.sims]] — one table per row; repeatable. (Spec-flag precedence
 # rule is described above the [[ios.sims]] block.)
 # device = AVD device profile ("pixel_7")
-# image  = avdmanager system-image id. Avoid dotted API levels like
-#          "android-36.1" — avdmanager rejects them; use e.g. android-34.
+# image  = avdmanager system-image id. Dotted API levels like "android-36.1"
+#          need current command-line tools; older ones reject them.
 # count  = how many emulators to create
 # target = "emulator" (default) or "physical". Physical rows claim plugged-in
 #          adb devices instead of creating emulators; device/image are ignored.
