@@ -32,10 +32,11 @@ const (
 )
 
 // dottedAPIRx matches API levels with a `.N` suffix — `android-36.1`,
-// `android-34.0`. avdmanager errors with "test: : integer expression expected"
-// when every installed image is suffixed this way; the pre-flight warn lets
-// the user know before they wait for an error message that doesn't name the
-// root cause.
+// `android-34.0`. Older cmdline-tools reject these images ("Package path is
+// not valid"); current ones, run against the configured SDK, accept them
+// (dry run 002 deployed android-36.1). The "test: : integer expression
+// expected" line avdmanager prints is a harmless script warning, not the
+// cause. The pre-flight warn names the fix before avdmanager's error does.
 var dottedAPIRx = regexp.MustCompile(`^android-\d+\.\d+`)
 
 // ProvisionInput is the matrix request handed to Provision.
@@ -213,7 +214,7 @@ func preflightAPIWarn(logger *progress.Logger) {
 	}
 	if any > 0 && allDotted && logger != nil {
 		logger.Warn("android-provision: dotted-api-levels",
-			progress.F("hint", "avdmanager rejects images like android-36.1; install android-34 via sdkmanager"))
+			progress.F("hint", "older cmdline-tools reject images like android-36.1; update them (brew upgrade --cask android-commandlinetools) or install a plain level like android-34"))
 	}
 }
 

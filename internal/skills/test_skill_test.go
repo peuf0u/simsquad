@@ -297,8 +297,8 @@ func TestWorkerDrivesItsOwnDeviceWithRealMobilecliCommands(t *testing.T) {
 			continue
 		}
 		seen[name] = true
-		if !strings.Contains(line, "--device ") {
-			t.Errorf("mobilecli call does not target the worker's own device: %s", line)
+		if !strings.Contains(line, `--device "$MOBILE"`) {
+			t.Errorf("mobilecli call does not target the worker's own device by its mobilecli id: %s", line)
 		}
 		for _, f := range flagRe.FindAllStringSubmatch(line, -1) {
 			ok := false
@@ -317,6 +317,21 @@ func TestWorkerDrivesItsOwnDeviceWithRealMobilecliCommands(t *testing.T) {
 	}
 	if !strings.Contains(worker, "--format text") {
 		t.Error("worker prompt does not read the screen with `dump ui --format text`")
+	}
+}
+
+// Dry run 002: mobilecli lists an Android emulator by its AVD name (the
+// device row's name), not the adb serial simsquad uses as its id, so a
+// worker passing the id to mobilecli got "device not found".
+func TestWorkerTellsMobilecliAndSimsquadIdsApart(t *testing.T) {
+	_, worker := installedTestSkill(t)
+	if !strings.Contains(worker, "Android emulator") || !strings.Contains(worker, "`name`") {
+		t.Error("worker prompt does not say an Android emulator's mobilecli id is its `name`")
+	}
+	for _, line := range fencedCommands(worker, "simsquad") {
+		if strings.Contains(line, "simsquad reset") && !strings.Contains(line, `--device "$DEVICE"`) {
+			t.Errorf("simsquad reset does not target the simsquad id: %s", line)
+		}
 	}
 }
 

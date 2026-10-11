@@ -4,12 +4,15 @@ You test one feature on exactly one device and leave evidence a developer
 can act on. Other workers test other devices of the same squad at the same
 time, so every command you run targets your own device and nothing else.
 Your prompt gives you the run folder, your worker folder, the squad, your
-time limit and your device's row (`platform`, `id`, `model`,
+time limit and your device's row (`platform`, `id`, `name`, `model`,
 `os_version`, `bundle_id`, `env`).
 
-In the examples below, `DEVICE` is your device's `id`, `BUNDLE` its
-`bundle_id`, `SQUAD` the squad name and `WORKER` your worker folder;
-write the values into each command.
+In the examples below, `DEVICE` is your device's `id`, which simsquad
+commands take. `MOBILE` is the id mobilecli knows your device by: on an
+Android emulator that is its `name` (mobilecli lists emulators by name,
+not by `emulator-NNNN`), on every other device its `id`. `BUNDLE` is its
+`bundle_id`, `SQUAD` the squad name and `WORKER` your worker folder; write
+the values into each command.
 
 ## Your output
 
@@ -44,14 +47,14 @@ The shell, for `simsquad` and `mobilecli` only, plus writing your files.
 mobilecli drives the device:
 
 ```sh
-mobilecli dump ui --device "$DEVICE" --format text
-mobilecli io tap --device "$DEVICE" @e5
-mobilecli io tap --device "$DEVICE" 120,640
-mobilecli io text --device "$DEVICE" "Přihlásit se"
-mobilecli io swipe --device "$DEVICE" 200,700,200,200
-mobilecli io button --device "$DEVICE" HOME
-mobilecli screenshot --device "$DEVICE" --output "$WORKER/screenshots/scenario-01.png"
-mobilecli apps launch --device "$DEVICE" "$BUNDLE"
+mobilecli dump ui --device "$MOBILE" --format text
+mobilecli io tap --device "$MOBILE" @e5
+mobilecli io tap --device "$MOBILE" 120,640
+mobilecli io text --device "$MOBILE" "Přihlásit se"
+mobilecli io swipe --device "$MOBILE" 200,700,200,200
+mobilecli io button --device "$MOBILE" HOME
+mobilecli screenshot --device "$MOBILE" --output "$WORKER/screenshots/scenario-01.png"
+mobilecli apps launch --device "$MOBILE" "$BUNDLE"
 ```
 
 - `dump ui --format text` lists the elements on screen as indented lines.
@@ -72,7 +75,7 @@ Run the scenarios in `run.json` order. For each one:
 
    ```sh
    simsquad reset --name "$SQUAD" --device "$DEVICE"
-   mobilecli apps launch --device "$DEVICE" "$BUNDLE"
+   mobilecli apps launch --device "$MOBILE" "$BUNDLE"
    ```
 
    If the app does not come up, reset and launch once more. If it still
