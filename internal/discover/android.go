@@ -89,7 +89,7 @@ func ListAVDDeviceProfiles() []string {
 	if err != nil {
 		return append([]string{}, fallbackAVDDevices...)
 	}
-	r, err := util.Run(avdmanager, []string{"list", "device", "-c"}, util.RunOpts{})
+	r, err := util.Run(avdmanager, []string{"list", "device", "-c"}, util.RunOpts{Env: android.AVDManagerEnv(avdmanager)})
 	if err != nil || r.Code != 0 {
 		return append([]string{}, fallbackAVDDevices...)
 	}

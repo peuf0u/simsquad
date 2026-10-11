@@ -394,6 +394,7 @@ func createAVD(name, image, deviceProfile string) error {
 	// avdmanager prompts on stdin for skin/path; feed a newline.
 	cmd := exec.Command(avd, "create", "avd", "-n", name, "-k", image, "-d", deviceProfile, "--force")
 	cmd.Stdin = strings.NewReader("\n")
+	cmd.Env = AVDManagerEnv(avd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("avdmanager create %s: %s", name, strings.TrimSpace(string(out)))
@@ -406,7 +407,7 @@ func avdExists(name string) bool {
 	if err != nil {
 		return false
 	}
-	r, err := util.Run(avd, []string{"list", "avd", "-c"}, util.RunOpts{})
+	r, err := util.Run(avd, []string{"list", "avd", "-c"}, util.RunOpts{Env: AVDManagerEnv(avd)})
 	if err != nil || r.Code != 0 {
 		return false
 	}
