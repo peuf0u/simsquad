@@ -33,10 +33,10 @@ func newRunReportCmd() *cobra.Command {
 			"schema) and report.md, and decides the verdict:\n\n" +
 			"  passed (exit 0)  every scenario passed on every device, zero bugs\n" +
 			"                   and every device deployed\n" +
-			"  failed (exit 1)  a failed or blocked scenario, a bug, a lost worker or\n" +
-			"                   an undeployed device\n" +
-			"  infra  (exit 2)  deploy failed, no ready device, or no worker left a\n" +
-			"                   usable result\n\n" +
+			"  failed (exit 1)  a failed or blocked scenario, a bug, or a lost worker\n" +
+			"  infra  (exit 2)  deploy failed, no ready device, no worker left a\n" +
+			"                   usable result, or an undeployed device with nothing\n" +
+			"                   failed on the devices that ran\n\n" +
 			"A missing or unparseable run.json exits 2 with no report and no stdout.\n" +
 			"Writing report.json marks the run finished.\n\n" +
 			"stdout: {\"verdict\", \"report_json\", \"report_md\", \"counts\"}.\n\n" +

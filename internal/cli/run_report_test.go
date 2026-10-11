@@ -424,7 +424,9 @@ func TestRunReportUnusableRunRecord(t *testing.T) {
 
 // TestRunReportListsUndeployedDevices: a device deploy couldn't get ready
 // had no worker; it is listed, not counted, and it stops a passed verdict —
-// the run never tested the app on it.
+// the run never tested the app on it. With nothing wrong on the devices that
+// did run, that's an infrastructure outcome, not an app failure (dry run 002:
+// an emulator that couldn't be created turned a clean iOS pass into failed).
 func TestRunReportListsUndeployedDevices(t *testing.T) {
 	dir := copyRunFixture(t, "pipeline")
 	p := filepath.Join(dir, "deploy.json")
@@ -437,14 +439,32 @@ func TestRunReportListsUndeployedDevices(t *testing.T) {
 	writeWorkerFile(t, dir, "ABC-123", "result.json", passingResult("ABC-123"))
 
 	got, code := runReport(t, dir)
-	if got.Verdict != "failed" || code != 1 || got.Counts["devices"] != 1 {
-		t.Fatalf("got verdict %q exit %d counts %v, want failed / 1 with 1 device", got.Verdict, code, got.Counts)
+	if got.Verdict != "infra" || code != 2 || got.Counts["devices"] != 1 {
+		t.Fatalf("got verdict %q exit %d counts %v, want infra / 2 with 1 device", got.Verdict, code, got.Counts)
 	}
 	if rep := loadReport(t, got.ReportJSON); !strings.Contains(rep.Summary.Reason, "simsquad-qa-app-ios-1") {
 		t.Errorf("reason = %q, want it to name the undeployed device", rep.Summary.Reason)
 	}
 	if md := readFile(t, got.ReportMD); !strings.Contains(md, "simctl install failed") {
 		t.Errorf("report.md doesn't list the undeployed device:\n%s", md)
+	}
+}
+
+// TestRunReportUndeployedDeviceKeepsAFailure: an app failure on a device
+// that did run outweighs the infrastructure gap, so the verdict stays failed.
+func TestRunReportUndeployedDeviceKeepsAFailure(t *testing.T) {
+	dir := copyRunFixture(t, "pipeline")
+	p := filepath.Join(dir, "deploy.json")
+	raw := strings.Replace(readFile(t, p), `"status": "ready",
+      "ready_at": "2026-06-12T16:58:30Z",`, `"status": "error",
+      "error_message": "simctl install failed",`, 1)
+	if err := os.WriteFile(p, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, code := runReport(t, dir)
+	if got.Verdict != "failed" || code != 1 {
+		t.Fatalf("got verdict %q exit %d, want failed / 1", got.Verdict, code)
 	}
 }
 

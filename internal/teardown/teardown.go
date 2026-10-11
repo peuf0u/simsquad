@@ -116,7 +116,7 @@ func teardownAndroidEmulator(dev contract.Device) error {
 		// Missing cmdline-tools is recoverable for teardown — log via caller.
 		return nil
 	}
-	r, _ := util.Run(avd, []string{"delete", "avd", "-n", name}, util.RunOpts{})
+	r, _ := util.Run(avd, []string{"delete", "avd", "-n", name}, util.RunOpts{Env: android.AVDManagerEnv(avd)})
 	if r.Code != 0 {
 		return fmt.Errorf("avdmanager delete %s: %s", name, strings.TrimSpace(r.Stderr))
 	}
@@ -229,7 +229,7 @@ func pruneAndroid(tracked map[string]struct{}, logger *progress.Logger) []string
 	if err != nil {
 		return nil
 	}
-	r, err := util.Run(avd, []string{"list", "avd", "-c"}, util.RunOpts{})
+	r, err := util.Run(avd, []string{"list", "avd", "-c"}, util.RunOpts{Env: android.AVDManagerEnv(avd)})
 	if err != nil || r.Code != 0 {
 		return nil
 	}
@@ -242,7 +242,7 @@ func pruneAndroid(tracked map[string]struct{}, logger *progress.Logger) []string
 		if _, ok := tracked[name]; ok {
 			continue
 		}
-		_, _ = util.Run(avd, []string{"delete", "avd", "-n", name}, util.RunOpts{})
+		_, _ = util.Run(avd, []string{"delete", "avd", "-n", name}, util.RunOpts{Env: android.AVDManagerEnv(avd)})
 		removed = append(removed, name)
 		if logger != nil {
 			logger.Info("prune: android", progress.F("name", name))

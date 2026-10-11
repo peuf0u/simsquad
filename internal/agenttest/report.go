@@ -279,12 +279,14 @@ func countReport(rep *contract.Report) contract.ReportCounts {
 }
 
 // decideVerdict applies the spec's rules. infra: deploy failed, no ready
-// device, or no worker left a usable result. passed: every scenario passed
-// on every device, zero bugs, every worker ok and every device of the run's
-// platforms deployed. Anything else is failed — including blocked
-// scenarios, partial worker loss and undeployed devices: none is "every
-// scenario passed", and none is an infrastructure-only outcome while some
-// worker did test the app.
+// device, no worker left a usable result, or some device wasn't deployed
+// while the devices that ran found nothing wrong — the run couldn't cover
+// the equipment, which is not an app failure (spec #1, story 68). passed:
+// every scenario passed on every device, zero bugs, every worker ok and
+// every device of the run's platforms deployed. Anything else is failed —
+// including blocked scenarios and partial worker loss: neither is "every
+// scenario passed", and neither is infrastructure-only while some worker
+// did test the app.
 func decideVerdict(rep *contract.Report, deployErr error, workersRan bool) (string, string) {
 	c := rep.Summary.Counts
 	switch {
@@ -299,7 +301,7 @@ func decideVerdict(rep *contract.Report, deployErr error, workersRan bool) (stri
 	case c.ScenariosFailed > 0 || c.ScenariosBlocked > 0 || c.Bugs > 0 || c.WorkersOK < c.Devices:
 		return contract.VerdictFailed, undeployedReason(rep.Undeployed)
 	case len(rep.Undeployed) > 0:
-		return contract.VerdictFailed, undeployedReason(rep.Undeployed)
+		return contract.VerdictInfra, undeployedReason(rep.Undeployed)
 	default:
 		return contract.VerdictPassed, ""
 	}

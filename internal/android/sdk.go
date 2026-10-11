@@ -65,6 +65,12 @@ func whichOrUnder(binary string, roots ...string) string {
 	if p, err := exec.LookPath(binary); err == nil {
 		return p
 	}
+	return findUnder(binary, roots...)
+}
+
+// findUnder returns the first executable named binary found walking roots
+// in order, or "". Missing roots are skipped.
+func findUnder(binary string, roots ...string) string {
 	for _, root := range roots {
 		if _, err := os.Stat(root); err != nil {
 			continue
@@ -98,19 +104,64 @@ func whichOrUnder(binary string, roots ...string) string {
 }
 
 // AVDManager locates avdmanager. Missing tools return CmdlineToolsInstallHint.
+//
+// Unlike the other tools it prefers the SDK's own copy over $PATH:
+// avdmanager reads system images from the SDK it was installed into, not
+// from ANDROID_HOME. Homebrew's android-commandlinetools brings its own SDK,
+// so its avdmanager on $PATH rejected images installed in the configured
+// SDK (dry run 002). A $PATH copy is still used when the SDK has none; run
+// it with AVDManagerEnv so it reads the configured SDK.
 func AVDManager() (string, error) {
 	root, err := SDKRoot()
 	if err != nil {
 		return "", err
 	}
-	p := whichOrUnder("avdmanager",
+	if p := underOrWhich("avdmanager",
+		filepath.Join(root, "cmdline-tools", "latest", "bin"),
 		filepath.Join(root, "cmdline-tools"),
 		filepath.Join(root, "tools", "bin"),
-	)
-	if p == "" {
-		return "", sdkErr("avdmanager not found under %s/cmdline-tools.\n%s", root, CmdlineToolsInstallHint)
+	); p != "" {
+		return p, nil
 	}
-	return p, nil
+	return "", sdkErr("avdmanager not found under %s/cmdline-tools.\n%s", root, CmdlineToolsInstallHint)
+}
+
+// AVDManagerEnv returns the environment to run the avdmanager at path with:
+// nil (inherit) when it belongs to the configured SDK, otherwise the current
+// environment with AVDMANAGER_OPTS pointing its tools dir into that SDK.
+// avdmanager takes its SDK root from the com.android.sdkmanager.toolsdir
+// property (two levels up), and has no --sdk_root flag.
+func AVDManagerEnv(path string) []string {
+	root, err := SDKRoot()
+	if err != nil {
+		return nil
+	}
+	if rel, err := filepath.Rel(root, path); err == nil && !strings.HasPrefix(rel, "..") {
+		return nil
+	}
+	opt := "-Dcom.android.sdkmanager.toolsdir=" + filepath.Join(root, "cmdline-tools", "latest")
+	if cur := os.Getenv("AVDMANAGER_OPTS"); cur != "" {
+		opt = cur + " " + opt
+	}
+	env := []string{}
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "AVDMANAGER_OPTS=") {
+			env = append(env, kv)
+		}
+	}
+	return append(env, "AVDMANAGER_OPTS="+opt)
+}
+
+// underOrWhich is whichOrUnder with the order reversed: the roots first,
+// then $PATH.
+func underOrWhich(binary string, roots ...string) string {
+	if p := findUnder(binary, roots...); p != "" {
+		return p
+	}
+	if p, err := exec.LookPath(binary); err == nil {
+		return p
+	}
+	return ""
 }
 
 // SDKManager locates sdkmanager. Missing tools return CmdlineToolsInstallHint.
@@ -192,8 +243,8 @@ func ADB() (string, error) {
 	return "", sdkErr("adb not found under %s/platform-tools", root)
 }
 
-// HasSystemImage checks for a folder matching the avdmanager-style image id
-// ("system-images;android-34;google_apis;arm64-v8a"). Returns false on any
+// HasSystemImage checks for an installed image matching the avdmanager-style
+// id ("system-images;android-34;google_apis;arm64-v8a"). Returns false on any
 // malformed input rather than erroring — callers treat as "not installed".
 func HasSystemImage(imageID string) bool {
 	root, err := SDKRoot()
@@ -204,9 +255,15 @@ func HasSystemImage(imageID string) bool {
 	if len(parts) != 4 || parts[0] != "system-images" {
 		return false
 	}
+	// Same install heuristic as discover.ListInstalledAndroidImages: an
+	// interrupted download leaves the folder without either file.
 	folder := filepath.Join(root, parts[0], parts[1], parts[2], parts[3])
-	fi, err := os.Stat(folder)
-	return err == nil && fi.IsDir()
+	for _, f := range []string{"package.xml", "system.img"} {
+		if fi, err := os.Stat(filepath.Join(folder, f)); err == nil && !fi.IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 func isExec(p string) bool {
