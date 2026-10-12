@@ -6,6 +6,8 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-12
+
 Agent testing: tell your coding agent "verify PROJ-123" and it checks the
 feature on your squad's simulators and emulators, one headless worker per
 device, and hands back a verdict and a report. See
