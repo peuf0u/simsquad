@@ -6,19 +6,36 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+Agent testing: tell your coding agent "verify PROJ-123" and it checks the
+feature on your squad's simulators and emulators, one headless worker per
+device, and hands back a verdict and a report. See
+[docs/agent-testing.md](docs/agent-testing.md).
+
 ### Added
 
-- `simsquad skill install [--dir] [--force]` writes the simsquad and
-  simsquad-test agent skills into the app repo, links them for Claude Code,
-  writes worker permissions for Claude Code and Codex, and ignores
-  `.simsquad/`. Skill text is a placeholder for now.
-- `simsquad run new <feature-file> [--fresh]` reads a Gherkin feature file,
-  picks the squad and platforms, computes the worker deadline and creates
-  `.simsquad/runs/<run-id>/` with `run.json` and a copy of the feature.
+- **Agent skills.** `simsquad skill install [--dir] [--force]` writes two
+  skills into the app repo: **simsquad** (everyday CLI use) and
+  **simsquad-test** (feature verification, with the worker instructions).
+  Codex finds them in `.agents/skills/`; Claude Code through
+  `.claude/skills/` links. Install also merges worker permissions into
+  `.claude/settings.json`, writes `.codex/rules/simsquad.rules`, adds
+  `.simsquad/` to `.gitignore` and scaffolds `qa/README.md` (app notes) when
+  missing. Generated files carry a do-not-edit header with a skill contract
+  number; hand-edited skill files are only overwritten with `--force`.
+  `simsquad equip` offers the install after saving.
+- `simsquad skill status` checks that the installed skills match this
+  binary's skill contract and that mobilecli is on `PATH` at 1.0.13 or
+  newer. Exits `1` when the skills are newer than the binary.
+- `simsquad run new <feature-file> [--fresh]` reads a Gherkin feature file
+  (Background, Scenario Outlines, `@ios` / `@android` / `@explore` tags, a
+  `Source:` line), picks the squad (`qa-<repo>`) and platforms, computes the
+  worker deadline and creates `.simsquad/runs/<run-id>/` with `run.json` and
+  a copy of the feature. Refuses unequipped platforms and a squad busy with
+  an unfinished run.
 - `simsquad run worker --dir <worker-dir> --timeout <seconds> -- <command…>`
-  runs one headless worker in its own process group, kills the whole group
-  at the deadline and records `blocked: timeout` or
-  `error: worker exited <code>` in the worker's status file.
+  runs one headless worker in its own process group with stdin closed, kills
+  the whole group at the deadline and records `ok`, `blocked: timeout` or
+  `error: worker exited <code>`.
 - `simsquad run validate <worker-dir>` checks `result.json` against the
   embedded result schema and the evidence rule; emits `{valid, errors}` and
   exits `1` when invalid.
@@ -29,6 +46,34 @@ All notable changes are recorded here. The format follows
   `1` failed, `2` infra. Writing `report.json` marks the run finished.
 - `[agent]` table in `simsquad.toml`: `worker_model`, `test_squad`,
   `dev_squad`. `simsquad equip` keeps it when rewriting the config.
+- **`--out <file>` on every command** writes the stdout JSON to a file too
+  (parent folders created; removed when the command fails before emitting
+  JSON). Agent harnesses that ask approval for shell redirection need it.
+- Homebrew installs [mobilecli](https://github.com/mobile-next/mobilecli)
+  1.0.13 from the same tap as a dependency.
+
+### Changed
+
+- **iOS builds are kept per app repo.** Derived data and the build log live
+  under `~/.cache/simsquad/derived/ios/<repo>-<hash>/`, so one project's
+  Swift packages can no longer break another project's link step.
+- `deploy` returns its exit code instead of exiting directly, so `--out` and
+  deferred cleanup run on exit `1` and `2` too.
+- **Older `avdmanager` rejects dotted API levels**, not avdmanager in
+  general: current command-line tools create `android-36.1` emulators. The
+  pre-flight warning now says to update the tools.
+
+### Fixed
+
+- **simsquad used the wrong `avdmanager`.** It took the first one on `PATH`
+  (often Homebrew's), which reads images from its own SDK rather than
+  `ANDROID_HOME`, so equipped images were reported as invalid. It now
+  prefers the SDK's own `cmdline-tools` and points a `PATH` copy at the
+  configured SDK.
+- An Android system-image folder left empty by an interrupted download no
+  longer counts as installed; deploy reports it as missing.
+- `simsquad equip` no longer drops render errors, and keeps the `[agent]`
+  table when it rewrites `simsquad.toml`.
 
 ## [0.3.0] - 2026-10-08
 

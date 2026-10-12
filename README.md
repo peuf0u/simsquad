@@ -17,11 +17,17 @@ matrix is created only when the name is new or its devices are gone.
 The integration surface is the **CLI itself** — every verb emits JSON on
 stdout, human progress on stderr. There are no sidecar files to plumb.
 
+**Agent testing.** simsquad also ships agent skills for Claude Code and
+Codex: tell your agent "verify PROJ-123" and it turns the ticket into a
+Gherkin feature file, runs one headless worker per simulator or emulator,
+and hands back a verdict (passed, failed or infra) with a report and
+screenshots. See [docs/agent-testing.md](docs/agent-testing.md).
+
 ## Status
 
-Internal pre-release. Go rewrite of the Python `qa-pool` reference tool. macOS
-only (it shells out to `xcrun simctl`, `xcodebuild`, `idb`, `adb`,
-`avdmanager`, `emulator`).
+Pre-1.0. Go rewrite of the Python `qa-pool` reference tool. macOS only (it
+shells out to `xcrun simctl`, `xcodebuild`, `idb`, `adb`, `avdmanager`,
+`emulator`). Agent testing is new in 0.4.0; Codex support is experimental.
 
 ## Install
 
@@ -56,6 +62,24 @@ simsquad devices --name=login-tests --ready
 # Tear it down.
 simsquad dismiss --name=login-tests
 ```
+
+### Agent testing quickstart
+
+```sh
+cd ~/code/myapp
+simsquad equip            # describe the app and devices; accept the skill install
+$EDITOR qa/README.md      # app notes: test accounts, navigation, quirks
+git add simsquad.toml .agents .claude .codex .gitignore qa && git commit -m "Add simsquad agent testing"
+```
+
+Then, in Claude Code or Codex, from the app repo:
+
+> verify that resend is disabled for 30 seconds
+
+The agent drafts a feature file, deploys the project squad, runs a worker
+per device and replies with the verdict, the findings and the path of
+`report.md` under `.simsquad/runs/`. How it works, feature files, app notes
+and verdicts: [docs/agent-testing.md](docs/agent-testing.md).
 
 ## Concepts
 
@@ -340,11 +364,15 @@ keep `derived/`.
 
 ## Documentation
 
+- [`docs/agent-testing.md`](docs/agent-testing.md) — agent testing: project
+  setup, running a test, what the orchestrator and workers do, feature
+  files, verdicts, app notes, Codex.
 - [`docs/integrations/consumer.md`](docs/integrations/consumer.md) — how a test
   driver (qa-run / AI agent / CI) consumes a squad: the deploy → devices →
   dismiss lifecycle, JSON shapes, and the naming convention for isolation.
-- [`docs/execution-layer-mvp.md`](docs/execution-layer-mvp.md) — MVP design for
-  agent-driven exploratory and smoke testing above the simsquad CLI.
+- [`GLOSSARY.md`](GLOSSARY.md) — the project's vocabulary (squad, equipment,
+  test run, worker, verdict, …).
+- [`docs/adr/`](docs/adr/) — architecture decisions.
 - [`CHANGELOG.md`](CHANGELOG.md) — release notes.
 - `CLAUDE.md` — contributor/contract reference (locked decisions, landmines).
 
