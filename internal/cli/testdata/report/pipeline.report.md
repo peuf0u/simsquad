@@ -6,7 +6,7 @@ Run `login-magic-link-20260612-170000` · squad `qa-app` · 2026-06-12T17:00:00Z
 
 **2 device(s)** · scenarios 2 passed / 0 failed / 2 blocked · **1 bug(s)** · 0 question(s) · 0 note(s)
 
-## Env
+## Context
 
 | Key | Value |
 |---|---|

@@ -4,6 +4,8 @@
 // are breaking changes.
 package contract
 
+import "encoding/json"
+
 // Platform identifies an OS family. iOS simulators and Android emulators are
 // the only first-class targets today; physical Android devices share the same
 // Platform but set the Physical flag on Device.
@@ -111,17 +113,18 @@ type Builds struct {
 // registry key. Ports is internal-only (allocator state) and is excluded from
 // Public output.
 //
-// Env is the squad's free-form test context — credentials, API endpoint hints,
-// feature flags, locale, anything a consumer (qa-run skill, CI script, AI
-// agent) needs to drive tests. Simsquad does not parse env values; the
-// execution layer (ios/, android/) does not read env. Mutated via
-// `simsquad set-env`.
+// Context is the squad's free-form test context — persona, stage, test-account
+// login, API endpoint hints, feature flags, anything a consumer (qa-run skill,
+// CI script, AI agent) needs to drive tests. Simsquad does not parse context
+// values; the execution layer (ios/, android/) does not read them. Mutated via
+// `simsquad set-context`. Until 0.5.0 it was called env; records written
+// before that are read through UnmarshalJSON.
 type SquadRecord struct {
 	Name      string            `json:"name"`
 	CreatedAt string            `json:"created_at"`
 	Builds    Builds            `json:"builds"`
 	Devices   []Device          `json:"devices"`
-	Env       map[string]string `json:"env,omitempty"`
+	Context   map[string]string `json:"context,omitempty"`
 	Ports     map[string]int    `json:"ports,omitempty"`
 }
 
@@ -133,8 +136,26 @@ func (s SquadRecord) Public() SquadPublic {
 		CreatedAt: s.CreatedAt,
 		Builds:    s.Builds,
 		Devices:   s.Devices,
-		Env:       s.Env,
+		Context:   s.Context,
 	}
+}
+
+// UnmarshalJSON reads a record written before 0.5.0, when context was
+// called env, so squads deployed by an older simsquad keep their context.
+func (s *SquadRecord) UnmarshalJSON(b []byte) error {
+	type plain SquadRecord
+	var v struct {
+		plain
+		LegacyEnv map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*s = SquadRecord(v.plain)
+	if s.Context == nil {
+		s.Context = v.LegacyEnv
+	}
+	return nil
 }
 
 // SquadPublic is the JSON shape emitted on stdout by `simsquad deploy` and
@@ -144,9 +165,27 @@ type SquadPublic struct {
 	CreatedAt string            `json:"created_at"`
 	Builds    Builds            `json:"builds"`
 	Devices   []Device          `json:"devices"`
-	Env       map[string]string `json:"env,omitempty"`
+	Context   map[string]string `json:"context,omitempty"`
 
 	Reused bool `json:"reused,omitempty"`
+}
+
+// UnmarshalJSON reads deploy output written before 0.5.0 (a run folder's
+// deploy.json), when context was called env.
+func (s *SquadPublic) UnmarshalJSON(b []byte) error {
+	type plain SquadPublic
+	var v struct {
+		plain
+		LegacyEnv map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*s = SquadPublic(v.plain)
+	if s.Context == nil {
+		s.Context = v.LegacyEnv
+	}
+	return nil
 }
 
 // DeviceView is the uniform per-device shape emitted by `simsquad devices`.
@@ -155,7 +194,7 @@ type SquadPublic struct {
 // image, etc.) stay in the persisted Device and are reachable via
 // `status --name=<squad>` for orchestrators that want them.
 //
-// Env is a defensive copy of the parent squad's env, surfaced on every device
+// Context is a defensive copy of the parent squad's context, surfaced on every device
 // row so consumers don't need a cross-reference back to the squad record.
 type DeviceView struct {
 	Platform  Platform          `json:"platform"`
@@ -166,15 +205,16 @@ type DeviceView struct {
 	BundleID  string            `json:"bundle_id,omitempty"`
 	Status    DeviceStatus      `json:"status"`
 	ReadyAt   string            `json:"ready_at,omitempty"`
-	Env       map[string]string `json:"env,omitempty"`
+	Context   map[string]string `json:"context,omitempty"`
 }
 
 // NewDeviceView projects a Device into the DeviceView shape, mapping the
 // platform-specific fields onto the uniform Model + OSVersion fields. The
 // device's own ReadyAt wins; readyAt (typically the squad-record creation
-// time) is the fallback for records that predate per-device stamps. env is a defensive copy of the squad's env, passed in so consumers see
-// the test context alongside the device handle.
-func NewDeviceView(d Device, readyAt string, env map[string]string) DeviceView {
+// time) is the fallback for records that predate per-device stamps. ctx is
+// copied defensively from the squad's context, so consumers see the test
+// context alongside the device handle.
+func NewDeviceView(d Device, readyAt string, ctx map[string]string) DeviceView {
 	v := DeviceView{
 		Platform: d.Platform,
 		ID:       d.UDID,
@@ -196,10 +236,10 @@ func NewDeviceView(d Device, readyAt string, env map[string]string) DeviceView {
 		v.Model = d.DeviceProfile
 		v.OSVersion = androidOSVersion(d.SystemImage)
 	}
-	if len(env) > 0 {
-		v.Env = make(map[string]string, len(env))
-		for k, val := range env {
-			v.Env[k] = val
+	if len(ctx) > 0 {
+		v.Context = make(map[string]string, len(ctx))
+		for k, val := range ctx {
+			v.Context[k] = val
 		}
 	}
 	return v

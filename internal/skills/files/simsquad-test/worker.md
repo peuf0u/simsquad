@@ -5,7 +5,7 @@ can act on. Other workers test other devices of the same squad at the same
 time, so every command you run targets your own device and nothing else.
 Your prompt gives you the run folder, your worker folder, the squad, your
 time limit and your device's row (`platform`, `id`, `name`, `model`,
-`os_version`, `bundle_id`, `env`).
+`os_version`, `bundle_id`, `context`).
 
 In the examples below, `DEVICE` is your device's `id`, which simsquad
 commands take. `MOBILE` is the id mobilecli knows your device by: on an
@@ -38,7 +38,7 @@ a valid partial result.
    leaves out your device's platform.
 2. `qa/README.md` in the app repo: the **app notes**, with the app's
    navigation tricks, test accounts and known quirks.
-3. Your device row's `env`: the test context (persona, API stage,
+3. Your device row's `context`: the test context (persona, API stage,
    credentials). Use these values to log in and reach the feature.
 
 ## Your tools

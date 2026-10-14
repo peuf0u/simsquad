@@ -26,18 +26,19 @@ ios_scheme          = "MyApp"
 android_gradle_task = ":app:assembleDevDebug"
 
 # ---------------------------------------------------------------------------
-# [env] — project-wide test context, applied to every squad at deploy time.
+# [context] — project-wide test context, applied to every squad at deploy time.
 # ---------------------------------------------------------------------------
 # Free-form string map. simsquad never interprets these — they're passed
 # through to consumers (qa-run, CI, your AI agent) verbatim.
 #
-# Precedence: if ANY `--env KEY=VALUE` flag is passed to `deploy`, this
-# [env] block is ignored entirely and only the CLI values apply (mirrors
-# how --ios-spec replaces the [[ios.sims]] matrix). Use `simsquad set-env`
-# to mutate a live squad's env after deploy.
+# Precedence: if ANY `--context KEY=VALUE` flag is passed to `deploy`, this
+# [context] block is ignored entirely and only the CLI values apply (mirrors
+# how --ios-spec replaces the [[ios.sims]] matrix). Use `simsquad set-context`
+# to mutate a live squad's context after deploy. Before 0.5.0 this table was
+# [env]; that name still loads, with a deprecation warning.
 #
 # Put real secrets in simsquad.local.toml, not here.
-[env]
+[context]
 api = "staging"
 # user         = "alice"      # better in simsquad.local.toml
 # feature_flag = "new_ui"

@@ -49,7 +49,7 @@ func TestEverydaySkillCoversDevSquadCommands(t *testing.T) {
 	skill := installedEverydaySkill(t)
 	invocations := strings.Join(skillInvocations(skill), "\n")
 
-	for _, verb := range []string{"deploy", "devices", "reset", "status", "set-env", "dismiss"} {
+	for _, verb := range []string{"deploy", "devices", "reset", "status", "set-context", "dismiss"} {
 		if !strings.Contains(invocations, "simsquad "+verb+" ") {
 			t.Errorf("skill has no `simsquad %s` example", verb)
 		}

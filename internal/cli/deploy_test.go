@@ -73,6 +73,7 @@ func TestCommandsRejectPositionalArgs(t *testing.T) {
 		{"release", "extra", "--name=foo"},
 		{"devices", "extra", "--name=foo"},
 		{"reset", "extra", "--name=foo"},
+		{"set-context", "extra", "--name=foo"},
 		{"set-env", "extra", "--name=foo"},
 	} {
 		args := args
@@ -183,7 +184,7 @@ func TestExitCodeFromDevices(t *testing.T) {
 	}
 }
 
-func TestParseEnvEntries(t *testing.T) {
+func TestParseContextEntries(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -211,24 +212,24 @@ func TestParseEnvEntries(t *testing.T) {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := parseEnvEntries(c.in)
+			got, err := parseContextEntries(c.in)
 			if c.wantErr {
 				if err == nil {
-					t.Fatalf("parseEnvEntries(%v) succeeded with %v, want error", c.in, got)
+					t.Fatalf("parseContextEntries(%v) succeeded with %v, want error", c.in, got)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("parseEnvEntries(%v): %v", c.in, err)
+				t.Fatalf("parseContextEntries(%v): %v", c.in, err)
 			}
 			if !reflect.DeepEqual(got, c.want) {
-				t.Fatalf("parseEnvEntries(%v) = %v, want %v", c.in, got, c.want)
+				t.Fatalf("parseContextEntries(%v) = %v, want %v", c.in, got, c.want)
 			}
 		})
 	}
 }
 
-func TestApplyEnvSource(t *testing.T) {
+func TestApplyContextSource(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -267,9 +268,9 @@ func TestApplyEnvSource(t *testing.T) {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			got := applyEnvSource(c.base, c.toml, c.overrides)
+			got := applyContextSource(c.base, c.toml, c.overrides)
 			if !reflect.DeepEqual(got, c.want) {
-				t.Fatalf("applyEnvSource = %v, want %v", got, c.want)
+				t.Fatalf("applyContextSource = %v, want %v", got, c.want)
 			}
 		})
 	}

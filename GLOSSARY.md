@@ -7,7 +7,7 @@ repository.
 ## Provisioning
 
 **Squad**:
-A named set of provisioned devices sharing one env; the unit that is
+A named set of provisioned devices sharing one context; the unit that is
 deployed, reset and dismissed.
 _Avoid_: pool, fleet, lease
 
@@ -25,10 +25,11 @@ _Avoid_: config, matrix
 One row of a squad's device matrix: model, OS and count.
 _Avoid_: spec (unqualified), matrix entry
 
-**Env**:
-The free-form key/value test context attached to a squad, such as persona,
-API stage or feature flags.
-_Avoid_: config, variables
+**Context**:
+The free-form key/value test data attached to a squad, such as persona,
+API stage, test-account login or feature flags. Not environment variables,
+and never read by the provisioning code.
+_Avoid_: env (its name before 0.5.0), config, variables
 
 ## Agent testing
 

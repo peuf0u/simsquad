@@ -43,6 +43,7 @@ func NewRootCmd() *cobra.Command {
 		newSweepCmd(),
 		newEquipCmd(),
 		newDevicesCmd(),
+		newSetContextCmd(),
 		newSetEnvCmd(),
 		newResetCmd(),
 		newRunCmd(),

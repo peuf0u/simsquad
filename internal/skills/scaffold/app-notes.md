@@ -13,8 +13,8 @@ that only appear after a certain step.
 ## Test accounts
 
 Which accounts or personas to use on which stage, and where their
-credentials come from (for example the squad env keys `user` and
-`password`). Keep real secrets in the squad env, not here.
+credentials come from (for example the squad context keys `user` and
+`password`). Keep real secrets in the squad context, not here.
 
 ## Known quirks
 

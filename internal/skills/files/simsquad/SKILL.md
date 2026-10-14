@@ -1,6 +1,6 @@
 ---
 name: simsquad
-description: Everyday simsquad use in this app repo — put the current build on simulators or emulators, list running devices, reset the app, change the squad env, tear devices down. Use when the user asks to run the app on a device or manage the dev squad. For verifying a feature, use simsquad-test.
+description: Everyday simsquad use in this app repo — put the current build on simulators or emulators, list running devices, reset the app, change the squad context, tear devices down. Use when the user asks to run the app on a device or manage the dev squad. For verifying a feature, use simsquad-test.
 ---
 
 # simsquad
@@ -75,7 +75,7 @@ simsquad devices --name "$SQUAD" --out .simsquad/dev/devices.json
 ```
 
 Each row has `platform`, `id` (simulator UDID or emulator serial), `name`,
-`model`, `os_version`, `status` and the squad `env`. Add `--ready` for usable
+`model`, `os_version`, `status` and the squad `context`. Add `--ready` for usable
 devices only, `--platform ios` or `--platform android` for one platform. For
 every squad on this machine, drop `--name`:
 
@@ -104,15 +104,15 @@ simsquad status --name "$SQUAD" --out .simsquad/dev/status.json
 
 Without `--name` it lists every squad; with it, the full record of one.
 
-## Change the squad env
+## Change the squad context
 
-The env is the free-form test context (persona, API stage, feature flags)
-copied onto every device row. Changing it never touches the devices or the
-app:
+The context is free-form test data (persona, API stage, test account,
+feature flags) copied onto every device row. Changing it never touches the
+devices or the app:
 
 ```sh
-simsquad set-env --name "$SQUAD" --set api=staging --unset persona --out .simsquad/dev/env.json
-simsquad set-env --name "$SQUAD" --clear --set user=alice --out .simsquad/dev/env.json
+simsquad set-context --name "$SQUAD" --set api=staging --unset persona --out .simsquad/dev/context.json
+simsquad set-context --name "$SQUAD" --clear --set user=alice --out .simsquad/dev/context.json
 ```
 
 `--set KEY=VALUE` and `--unset KEY` repeat; `--clear` wipes every key first.

@@ -94,8 +94,8 @@ type reportDoc struct {
 		Counts  map[string]int `json:"counts"`
 	} `json:"summary"`
 	Squad struct {
-		Name string            `json:"name"`
-		Env  map[string]string `json:"env"`
+		Name    string            `json:"name"`
+		Context map[string]string `json:"context"`
 	} `json:"squad"`
 	Matrix []struct {
 		Scenario string            `json:"scenario"`
@@ -143,8 +143,8 @@ func TestRunReportPipeline(t *testing.T) {
 	if rep.FeatureTitle != "Login with magic link" || rep.Source != "https://github.com/acme/app/issues/456" {
 		t.Errorf("title/source = %q / %q", rep.FeatureTitle, rep.Source)
 	}
-	if rep.Squad.Env["PERSONA"] != "alice | admin" {
-		t.Errorf("env not carried as-is: %v", rep.Squad.Env)
+	if rep.Squad.Context["PERSONA"] != "alice | admin" {
+		t.Errorf("context not carried as-is: %v", rep.Squad.Context)
 	}
 	if ok := rep.device(t, "ABC-123"); ok.WorkerStatus != "ok" ||
 		ok.Findings[0].Evidence[0] != "workers/ABC-123/screenshots/step-001.png" {

@@ -25,7 +25,7 @@ Python source first.
   (equip re-edit TUI) + `charmbracelet/lipgloss` (styling). The real
   invariant is **stdout = JSON contract, stderr = everything human** — any
   TUI must use `tea.WithOutput(os.Stderr)`.
-- **Verbs (8):** `deploy`, `status`, `devices`, `set-env`, `reset`, `dismiss`,
+- **Verbs (8):** `deploy`, `status`, `devices`, `set-context`, `reset`, `dismiss`,
   `sweep`, `equip`. Each emits JSON on stdout; nothing else does. (`reset`
   was added after two consumers — a first real-app integration and simsquad-pilot
   — needed a clean app instance between scenarios without re-provisioning.)
@@ -34,13 +34,13 @@ Python source first.
   (`new`, `worker`, `validate`, `report`).
   Lease/claim/release and TTL/GC machinery were considered and cut — they're
   not in any of the real usage scenarios (see "Usage scenarios" below).
-- **Squad = named test context = env × device matrix.** A squad has a `name`
-  (its sole identifier), a free-form `env` blob (credentials, API endpoint,
+- **Squad = named test context = context × device matrix.** A squad has a `name`
+  (its sole identifier), a free-form `context` blob (credentials, API endpoint,
   feature flags), and a set of provisioned devices. Multi-squad is meaningful
   because each squad is a distinct test context — keep `alice-staging` /
   `bob-staging` / `alice-prod` around in parallel.
 - **One identifier: the name.** `--name` is required on `deploy`, `dismiss`,
-  `set-env`. State file is `~/.cache/simsquad/<name>.json`; the registry is
+  `set-context`. State file is `~/.cache/simsquad/<name>.json`; the registry is
   keyed by name. There are no ephemeral squads, no auto-generated handles,
   no `--squad-id` anywhere.
 - **Naming convention provides isolation.** Each consumer picks a unique
@@ -48,16 +48,16 @@ Python source first.
   has no lease primitive; isolation is the caller's responsibility. If two
   callers pick the same name they'll collide on `deploy` (spec-match reuse)
   or `dismiss` (one wins).
-- **Env is decoupled from execution.** `internal/ios/` and `internal/android/`
-  never read `Env`. It's consumer-facing metadata only, surfaced on
-  `SquadRecord` / `SquadPublic` / `DeviceView`. Mutating env via `set-env`
+- **Context is decoupled from execution.** `internal/ios/` and `internal/android/`
+  never read `Context`. It's consumer-facing metadata only, surfaced on
+  `SquadRecord` / `SquadPublic` / `DeviceView`. Mutating context via `set-context`
   never re-provisions sims.
 - **Spec flags replace the TOML matrix wholesale, across both platforms.**
   Passing any `--ios-spec` *or* `--android-spec` to `deploy` ignores
   `[[ios.sims]]` and `[[android.sims]]` from TOML entirely; omitting a
   platform's flag in that mode skips that platform for this run. With no
   spec flags, both TOML matrices are used as the project default. Same
-  shape for `--env` vs TOML `[env]`: any `--env` flag replaces the TOML
+  shape for `--context` vs TOML `[context]`: any `--context` flag replaces the TOML
   block. Scalar flags (`--ios-repo`, `--ios-scheme`, …) override only
   their own key.
 - **Sim/AVD name prefix:** `simsquad-`. Orphan pruner matches
@@ -75,9 +75,9 @@ trace back to one of them.
    (`dev-sim` or similar) running on their Mac for manual exploration,
    one-off smoke runs via an agent, and quick "launch the app on this design"
    loops. Single user, single machine, long-lived.
-2. **CI / PR.** A CI job deploys a matrix squad with env per run, fans out
+2. **CI / PR.** A CI job deploys a matrix squad with context per run, fans out
    tests, posts a report on the PR, dismisses at end of job. Squad name
-   per-PR (`ci-pr-1234`). Strongest argument for the matrix + env story.
+   per-PR (`ci-pr-1234`). Strongest argument for the matrix + context story.
 3. **AI agent (main use case).** An orchestrator agent deploys one or more
    named squads, gets their device lists via `simsquad devices`, spawns
    sub-agents in parallel (one per device, allocated *in-process* — simsquad
@@ -85,7 +85,7 @@ trace back to one of them.
 4. **Concurrent users on one machine.** Rare. Naming discipline prevents
    collisions; no machinery beyond that.
 5. **Multi-persona within an agent run.** The agent deploys multiple squads
-   with different env blobs (`alice-staging`, `bob-staging`), one persona per
+   with different context blobs (`alice-staging`, `bob-staging`), one persona per
    squad, running in parallel.
 
 ## Non-negotiable JSON contract
@@ -98,8 +98,8 @@ output by JSON key. Renaming a field is a breaking change.
 | Public stdout (`deploy`, `status --name=<squad>`) | `internal/contract.SquadPublic` | Squad record minus internal `Ports`. |
 | Per-squad record file | `internal/contract.SquadRecord` | Persisted at `~/.cache/simsquad/<name>.json`. `Name` is the sole identifier. Includes `Ports` (internal). |
 | Registry | `internal/contract.SquadIndex` / `SquadIndexEntry` | `~/.cache/simsquad/squads.json`. Map keyed by squad name. |
-| Consumer device view (`devices`) | `internal/contract.DeviceView` | Uniform `{platform, id, name, model, os_version, bundle_id?, status, ready_at, env?}`. Platform-tagged; same shape iOS + Android. `env` is the squad's env copied onto every row. |
-| Env block | `map[string]string` on `SquadRecord` / `SquadPublic` / `DeviceView` | Free-form test context. Set via `deploy --env KEY=VALUE` or `simsquad.toml [env]`; mutated via `simsquad set-env --set/--unset/--clear`. Execution layer never reads it. |
+| Consumer device view (`devices`) | `internal/contract.DeviceView` | Uniform `{platform, id, name, model, os_version, bundle_id?, status, ready_at, context?}`. Platform-tagged; same shape iOS + Android. `context` is the squad's context copied onto every row. |
+| Context block | `map[string]string` on `SquadRecord` / `SquadPublic` / `DeviceView` | Free-form test context. Set via `deploy --context KEY=VALUE` or `simsquad.toml [context]`; mutated via `simsquad set-context --set/--unset/--clear`. Execution layer never reads it. Called `env` before 0.5.0; `[env]`/`--env`/`set-env` still work with a stderr warning, and old record files with an `env` key are read as context. |
 | Exit codes | `internal/cli/deploy.go::exitCodeFromDevices` | `0` = all ready; `2` = mixed; `1` = none ready / bad args / build failed. |
 | Run record | `internal/contract.RunRecord` | `<repo>/.simsquad/runs/<run-id>/run.json`, written by `run new`. |
 | Worker result | `internal/contract.WorkerResult` + `internal/contract/schemas/result.schema.json` | `workers/<device-id>/result.json`; checked by `run validate`. |

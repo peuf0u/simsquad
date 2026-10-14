@@ -1,11 +1,13 @@
 package contract
 
 import (
+	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 )
 
-func TestNewDeviceViewCopiesEnv(t *testing.T) {
+func TestNewDeviceViewCopiesContext(t *testing.T) {
 	t.Parallel()
 
 	src := map[string]string{"user": "alice", "api": "staging"}
@@ -18,19 +20,19 @@ func TestNewDeviceViewCopiesEnv(t *testing.T) {
 		Status:     StatusReady,
 	}, "2026-05-26T10:00:00Z", src)
 
-	if !reflect.DeepEqual(view.Env, src) {
-		t.Fatalf("view.Env = %+v, want %+v", view.Env, src)
+	if !reflect.DeepEqual(view.Context, src) {
+		t.Fatalf("view.Context = %+v, want %+v", view.Context, src)
 	}
 	// Mutating the source must NOT affect the view — confirms the defensive
 	// copy in NewDeviceView is actually a copy.
 	src["user"] = "bob"
-	if view.Env["user"] != "alice" {
-		t.Fatalf("view.Env aliased the source map (view.Env[user] = %q)",
-			view.Env["user"])
+	if view.Context["user"] != "alice" {
+		t.Fatalf("view.Context aliased the source map (view.Context[user] = %q)",
+			view.Context["user"])
 	}
 }
 
-func TestNewDeviceViewNilEnv(t *testing.T) {
+func TestNewDeviceViewNilContext(t *testing.T) {
 	t.Parallel()
 
 	view := NewDeviceView(Device{
@@ -38,21 +40,53 @@ func TestNewDeviceViewNilEnv(t *testing.T) {
 		UDID:     "udid",
 		Status:   StatusReady,
 	}, "now", nil)
-	if view.Env != nil {
-		t.Fatalf("view.Env = %+v, want nil for empty input", view.Env)
+	if view.Context != nil {
+		t.Fatalf("view.Context = %+v, want nil for empty input", view.Context)
 	}
 }
 
-func TestSquadRecordPublicProjectsEnv(t *testing.T) {
+func TestSquadRecordPublicProjectsContext(t *testing.T) {
 	t.Parallel()
 
 	rec := SquadRecord{
-		Name: "test",
-		Env:  map[string]string{"locale": "en_US"},
+		Name:    "test",
+		Context: map[string]string{"locale": "en_US"},
 	}
 	pub := rec.Public()
-	if !reflect.DeepEqual(pub.Env, rec.Env) {
-		t.Fatalf("Public().Env = %+v, want %+v", pub.Env, rec.Env)
+	if !reflect.DeepEqual(pub.Context, rec.Context) {
+		t.Fatalf("Public().Context = %+v, want %+v", pub.Context, rec.Context)
+	}
+}
+
+// Records and deploy output written before 0.5.0 carry the context under
+// "env"; reading them must keep it.
+func TestLegacyEnvKeyReadsAsContext(t *testing.T) {
+	t.Parallel()
+
+	legacy := []byte(`{"name":"old","created_at":"","builds":{},"devices":[],"env":{"PERSONA":"alice"}}`)
+	want := map[string]string{"PERSONA": "alice"}
+
+	var rec SquadRecord
+	if err := json.Unmarshal(legacy, &rec); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Name != "old" || !reflect.DeepEqual(rec.Context, want) {
+		t.Fatalf("SquadRecord = %+v, want name old and context %v", rec, want)
+	}
+	var pub SquadPublic
+	if err := json.Unmarshal(legacy, &pub); err != nil {
+		t.Fatal(err)
+	}
+	if pub.Name != "old" || !reflect.DeepEqual(pub.Context, want) {
+		t.Fatalf("SquadPublic = %+v, want name old and context %v", pub, want)
+	}
+
+	out, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"context":{"PERSONA":"alice"}`) || strings.Contains(string(out), `"env"`) {
+		t.Fatalf("re-marshalled record = %s, want context and no env", out)
 	}
 }
 

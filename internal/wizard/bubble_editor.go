@@ -37,7 +37,7 @@ const (
 	actionProject       editorAction = "project"
 	actionIOSMatrix     editorAction = "ios-matrix"
 	actionAndroidMatrix editorAction = "android-matrix"
-	actionEditEnv       editorAction = "edit-env"
+	actionEditContext   editorAction = "edit-context"
 	actionBack          editorAction = "back"
 	actionAddIOS        editorAction = "add-ios"
 	actionEditIOS       editorAction = "edit-ios"
@@ -109,7 +109,7 @@ var editorMenuItems = []menuItem{
 	{group: "Project", label: "Project settings", action: actionProject},
 	{group: "Matrix", label: "iOS matrix…", action: actionIOSMatrix},
 	{group: "Matrix", label: "Android matrix…", action: actionAndroidMatrix},
-	{group: "Env", label: "Edit env", action: actionEditEnv},
+	{group: "Context", label: "Edit context", action: actionEditContext},
 }
 
 var iosSubmenuItems = []menuItem{
@@ -349,23 +349,23 @@ func (m editorModel) startAction(action editorAction) (tea.Model, tea.Cmd) {
 			{label: "iOS scheme", value: m.state.iosScheme},
 			{label: "Gradle task", value: m.state.gradleTask},
 		}
-	case actionEditEnv:
+	case actionEditContext:
 		m.mode = editorFields
-		m.inputTitle = "Edit env (clear a value to remove that key)"
+		m.inputTitle = "Edit context (clear a value to remove that key)"
 		m.inputKind = action
 		m.fieldIdx = 0
 		// One field per existing key (alphabetised), plus one trailing
 		// "Add new" field where the user can type KEY=VALUE to introduce a
 		// fresh entry. Empty existing-value commits a delete; the new-key
 		// field parses on save.
-		keys := make([]string, 0, len(m.state.env))
-		for k := range m.state.env {
+		keys := make([]string, 0, len(m.state.testContext))
+		for k := range m.state.testContext {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 		fields := make([]editorField, 0, len(keys)+1)
 		for _, k := range keys {
-			fields = append(fields, editorField{label: k, value: m.state.env[k]})
+			fields = append(fields, editorField{label: k, value: m.state.testContext[k]})
 		}
 		fields = append(fields, editorField{label: "Add new (KEY=VALUE)", value: ""})
 		m.fields = fields
@@ -697,40 +697,40 @@ func (m *editorModel) applyInput() error {
 		m.state.androidRepo = strings.TrimSpace(m.fields[1].value)
 		m.state.iosScheme = strings.TrimSpace(m.fields[2].value)
 		m.state.gradleTask = strings.TrimSpace(m.fields[3].value)
-	case actionEditEnv:
+	case actionEditContext:
 		// All fields except the last are existing-key entries; the last is
 		// the "Add new (KEY=VALUE)" field. Empty values on existing rows
 		// delete the key.
-		if m.state.env == nil && len(m.fields) > 1 {
-			m.state.env = map[string]string{}
+		if m.state.testContext == nil && len(m.fields) > 1 {
+			m.state.testContext = map[string]string{}
 		}
 		newFieldIdx := len(m.fields) - 1
 		for i := 0; i < newFieldIdx; i++ {
 			key := m.fields[i].label
 			val := m.fields[i].value
 			if strings.TrimSpace(val) == "" {
-				delete(m.state.env, key)
+				delete(m.state.testContext, key)
 			} else {
-				m.state.env[key] = val
+				m.state.testContext[key] = val
 			}
 		}
 		raw := strings.TrimSpace(m.fields[newFieldIdx].value)
 		if raw != "" {
 			idx := strings.Index(raw, "=")
 			if idx <= 0 {
-				return fmt.Errorf("new env entry %q: expected KEY=VALUE", raw)
+				return fmt.Errorf("new context entry %q: expected KEY=VALUE", raw)
 			}
 			key := strings.TrimSpace(raw[:idx])
 			if key == "" {
-				return errors.New("new env entry: key must be non-empty")
+				return errors.New("new context entry: key must be non-empty")
 			}
-			if m.state.env == nil {
-				m.state.env = map[string]string{}
+			if m.state.testContext == nil {
+				m.state.testContext = map[string]string{}
 			}
-			m.state.env[key] = raw[idx+1:]
+			m.state.testContext[key] = raw[idx+1:]
 		}
-		if len(m.state.env) == 0 {
-			m.state.env = nil
+		if len(m.state.testContext) == 0 {
+			m.state.testContext = nil
 		}
 	case actionAddIOS:
 		count, err := positiveInt(m.fields[2].value)
@@ -808,8 +808,8 @@ func actionDoneMessage(action editorAction) string {
 	switch action {
 	case actionProject:
 		return "updated project settings"
-	case actionEditEnv:
-		return "updated env"
+	case actionEditContext:
+		return "updated context"
 	case actionAddIOS:
 		return "added iOS simulator"
 	case actionEditIOS:
@@ -829,8 +829,8 @@ func doneLabel(action editorAction) string {
 	switch action {
 	case actionProject:
 		return "Back to actions"
-	case actionEditEnv:
-		return "Save env"
+	case actionEditContext:
+		return "Save context"
 	case actionAddIOS:
 		return "Add iOS simulator"
 	case actionEditIOS:

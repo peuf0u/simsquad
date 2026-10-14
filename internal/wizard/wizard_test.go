@@ -17,7 +17,7 @@ func TestRenderProjectTOMLGolden(t *testing.T) {
 	state := wizardState{
 		iosScheme:  "MyApp",
 		gradleTask: ":app:assembleDevDebug",
-		env: map[string]string{
+		testContext: map[string]string{
 			"user": "alice",
 			"api":  "staging",
 		},
@@ -36,12 +36,12 @@ func TestRenderProjectTOMLGolden(t *testing.T) {
 		},
 	}
 
-	// Env keys are emitted in alphabetised order so this golden stays stable.
+	// Context keys are emitted in alphabetised order so this golden stays stable.
 	want := `[project]
 ios_scheme = "MyApp"
 android_gradle_task = ":app:assembleDevDebug"
 
-[env]
+[context]
 api = "staging"
 user = "alice"
 
@@ -128,7 +128,8 @@ android_repo = "../myapp-android"
 	}
 }
 
-func TestRunEquipWizardLoadsEnvSection(t *testing.T) {
+// A pre-0.5.0 [env] section still loads, as context.
+func TestRunEquipWizardLoadsLegacyEnvSection(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -145,8 +146,8 @@ api = "staging"
 		t.Fatal(err)
 	}
 	want := map[string]string{"user": "alice", "api": "staging"}
-	if !reflect.DeepEqual(res.Summary.Env, want) {
-		t.Fatalf("Summary.Env = %+v, want %+v", res.Summary.Env, want)
+	if !reflect.DeepEqual(res.Summary.Context, want) {
+		t.Fatalf("Summary.Context = %+v, want %+v", res.Summary.Context, want)
 	}
 }
 

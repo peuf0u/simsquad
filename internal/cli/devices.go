@@ -96,7 +96,7 @@ func deviceViews(rec *contract.SquadRecord, readyOnly bool, wantPlatform contrac
 		if wantPlatform != "" && d.Platform != wantPlatform {
 			continue
 		}
-		views = append(views, contract.NewDeviceView(d, rec.CreatedAt, rec.Env))
+		views = append(views, contract.NewDeviceView(d, rec.CreatedAt, rec.Context))
 	}
 	return views
 }

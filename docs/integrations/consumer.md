@@ -17,7 +17,7 @@ SESSION="qa-run-$(date +%s)"          # or your CI job id, PR number, etc.
 simsquad deploy --name="$SESSION" \
   --ios-repo ~/code/myapp-ios \
   --ios-spec 'iPhone 17:iOS 26.4:2' \
-  --env user=alice --env api=staging \
+  --context user=alice --context api=staging \
   > squad.json
 EXIT=$?
 
@@ -89,7 +89,7 @@ for unit in units:
 ```
 
 Each sub-agent is given **its** device's `id` (the udid for iOS, the
-`emulator-<port>` serial for Android) and the env block. The sub-agent
+`emulator-<port>` serial for Android) and the context block. The sub-agent
 drives the device directly (via `mobile-mcp`, `xcuitest`, `adb`, whatever
 your runner uses) — it never talks back to simsquad.
 
@@ -103,7 +103,7 @@ your runner uses) — it never talks back to simsquad.
   "created_at": "2026-05-27T14:00:00Z",
   "builds": { "ios": { "app_path": "…", "bundle_id": "…", "specs": [ … ] } },
   "devices": [ /* full Device records — see status output */ ],
-  "env": { "user": "alice", "api": "staging" },
+  "context": { "user": "alice", "api": "staging" },
   "reused": false
 }
 ```
@@ -123,7 +123,7 @@ your runner uses) — it never talks back to simsquad.
       "bundle_id": "com.example.myapp",
       "status": "ready",
       "ready_at": "2026-05-27T14:00:30Z",
-      "env": { "user": "alice", "api": "staging" }
+      "context": { "user": "alice", "api": "staging" }
     },
     {
       "platform": "android",
@@ -134,7 +134,7 @@ your runner uses) — it never talks back to simsquad.
       "bundle_id": "com.example.myapp.debug",
       "status": "ready",
       "ready_at": "2026-05-27T14:00:45Z",
-      "env": { "user": "alice", "api": "staging" }
+      "context": { "user": "alice", "api": "staging" }
     }
   ]
 }
@@ -171,7 +171,7 @@ persona — they're independent and run on independent sims:
 for persona in alice bob; do
   simsquad deploy --name="agent-$SESSION-$persona" \
     --ios-spec 'iPhone 17:iOS 26.4:1' \
-    --env user=$persona --env api=staging \
+    --context user=$persona --context api=staging \
     > "squad-$persona.json" &
 done
 wait

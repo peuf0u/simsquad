@@ -1,6 +1,6 @@
 // RenderReport turns a report into report.md, readable and pasteable into a
 // PR. It is the Go port of simsquad-pilot's scripts/render.py, plus the
-// source link, the env and the scenario × device matrix.
+// source link, the context and the scenario × device matrix.
 
 package agenttest
 
@@ -64,7 +64,7 @@ func RenderReport(rep *contract.Report) string {
 	line("**%d device(s)** · scenarios %d passed / %d failed / %d blocked · **%d bug(s)** · %d question(s) · %d note(s)",
 		c.Devices, c.ScenariosPassed, c.ScenariosFailed, c.ScenariosBlocked, c.Bugs, c.Questions, c.Notes)
 
-	renderEnv(line, rep.Squad.Env)
+	renderContext(line, rep.Squad.Context)
 	renderMatrix(line, rep)
 
 	type item struct {
@@ -189,25 +189,25 @@ func RenderReport(rep *contract.Report) string {
 	return b.String()
 }
 
-// renderEnv shows the squad env keys and values exactly as deployed, so the
-// reader sees which account and stage were tested.
-func renderEnv(line func(string, ...any), env map[string]string) {
+// renderContext shows the squad context keys and values exactly as deployed,
+// so the reader sees which account and stage were tested.
+func renderContext(line func(string, ...any), ctx map[string]string) {
 	line("")
-	line("## Env")
+	line("## Context")
 	line("")
-	if len(env) == 0 {
-		line("_No env._")
+	if len(ctx) == 0 {
+		line("_No context._")
 		return
 	}
-	keys := make([]string, 0, len(env))
-	for k := range env {
+	keys := make([]string, 0, len(ctx))
+	for k := range ctx {
 		keys = append(keys, k)
 	}
 	slices.Sort(keys)
 	line("| Key | Value |")
 	line("|---|---|")
 	for _, k := range keys {
-		line("| `%s` | %s |", k, cell(env[k]))
+		line("| `%s` | %s |", k, cell(ctx[k]))
 	}
 }
 
