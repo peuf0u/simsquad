@@ -6,6 +6,27 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking: the squad `env` is now `context`.** It holds test context
+  (persona, stage, test-account login), not environment variables, and the
+  old name misled. JSON output says `context` everywhere: `deploy`,
+  `status`, `devices`, `set-context`, `equip`'s summary, `report.json`
+  (`squad.context`, and the report schema) and the `## Context` section of
+  `report.md`. Consumers reading `.env` must switch to `.context`.
+  The inputs are renamed too: `simsquad.toml` `[context]`,
+  `deploy --context KEY=VALUE` / `--clear-context`, and the
+  `simsquad set-context` verb. Skill contract 3; rerun
+  `simsquad skill install` to update the installed skills.
+
+### Deprecated
+
+- `[env]`, `deploy --env` / `--clear-env` and `simsquad set-env` still work
+  for this release and print a warning on stderr. They will be removed in
+  the next minor release. `simsquad equip` saves an `[env]` table back as
+  `[context]`. Squads deployed by an older simsquad keep their context, and
+  `run report` still reads an older run's `deploy.json`.
+
 ## [0.4.0] - 2026-10-12
 
 Agent testing: tell your coding agent "verify PROJ-123" and it checks the

@@ -10,7 +10,17 @@ import (
 	"github.com/peuf0u/simsquad/internal/state"
 )
 
+func newSetContextCmd() *cobra.Command {
+	return setContextCmd("set-context", false)
+}
+
+// newSetEnvCmd is set-context under its pre-0.5.0 name, kept for one
+// release so existing scripts warn instead of break.
 func newSetEnvCmd() *cobra.Command {
+	return setContextCmd("set-env", true)
+}
+
+func setContextCmd(use string, deprecated bool) *cobra.Command {
 	var (
 		name     string
 		setVals  []string
@@ -19,15 +29,20 @@ func newSetEnvCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "set-env",
-		Short: "Mutate the env on a named squad",
-		Args:  cobra.NoArgs,
-		Long: "Updates the env map on a squad. Applied in this order:\n" +
+		Use:    use,
+		Short:  "Mutate the context on a named squad",
+		Args:   cobra.NoArgs,
+		Hidden: deprecated,
+		Long: "Updates the context map on a squad: free-form test context such as\n" +
+			"persona, stage or test-account login. Applied in this order:\n" +
 			"  --clear   wipe all keys\n" +
 			"  --unset   remove specific keys (repeatable)\n" +
 			"  --set     add or overwrite keys (repeatable, KEY=VALUE)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runSetEnv(cmd, setEnvOpts{
+			if deprecated {
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "simsquad: set-env is deprecated; use set-context")
+			}
+			return runSetContext(cmd, setContextOpts{
 				name:     name,
 				setVals:  setVals,
 				unsetKey: unsetKey,
@@ -36,26 +51,26 @@ func newSetEnvCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "squad to mutate (required)")
-	cmd.Flags().StringArrayVar(&setVals, "set", nil, "add or overwrite an env key: KEY=VALUE (repeatable)")
-	cmd.Flags().StringArrayVar(&unsetKey, "unset", nil, "remove an env key (repeatable)")
+	cmd.Flags().StringArrayVar(&setVals, "set", nil, "add or overwrite a context key: KEY=VALUE (repeatable)")
+	cmd.Flags().StringArrayVar(&unsetKey, "unset", nil, "remove a context key (repeatable)")
 	cmd.Flags().BoolVar(&clear, "clear", false, "wipe every existing key before --unset / --set apply")
 	_ = cmd.MarkFlagRequired("name")
 	return cmd
 }
 
-type setEnvOpts struct {
+type setContextOpts struct {
 	name     string
 	setVals  []string
 	unsetKey []string
 	clear    bool
 }
 
-func runSetEnv(cmd *cobra.Command, opts setEnvOpts) error {
+func runSetContext(cmd *cobra.Command, opts setContextOpts) error {
 	if opts.name == "" {
-		return errors.New("set-env: --name is required")
+		return errors.New("set-context: --name is required")
 	}
 	if !opts.clear && len(opts.setVals) == 0 && len(opts.unsetKey) == 0 {
-		return errors.New("set-env: pass --set, --unset, or --clear")
+		return errors.New("set-context: pass --set, --unset, or --clear")
 	}
 
 	setMap, err := parseSetEntries(opts.setVals)
@@ -65,13 +80,13 @@ func runSetEnv(cmd *cobra.Command, opts setEnvOpts) error {
 
 	entry, ok, err := state.FindSquad(canonName(opts.name))
 	if err != nil {
-		return fmt.Errorf("set-env: lookup squad: %w", err)
+		return fmt.Errorf("set-context: lookup squad: %w", err)
 	}
 	if !ok {
-		return fmt.Errorf("set-env: no squad named %q", opts.name)
+		return fmt.Errorf("set-context: no squad named %q", opts.name)
 	}
 
-	var updatedEnv map[string]string
+	var updated map[string]string
 	lockErr := state.WithIndexLockE(func() error {
 		rec, err := state.LoadRecord(entry.Name)
 		if err != nil {
@@ -81,32 +96,32 @@ func runSetEnv(cmd *cobra.Command, opts setEnvOpts) error {
 			return fmt.Errorf("squad %s has no state file", entry.Name)
 		}
 		if opts.clear {
-			rec.Env = nil
+			rec.Context = nil
 		}
 		for _, k := range opts.unsetKey {
-			delete(rec.Env, k)
+			delete(rec.Context, k)
 		}
 		if len(setMap) > 0 {
-			if rec.Env == nil {
-				rec.Env = make(map[string]string, len(setMap))
+			if rec.Context == nil {
+				rec.Context = make(map[string]string, len(setMap))
 			}
 			for k, v := range setMap {
-				rec.Env[k] = v
+				rec.Context[k] = v
 			}
 		}
-		if len(rec.Env) == 0 {
-			rec.Env = nil // honour omitempty
+		if len(rec.Context) == 0 {
+			rec.Context = nil // honour omitempty
 		}
-		updatedEnv = rec.Env
+		updated = rec.Context
 		return state.SaveRecord(rec)
 	})
 	if lockErr != nil {
-		return fmt.Errorf("set-env: %w", lockErr)
+		return fmt.Errorf("set-context: %w", lockErr)
 	}
 
 	return writeJSON(cmd, map[string]any{
-		"name": entry.Name,
-		"env":  updatedEnv,
+		"name":    entry.Name,
+		"context": updated,
 	})
 }
 
@@ -122,11 +137,11 @@ func parseSetEntries(entries []string) (map[string]string, error) {
 	for _, raw := range entries {
 		idx := strings.Index(raw, "=")
 		if idx <= 0 {
-			return nil, fmt.Errorf("set-env: --set %q: expected KEY=VALUE", raw)
+			return nil, fmt.Errorf("set-context: --set %q: expected KEY=VALUE", raw)
 		}
 		key := strings.TrimSpace(raw[:idx])
 		if key == "" {
-			return nil, fmt.Errorf("set-env: --set %q: key must be non-empty", raw)
+			return nil, fmt.Errorf("set-context: --set %q: key must be non-empty", raw)
 		}
 		out[key] = raw[idx+1:]
 	}

@@ -43,15 +43,15 @@ func BuildReport(runDir string, now time.Time) (*contract.Report, error) {
 		Source:       run.Source,
 		StartedAt:    run.CreatedAt,
 		FinishedAt:   now.UTC().Format(time.RFC3339),
-		Squad:        contract.ReportSquad{Name: run.SquadName, Env: map[string]string{}},
+		Squad:        contract.ReportSquad{Name: run.SquadName, Context: map[string]string{}},
 		Matrix:       []contract.ReportMatrixRow{},
 		Devices:      []contract.ReportDevice{},
 	}
 
 	squad, deployErr := readDeploy(runDir)
 	if deployErr == nil {
-		for k, v := range squad.Env {
-			rep.Squad.Env[k] = v
+		for k, v := range squad.Context {
+			rep.Squad.Context[k] = v
 		}
 		for _, d := range squad.Devices {
 			if !appliesTo(run.Platforms, string(d.Platform)) {

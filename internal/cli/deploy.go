@@ -33,8 +33,10 @@ func newDeployCmd() *cobra.Command {
 		preserve    bool
 		iosSpecs    []string
 		androidSpec []string
-		envEntries  []string
-		clearEnv    bool
+		ctxEntries  []string
+		clearCtx    bool
+		envEntries  []string // deprecated --env
+		clearEnv    bool     // deprecated --clear-env
 	)
 
 	cmd := &cobra.Command{
@@ -58,6 +60,14 @@ func newDeployCmd() *cobra.Command {
 			"progress events into the squad descriptor):\n" +
 			"  simsquad deploy --name=foo --ios-spec 'iPhone 17:iOS 26.4:1' > squad.json",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if len(envEntries) > 0 {
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "simsquad: --env is deprecated; use --context")
+				ctxEntries = append(ctxEntries, envEntries...)
+			}
+			if clearEnv {
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "simsquad: --clear-env is deprecated; use --clear-context")
+				clearCtx = true
+			}
 			return runDeploy(cmd, deployOpts{
 				iosRepo:     iosRepo,
 				androidRepo: androidRepo,
@@ -69,8 +79,8 @@ func newDeployCmd() *cobra.Command {
 				preserve:    preserve,
 				iosSpecs:    iosSpecs,
 				androidSpec: androidSpec,
-				envEntries:  envEntries,
-				clearEnv:    clearEnv,
+				ctxEntries:  ctxEntries,
+				clearCtx:    clearCtx,
 			})
 		},
 	}
@@ -85,8 +95,13 @@ func newDeployCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&preserve, "preserve-data", false, "on reuse: install without wiping app data")
 	cmd.Flags().StringArrayVar(&iosSpecs, "ios-spec", nil, "iOS slot spec, repeatable: 'DEVICE:RUNTIME:COUNT'")
 	cmd.Flags().StringArrayVar(&androidSpec, "android-spec", nil, "Android slot spec, repeatable: 'DEVICE:IMAGE:COUNT[:TARGET]'")
-	cmd.Flags().StringArrayVar(&envEntries, "env", nil, "squad env entry, repeatable: 'KEY=VALUE' (any --env replaces TOML [env] entirely)")
-	cmd.Flags().BoolVar(&clearEnv, "clear-env", false, "on reuse: wipe the squad's existing env before applying --env / TOML")
+	cmd.Flags().StringArrayVar(&ctxEntries, "context", nil, "squad context entry, repeatable: 'KEY=VALUE' (any --context replaces TOML [context] entirely)")
+	cmd.Flags().BoolVar(&clearCtx, "clear-context", false, "on reuse: wipe the squad's existing context before applying --context / TOML")
+	// Pre-0.5.0 names, kept for one release.
+	cmd.Flags().StringArrayVar(&envEntries, "env", nil, "deprecated: use --context")
+	cmd.Flags().BoolVar(&clearEnv, "clear-env", false, "deprecated: use --clear-context")
+	_ = cmd.Flags().MarkHidden("env")
+	_ = cmd.Flags().MarkHidden("clear-env")
 	cmd.MarkFlagsMutuallyExclusive("force-build", "no-build")
 	_ = cmd.MarkFlagRequired("name")
 
@@ -104,8 +119,8 @@ type deployOpts struct {
 	preserve    bool
 	iosSpecs    []string
 	androidSpec []string
-	envEntries  []string
-	clearEnv    bool
+	ctxEntries  []string
+	clearCtx    bool
 }
 
 // runDeploy is the deploy command entry point: build, provision, persist,
@@ -145,9 +160,13 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		return errors.New("deploy: no platform configured. Set ios.sims or android.sims in simsquad.toml or pass --ios-spec/--android-spec")
 	}
 
-	envOverrides, err := parseEnvEntries(opts.envEntries)
+	ctxOverrides, err := parseContextEntries(opts.ctxEntries)
 	if err != nil {
 		return err
+	}
+	tomlCtx, legacyEnv := cfg.Context()
+	if legacyEnv && len(ctxOverrides) == 0 {
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), config.LegacyEnvWarning)
 	}
 
 	logger := progress.New()
@@ -175,14 +194,15 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		}
 		switch {
 		case specMatches(*existing, iosSpecs, androidSpecs):
-			// Reuse path: --clear-env wipes first. Then env layers on top — CLI
-			// flags if any are present (TOML ignored), otherwise TOML. Either way
-			// the *source* overrides matching keys in the existing env; non-matched
-			// existing keys are preserved (so "rotate one cred" stays cheap).
-			if opts.clearEnv {
-				existing.Env = nil
+			// Reuse path: --clear-context wipes first. Then context layers on
+			// top — CLI flags if any are present (TOML ignored), otherwise TOML.
+			// Either way the *source* overrides matching keys in the existing
+			// context; non-matched existing keys are preserved (so "rotate one
+			// cred" stays cheap).
+			if opts.clearCtx {
+				existing.Context = nil
 			}
-			existing.Env = applyEnvSource(existing.Env, cfg.Env(), envOverrides)
+			existing.Context = applyContextSource(existing.Context, tomlCtx, ctxOverrides)
 			reused = true
 			rec = existing
 			for _, dev := range existing.Devices {
@@ -214,7 +234,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 			Name:      squadName,
 			CreatedAt: util.NowISO(),
 			Devices:   []contract.Device{},
-			Env:       applyEnvSource(nil, cfg.Env(), envOverrides),
+			Context:   applyContextSource(nil, tomlCtx, ctxOverrides),
 			Ports:     map[string]int{},
 		}
 		// Persist an empty record + registry entry before provisioning kicks
@@ -627,10 +647,10 @@ func resolveAndroidSpecs(cfg *config.Config, cliSpecs []string, cliSpecMode bool
 	return out, nil
 }
 
-// parseEnvEntries parses `--env KEY=VALUE` flags into a string map. Empty
+// parseContextEntries parses `--context KEY=VALUE` flags into a string map. Empty
 // keys, missing `=`, or duplicate keys are rejected so misconfigured calls
 // fail fast with a clear message rather than silently dropping data.
-func parseEnvEntries(entries []string) (map[string]string, error) {
+func parseContextEntries(entries []string) (map[string]string, error) {
 	if len(entries) == 0 {
 		return nil, nil
 	}
@@ -638,30 +658,30 @@ func parseEnvEntries(entries []string) (map[string]string, error) {
 	for _, raw := range entries {
 		idx := strings.Index(raw, "=")
 		if idx <= 0 {
-			return nil, fmt.Errorf("deploy: --env %q: expected KEY=VALUE", raw)
+			return nil, fmt.Errorf("deploy: --context %q: expected KEY=VALUE", raw)
 		}
 		key := strings.TrimSpace(raw[:idx])
 		value := raw[idx+1:]
 		if key == "" {
-			return nil, fmt.Errorf("deploy: --env %q: key must be non-empty", raw)
+			return nil, fmt.Errorf("deploy: --context %q: key must be non-empty", raw)
 		}
 		if _, dup := out[key]; dup {
-			return nil, fmt.Errorf("deploy: --env %q: duplicate key", key)
+			return nil, fmt.Errorf("deploy: --context %q: duplicate key", key)
 		}
 		out[key] = value
 	}
 	return out, nil
 }
 
-// applyEnvSource resolves the env for a deploy. CLI flags and TOML [env] are
-// mutually exclusive sources — if any --env flag is passed, the TOML layer is
-// ignored entirely (mirrors how --ios-spec/--android-spec replace the TOML
-// matrix). Whichever source applies then overlays the base env (the existing
-// squad's env on reuse, or nil on a new deploy).
+// applyContextSource resolves the context for a deploy. CLI flags and TOML
+// [context] are mutually exclusive sources — if any --context flag is passed,
+// the TOML layer is ignored entirely (mirrors how --ios-spec/--android-spec
+// replace the TOML matrix). Whichever source applies then overlays the base
+// context (the existing squad's context on reuse, or nil on a new deploy).
 //
 // Returns nil when the result is empty so callers don't carry an empty map
 // through omitempty serialisation.
-func applyEnvSource(base, toml, overrides map[string]string) map[string]string {
+func applyContextSource(base, toml, overrides map[string]string) map[string]string {
 	source := toml
 	if len(overrides) > 0 {
 		source = overrides

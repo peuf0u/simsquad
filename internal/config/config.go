@@ -163,13 +163,21 @@ func (c *Config) IOSSpecs() []contract.IosSpec {
 	return out
 }
 
-// Env returns the [env] table from simsquad.toml as a string map. Missing
-// section or non-string values yield nil/skipped entries. The result is the
-// project-wide baseline env that deploy merges its --env flags over.
-func (c *Config) Env() map[string]string {
-	raw, _ := c.Get("env").(map[string]any)
+// Context returns the [context] table from simsquad.toml as a string map.
+// Missing section or non-string values yield nil/skipped entries. The result
+// is the project-wide baseline context that deploy merges its --context flags
+// over.
+//
+// legacy is true when the table came from [env], the pre-0.5.0 name, which
+// is still read (when [context] is absent) so callers can warn about it.
+func (c *Config) Context() (ctx map[string]string, legacy bool) {
+	raw, _ := c.Get("context").(map[string]any)
 	if raw == nil {
-		return nil
+		raw, _ = c.Get("env").(map[string]any)
+		legacy = raw != nil
+	}
+	if raw == nil {
+		return nil, false
 	}
 	out := make(map[string]string, len(raw))
 	for k, v := range raw {
@@ -178,10 +186,14 @@ func (c *Config) Env() map[string]string {
 		}
 	}
 	if len(out) == 0 {
-		return nil
+		return nil, legacy
 	}
-	return out
+	return out, legacy
 }
+
+// LegacyEnvWarning is the stderr line printed when simsquad.toml still uses
+// [env].
+const LegacyEnvWarning = "simsquad: [env] in simsquad.toml is deprecated; rename it to [context]"
 
 // AgentWorkerModel returns `[agent].worker_model`: the model id workers run
 // on, passed to the worker command as given and never validated.

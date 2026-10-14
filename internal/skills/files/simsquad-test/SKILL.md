@@ -126,7 +126,7 @@ simsquad deploy --name "$SQUAD" --force-build --out "$RUN_DIR/deploy.json"
 
 This rebuilds the app from the working tree and installs it on the
 equipped devices, booting any that are not running. The equipment is the
-only source of devices and env, so pass no other flags. It can take
+only source of devices and context, so pass no other flags. It can take
 minutes.
 
 - Exit `0`: every device is ready. Exit `2`: some are; carry on with them.
@@ -152,7 +152,7 @@ simsquad devices --name "$SQUAD" --ready --out "$RUN_DIR/devices.json"
 
 Keep the rows whose `platform` is in the run's `platforms`. Each row has
 `platform`, `id`, `name`, `model`, `os_version`, `bundle_id`, `status` and
-the squad `env`. No rows left: go to step 9.
+the squad `context`. No rows left: go to step 9.
 
 ## 7. Start the workers
 

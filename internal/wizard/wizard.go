@@ -44,7 +44,7 @@ type ConfigSummary struct {
 	ProjectFile string                 `json:"project_file"`
 	LocalFile   string                 `json:"local_file"`
 	Project     map[string]string      `json:"project"`
-	Env         map[string]string      `json:"env,omitempty"`
+	Context     map[string]string      `json:"context,omitempty"`
 	IOS         []contract.IosSpec     `json:"ios"`
 	Android     []contract.AndroidSpec `json:"android"`
 }
@@ -54,7 +54,7 @@ type wizardState struct {
 	androidRepo string
 	iosScheme   string
 	gradleTask  string
-	env         map[string]string
+	testContext map[string]string
 	iosSpecs    []contract.IosSpec
 	androidSpec []contract.AndroidSpec
 	// projectAgent / localAgent are the raw [agent] tables of each file.
@@ -147,10 +147,11 @@ func loadState(configDir string, hasConfig bool) (wizardState, error) {
 	if v := cfg.GetString("project.android_gradle_task"); v != "" {
 		state.gradleTask = v
 	}
-	if env := cfg.Env(); len(env) > 0 {
-		state.env = make(map[string]string, len(env))
-		for k, v := range env {
-			state.env[k] = v
+	// A pre-0.5.0 [env] loads here and is saved back as [context].
+	if ctx, _ := cfg.Context(); len(ctx) > 0 {
+		state.testContext = make(map[string]string, len(ctx))
+		for k, v := range ctx {
+			state.testContext[k] = v
 		}
 	}
 	state.iosSpecs = cfg.IOSSpecs()
@@ -490,11 +491,11 @@ func summarize(configDir string, state wizardState) ConfigSummary {
 	if androidSpecs == nil {
 		androidSpecs = []contract.AndroidSpec{}
 	}
-	var env map[string]string
-	if len(state.env) > 0 {
-		env = make(map[string]string, len(state.env))
-		for k, v := range state.env {
-			env[k] = v
+	var ctx map[string]string
+	if len(state.testContext) > 0 {
+		ctx = make(map[string]string, len(state.testContext))
+		for k, v := range state.testContext {
+			ctx[k] = v
 		}
 	}
 	return ConfigSummary{
@@ -507,7 +508,7 @@ func summarize(configDir string, state wizardState) ConfigSummary {
 			"ios_scheme":          state.iosScheme,
 			"android_gradle_task": state.gradleTask,
 		},
-		Env:     env,
+		Context: ctx,
 		IOS:     iosSpecs,
 		Android: androidSpecs,
 	}
@@ -533,15 +534,15 @@ func renderProjectTOML(state wizardState) (string, error) {
 	b.WriteString("[project]\n")
 	b.WriteString("ios_scheme = " + strconv.Quote(state.iosScheme) + "\n")
 	b.WriteString("android_gradle_task = " + strconv.Quote(state.gradleTask) + "\n")
-	if len(state.env) > 0 {
-		b.WriteString("\n[env]\n")
-		keys := make([]string, 0, len(state.env))
-		for k := range state.env {
+	if len(state.testContext) > 0 {
+		b.WriteString("\n[context]\n")
+		keys := make([]string, 0, len(state.testContext))
+		for k := range state.testContext {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			b.WriteString(k + " = " + strconv.Quote(state.env[k]) + "\n")
+			b.WriteString(k + " = " + strconv.Quote(state.testContext[k]) + "\n")
 		}
 	}
 	agent, err := renderAgentTable(state.projectAgent)

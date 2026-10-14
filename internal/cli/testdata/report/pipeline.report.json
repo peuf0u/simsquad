@@ -7,7 +7,7 @@
   "finished_at": "FINISHED_AT",
   "squad": {
     "name": "qa-app",
-    "env": {
+    "context": {
       "API_STAGE": "staging",
       "PERSONA": "alice | admin"
     }

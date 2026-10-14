@@ -184,9 +184,9 @@ Feature: Resend code cooldown
 lever on how far it gets. Keep it short and concrete:
 
 - **Getting in:** which accounts or personas to use on which stage and
-  which squad env keys hold their credentials, how to log in, one-time
+  which squad context keys hold their credentials, how to log in, one-time
   codes or how to skip them, onboarding screens to dismiss. Keep real
-  secrets in the squad env, not in this file.
+  secrets in the squad context, not in this file.
 - **Navigation:** how to reach the main areas, hidden menus (debug menu,
   long-presses), deep links.
 - **Known quirks:** slow first launch, permission dialogs, flaky screens,
@@ -194,8 +194,8 @@ lever on how far it gets. Keep it short and concrete:
 - **Language:** the UI language, and whether labels differ by locale.
 
 Credentials and stage URLs that change per squad belong in the squad's
-`env` (`simsquad.toml [env]` or `deploy --env`), which every worker gets in
-its device row.
+`context` (`simsquad.toml [context]` or `deploy --context`), which every
+worker gets in its device row.
 
 ## Codex
 

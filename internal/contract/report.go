@@ -18,7 +18,7 @@ const RunReportMarkdown = "report.md"
 
 // RunDeployFile is the stdout of `simsquad deploy` (SquadPublic) that the
 // skill redirects into the run folder; `run report` takes the device rows
-// and the env from it.
+// and the context from it.
 const RunDeployFile = "deploy.json"
 
 // RunWorkersDir holds one worker dir per device, named by device id.
@@ -66,10 +66,11 @@ type Report struct {
 	Undeployed []ReportUndeployed `json:"undeployed,omitempty"`
 }
 
-// ReportSquad names the squad and carries its env verbatim from deploy.json.
+// ReportSquad names the squad and carries its context verbatim from
+// deploy.json.
 type ReportSquad struct {
-	Name string            `json:"name"`
-	Env  map[string]string `json:"env"`
+	Name    string            `json:"name"`
+	Context map[string]string `json:"context"`
 }
 
 // ReportSummary is the verdict plus the counts it was decided from. Reason

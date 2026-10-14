@@ -51,7 +51,7 @@ From a checkout: `make build` (→ `./bin/simsquad`) or `make install` (→ `$GO
 simsquad deploy --name=login-tests \
   --ios-repo ~/code/myapp-ios \
   --ios-spec 'iPhone 17:iOS 26.4:1' \
-  --env user=alice --env api=staging > squad.json
+  --context user=alice --context api=staging > squad.json
 #    stdout is the squad descriptor (redirect it; never use 2>&1).
 
 # Ask for the device list (the qa-run / AI interface).
@@ -83,9 +83,10 @@ and verdicts: [docs/agent-testing.md](docs/agent-testing.md).
 
 ## Concepts
 
-- **A squad is a named test context = env × device matrix.** Each squad has a
-  name (its sole identifier), an optional free-form `env` blob (credentials,
-  API endpoint, feature flags — whatever your tests need), and a set of
+- **A squad is a named test context = context × device matrix.** Each squad
+  has a name (its sole identifier), an optional free-form `context` blob
+  (persona, test-account login, API endpoint, feature flags — whatever your
+  tests need; not environment variables), and a set of
   provisioned devices. Keep several squads around (`alice-staging`,
   `bob-staging`, `alice-prod`) to run different personas/environments in
   parallel.
@@ -110,10 +111,10 @@ and verdicts: [docs/agent-testing.md](docs/agent-testing.md).
 
 | Command | Action | Key flags |
 |---|---|---|
-| `deploy` | Build + install; reuse the squad if it exists (same name+matrix), else provision fresh; emit the descriptor | `--name` (req), `--ios-repo`/`--android-repo`, `--ios-spec`/`--android-spec`, `--env KEY=VALUE`, `--no-build`, `--force-build`, `--preserve-data`, `--clear-env` |
+| `deploy` | Build + install; reuse the squad if it exists (same name+matrix), else provision fresh; emit the descriptor | `--name` (req), `--ios-repo`/`--android-repo`, `--ios-spec`/`--android-spec`, `--context KEY=VALUE`, `--no-build`, `--force-build`, `--preserve-data`, `--clear-context` |
 | `status` | Squad registry (no arg) or one full record (`--name`) | `--name` |
 | `devices` | Uniform device list — one squad (`--name`) or all (no arg) | `--name`, `--ready`, `--platform=ios\|android` |
-| `set-env` | Mutate a squad's env | `--name` (req), `--set KEY=VALUE`, `--unset KEY`, `--clear` |
+| `set-context` | Mutate a squad's context | `--name` (req), `--set KEY=VALUE`, `--unset KEY`, `--clear` |
 | `reset` | Return apps to a clean state (terminate + wipe data) without re-provisioning | `--name` (req), `--device` (repeatable) |
 | `dismiss` | Tear down a squad (shutdown + delete its sims/AVDs) | `--name` (req) |
 | `sweep` | Prune orphan `simsquad-*` sims/AVDs left by crashed deploys | — |
@@ -290,15 +291,15 @@ simsquad run report .simsquad/runs/<run-id> > report-summary.json
 ```
 
 `run report <run-dir>` reads `run.json`, `deploy.json` (the deploy output,
-source of the device rows and env) and each ready device's
+source of the device rows and context) and each ready device's
 `workers/<device-id>/` (`result.json`, `status`). It writes:
 
 - `report.json`, valid against the embedded report schema: feature title,
-  source, squad and env, a scenario × device matrix
+  source, squad and context, a scenario × device matrix
   (`passed` / `failed` / `blocked` / `skipped` per device), each device's
   worker status, scenarios and findings, and the counts. Paths are relative
   to the run dir.
-- `report.md`, pasteable into a PR: verdict, source link, env keys and
+- `report.md`, pasteable into a PR: verdict, source link, context keys and
   values as they are, the matrix, bugs by severity, per-device results.
 
 A status file overrides even a valid result; a missing or invalid
@@ -325,7 +326,7 @@ containing either:
 
 Run `simsquad equip` for an interactive setup wizard, or copy
 [`simsquad.toml.example`](simsquad.toml.example) and edit. See that file for the
-full annotated schema (`[project]`, `[env]`, `[agent]`, `[[ios.sims]]`,
+full annotated schema (`[project]`, `[context]`, `[agent]`, `[[ios.sims]]`,
 `[[android.sims]]`).
 
 **Precedence**, highest to lowest:
