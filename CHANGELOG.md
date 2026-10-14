@@ -6,6 +6,18 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **One squad per git worktree.** `simsquad sweep` now first dismisses
+  every squad whose recorded iOS or Android repo path no longer exists,
+  typically a removed worktree, and deletes the iOS derived data built from
+  it. Its output gains `dismissed: [{name, repo}]` next to `pruned`. To
+  support this, `deploy` records the repo on each build (`builds.ios.repo`,
+  `builds.android.repo`); squads deployed by an older simsquad have none and
+  are left alone. [docs/agent-testing.md](docs/agent-testing.md#one-squad-per-git-worktree)
+  describes the setup: `ios_repo = "."` in the committed `simsquad.toml`
+  and the default `qa-<folder>` squad name.
+
 ### Changed
 
 - **Breaking: the squad `env` is now `context`.** It holds test context

@@ -15,7 +15,9 @@
 [project]
 # Absolute paths to the app repos. Relative paths resolve against this config
 # file's directory; ~ is expanded. Usually set these in simsquad.local.toml so
-# each developer can point at their own checkout.
+# each developer can point at their own checkout. When the config lives in
+# the app repo, ios_repo = "." in this file builds whichever checkout or git
+# worktree the config is in (see docs/agent-testing.md).
 #   ios_repo     = "~/code/myapp-ios"
 #   android_repo = "~/code/myapp-android"
 

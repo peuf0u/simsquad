@@ -57,6 +57,45 @@ The skill files carry a do-not-edit header with the **skill contract**
 number. After upgrading simsquad, re-run `simsquad skill install`;
 `simsquad skill status` tells you when you need to.
 
+## One squad per git worktree
+
+To work on several tickets at once, give each its own git worktree
+(`git worktree add ../myapp-PROJ-123`) and let each worktree have its own
+squad. Runs in different worktrees then neither interfere nor wait for each
+other.
+
+1. In the committed `simsquad.toml`, point the repo at the config file's own
+   directory. Relative paths resolve against that directory, so every
+   worktree builds its own working tree:
+
+   ```toml
+   [project]
+   ios_repo = "."        # or android_repo = "."
+   ```
+
+   Remove `ios_repo` / `android_repo` from `simsquad.local.toml`, where it
+   would override this with one fixed checkout. A new worktree has no
+   `simsquad.local.toml` anyway, since the file is gitignored.
+
+2. Leave `[agent].test_squad` unset. The default squad name is
+   `qa-<folder>`, the folder that holds `simsquad.toml`, so
+   `../myapp-PROJ-123` gets `qa-myapp-proj-123`.
+
+Each worktree pays for its own first build (iOS derived data is kept per
+repo path) and boots its own devices, so plan for the memory of every
+worktree's simulators and emulators running at once.
+
+When you remove a worktree, run `simsquad sweep`. It dismisses every squad
+whose recorded repo path no longer exists and deletes its iOS derived data:
+
+```sh
+git worktree remove ../myapp-PROJ-123
+simsquad sweep
+```
+
+Squads deployed before simsquad 0.5.0 have no recorded repo path; dismiss
+those by name.
+
 ## Run a test
 
 Ask your agent, in its own words:

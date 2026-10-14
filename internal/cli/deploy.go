@@ -292,7 +292,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 	var buildGroup errgroup.Group
 
 	if hasIos {
-		iosBuild := &contract.IosBuild{Specs: iosSpecs}
+		iosBuild := &contract.IosBuild{Repo: iosRepo, Specs: iosSpecs}
 		builds.IOS = iosBuild
 		scheme := opts.iosScheme
 		if scheme == "" {
@@ -326,7 +326,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 	}
 
 	if hasAndroid {
-		androidBuild := &contract.AndroidBuild{Specs: androidSpecs}
+		androidBuild := &contract.AndroidBuild{Repo: androidRepo, Specs: androidSpecs}
 		builds.Android = androidBuild
 		task := opts.gradleTask
 		if task == "" {
