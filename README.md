@@ -117,7 +117,7 @@ and verdicts: [docs/agent-testing.md](docs/agent-testing.md).
 | `set-context` | Mutate a squad's context | `--name` (req), `--set KEY=VALUE`, `--unset KEY`, `--clear` |
 | `reset` | Return apps to a clean state (terminate + wipe data) without re-provisioning | `--name` (req), `--device` (repeatable) |
 | `dismiss` | Tear down a squad (shutdown + delete its sims/AVDs) | `--name` (req) |
-| `sweep` | Prune orphan `simsquad-*` sims/AVDs left by crashed deploys | — |
+| `sweep` | Dismiss squads whose repo path is gone (removed worktrees), then prune orphan `simsquad-*` sims/AVDs left by crashed deploys | — |
 | `equip` | Interactive wizard: write `simsquad.toml` / `.local.toml` | `--show`, `--force`, `--add-ios-spec`, `--add-android-spec` |
 
 Spec formats (repeatable):

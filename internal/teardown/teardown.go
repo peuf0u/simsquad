@@ -7,6 +7,8 @@
 //	Android emulator    → adb emu kill + avdmanager delete avd
 //	Android physical    → adb uninstall <bundle>      (never delete device)
 //	orphan              → any simsquad-* sim/AVD not in the registry
+//	removed repo        → a squad whose recorded repo path no longer exists
+//	                      (typically a deleted git worktree)
 //
 // Nothing in this package writes to stdout — the JSON contract is owned by
 // internal/cli. Progress events go through internal/progress when a logger is
@@ -15,7 +17,10 @@ package teardown
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"regexp"
 	"strings"
 
@@ -165,6 +170,74 @@ func PruneOrphans(logger *progress.Logger) (PruneResult, error) {
 	res.IOS = pruneIOS(tracked, logger)
 	res.Android = pruneAndroid(tracked, logger)
 	return res, nil
+}
+
+// RemovedRepoSquad is a squad dismissed by DismissRemovedRepos, with the
+// recorded repo path that no longer exists.
+type RemovedRepoSquad struct {
+	Name string `json:"name"`
+	Repo string `json:"repo"`
+}
+
+// DismissRemovedRepos tears down every squad whose recorded iOS or Android
+// repo no longer exists, and deletes the iOS derived data built from it. One
+// squad per git worktree is a supported pattern; removing the worktree would
+// otherwise leave its devices and gigabytes of derived data behind for good,
+// since nothing can redeploy that squad. Records without a repo (written
+// before 0.5.0) are left alone.
+func DismissRemovedRepos(logger *progress.Logger) ([]RemovedRepoSquad, error) {
+	entries, err := state.ListSquads()
+	if err != nil {
+		return nil, fmt.Errorf("teardown: list squads: %w", err)
+	}
+	var out []RemovedRepoSquad
+	for _, entry := range entries {
+		rec, err := state.LoadRecord(entry.Name)
+		if err != nil || rec == nil {
+			continue
+		}
+		repo := MissingRepo(*rec)
+		if repo == "" {
+			continue
+		}
+		if logger != nil {
+			logger.Info("sweep: repo-removed", progress.F("name", rec.Name), progress.F("repo", repo))
+		}
+		if err := Squad(rec.Name, logger); err != nil {
+			return out, err
+		}
+		if b := rec.Builds.IOS; b != nil && b.Repo != "" && !exists(b.Repo) {
+			if err := os.RemoveAll(util.IOSDerivedDataDir(b.Repo)); err != nil && logger != nil {
+				logger.Warn("sweep: remove-derived", progress.F("repo", b.Repo), progress.F("error", err.Error()))
+			}
+		}
+		out = append(out, RemovedRepoSquad{Name: rec.Name, Repo: repo})
+	}
+	return out, nil
+}
+
+// MissingRepo returns the first repo recorded on rec's builds that no longer
+// exists, or "" when every recorded repo is there (or none is recorded).
+// Only a definite not-exist counts: a permission error keeps the squad.
+func MissingRepo(rec contract.SquadRecord) string {
+	var repos []string
+	if b := rec.Builds.IOS; b != nil && b.Repo != "" {
+		repos = append(repos, b.Repo)
+	}
+	if b := rec.Builds.Android; b != nil && b.Repo != "" {
+		repos = append(repos, b.Repo)
+	}
+	for _, r := range repos {
+		if !exists(r) {
+			return r
+		}
+	}
+	return ""
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return !errors.Is(err, fs.ErrNotExist)
 }
 
 func trackedDeviceNames() (map[string]struct{}, error) {

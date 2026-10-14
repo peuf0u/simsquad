@@ -81,7 +81,11 @@ type Device struct {
 
 // IosBuild is the iOS half of Builds. Either the success fields are populated
 // or Error is — never both.
+//
+// Repo is the absolute path of the project the squad was built from (empty on
+// records written before 0.5.0); sweep dismisses a squad once it is gone.
 type IosBuild struct {
+	Repo     string    `json:"repo,omitempty"`
 	AppPath  string    `json:"app_path,omitempty"`
 	BundleID string    `json:"bundle_id,omitempty"`
 	GitSHA   string    `json:"git_sha,omitempty"`
@@ -91,8 +95,9 @@ type IosBuild struct {
 }
 
 // AndroidBuild is the Android half of Builds. Either the success fields are
-// populated or Error is — never both.
+// populated or Error is — never both. Repo is as on IosBuild.
 type AndroidBuild struct {
+	Repo     string        `json:"repo,omitempty"`
 	APKPath  string        `json:"apk_path,omitempty"`
 	BundleID string        `json:"bundle_id,omitempty"`
 	GitSHA   string        `json:"git_sha,omitempty"`
