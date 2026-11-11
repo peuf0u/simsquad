@@ -1,6 +1,6 @@
 # simsquad
 
-![simsquad: a coding agent pilots a squad of iOS and Android devices, three pass and two fail](docs/hero.png)
+![simsquad: a lead agent sends a worker to each iOS and Android device; three pass and two fail](docs/hero.png)
 
 A single-binary device-squad provisioner for parallel mobile QA on macOS.
 
