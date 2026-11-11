@@ -1,5 +1,7 @@
 # simsquad
 
+![simsquad: a coding agent pilots a squad of iOS and Android devices, three pass and two fail](docs/hero.png)
+
 A single-binary device-squad provisioner for parallel mobile QA on macOS.
 
 `simsquad` builds your iOS or Android app, provisions a matrix of simulators
