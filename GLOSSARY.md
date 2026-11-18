@@ -17,9 +17,15 @@ test installed.
 _Avoid_: sim (when the platform doesn't matter), slot
 
 **Equipment**:
-A project's build setup and device matrix as defined by `simsquad equip`;
-the only source of devices for that project's squads.
+A project's build setup and its device sets (a default one plus named
+ones) as defined by `simsquad equip`; the only source of devices for that
+project's squads.
 _Avoid_: config, matrix
+
+**Device set**:
+A device matrix within the equipment, either the default one or a named one
+such as `tablet`; a squad remembers which named set it was deployed from.
+_Avoid_: profile (clashes with the Android device profile), matrix (alone)
 
 **Device spec**:
 One row of a squad's device matrix: model, OS and count.
@@ -30,6 +36,11 @@ The free-form key/value test data attached to a squad, such as persona,
 API stage, test-account login or feature flags. Not environment variables,
 and never read by the provisioning code.
 _Avoid_: env (its name before 0.5.0), config, variables
+
+**Secret**:
+A context key whose value simsquad never prints or writes into a run, such
+as a test account's password; marked by the user or recognised by its name.
+_Avoid_: credential (for the key itself), sensitive key, hidden key
 
 ## Agent testing
 
