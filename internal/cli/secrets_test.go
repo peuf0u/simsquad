@@ -307,3 +307,50 @@ func TestSetContextRejectsKeyInSetAndSetSecret(t *testing.T) {
 		t.Fatalf("err = %v, want an error naming otp without its value", err)
 	}
 }
+
+func TestDevicesRevealPrintsRealValues(t *testing.T) {
+	t.Setenv("SIMSQUAD_CACHE_DIR", t.TempDir())
+	seedSecretSquad(t, "sq")
+	stdout, code := runRoot(t, "devices", "--name", "sq", "--reveal")
+	if code != 0 {
+		t.Fatalf("devices --reveal: exit %d", code)
+	}
+	for _, want := range []string{`"pin": "4711"`, `"password": "hunter2"`, `"user": "alice"`} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout lacks %s:\n%s", want, stdout)
+		}
+	}
+}
+
+func TestDevicesRevealRefusals(t *testing.T) {
+	for name, args := range map[string][]string{
+		"without --name": {"devices", "--reveal"},
+		"with --out":     {"devices", "--name", "sq", "--reveal", "--out", "OUT"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("SIMSQUAD_CACHE_DIR", t.TempDir())
+			seedSecretSquad(t, "sq")
+			out := filepath.Join(t.TempDir(), "devices.json")
+			for i, a := range args {
+				if a == "OUT" {
+					args[i] = out
+				}
+			}
+			root := NewRootCmd()
+			stdout := &bytes.Buffer{}
+			root.SetOut(stdout)
+			root.SetErr(&bytes.Buffer{})
+			root.SetArgs(args)
+			err := root.Execute()
+			if err == nil || !strings.Contains(err.Error(), "--reveal") {
+				t.Fatalf("err = %v, want an error about --reveal", err)
+			}
+			if stdout.Len() != 0 {
+				t.Fatalf("stdout = %s, want nothing", stdout)
+			}
+			if _, statErr := os.Stat(out); statErr == nil {
+				t.Fatal("--reveal wrote the --out file")
+			}
+		})
+	}
+}

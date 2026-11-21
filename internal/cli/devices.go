@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 
@@ -15,6 +16,7 @@ func newDevicesCmd() *cobra.Command {
 		name        string
 		readyOnly   bool
 		platformStr string
+		reveal      bool
 	)
 
 	cmd := &cobra.Command{
@@ -25,18 +27,31 @@ func newDevicesCmd() *cobra.Command {
 			"model, os_version, status, ready_at) on stdout. Does not touch the lease.\n\n" +
 			"With --name, emits {name, devices} for that squad. Without --name, emits\n" +
 			"{squads: [{name, devices}, ...]} across every squad. Use --ready to filter\n" +
-			"to ready devices, --platform to filter by OS.",
+			"to ready devices, --platform to filter by OS.\n\n" +
+			"Each row carries the squad context with secrets shown as \"<secret>\".\n" +
+			"--reveal prints their real values, for a worker that types a test\n" +
+			"account's password into the app. It needs --name and can't be combined\n" +
+			"with --out, so a secret never lands in a file.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runDevices(cmd, name, readyOnly, platformStr)
+			if reveal {
+				if name == "" {
+					return errors.New("devices: --reveal needs --name: it reveals one squad's secrets, never every squad's")
+				}
+				if outPath(cmd) != "" {
+					return errors.New("devices: --reveal can't be combined with --out: revealed secrets are never written to a file")
+				}
+			}
+			return runDevices(cmd, name, readyOnly, platformStr, reveal)
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "squad to query (omit to list every squad's devices)")
 	cmd.Flags().BoolVar(&readyOnly, "ready", false, "include only devices with status=ready")
 	cmd.Flags().StringVar(&platformStr, "platform", "", "restrict to one platform: ios or android")
+	cmd.Flags().BoolVar(&reveal, "reveal", false, "show the real values of secret context keys (needs --name; refused with --out)")
 	return cmd
 }
 
-func runDevices(cmd *cobra.Command, name string, readyOnly bool, platformStr string) error {
+func runDevices(cmd *cobra.Command, name string, readyOnly bool, platformStr string, reveal bool) error {
 	wantPlatform, err := parseDevicePlatform(platformStr)
 	if err != nil {
 		return err
@@ -58,7 +73,7 @@ func runDevices(cmd *cobra.Command, name string, readyOnly bool, platformStr str
 			}
 			groups = append(groups, map[string]any{
 				"name":    rec.Name,
-				"devices": deviceViews(rec, readyOnly, wantPlatform),
+				"devices": deviceViews(rec, readyOnly, wantPlatform, false),
 			})
 		}
 		return writeJSON(cmd, map[string]any{"squads": groups})
@@ -80,14 +95,14 @@ func runDevices(cmd *cobra.Command, name string, readyOnly bool, platformStr str
 	}
 	return writeJSON(cmd, map[string]any{
 		"name":    rec.Name,
-		"devices": deviceViews(rec, readyOnly, wantPlatform),
+		"devices": deviceViews(rec, readyOnly, wantPlatform, reveal),
 	})
 }
 
 // deviceViews projects a squad's devices into DeviceViews, applying the ready
-// and platform filters. Always returns a non-nil slice so the JSON emits `[]`
-// rather than `null` for an empty result.
-func deviceViews(rec *contract.SquadRecord, readyOnly bool, wantPlatform contract.Platform) []contract.DeviceView {
+// and platform filters, with secrets masked unless reveal. Always returns a
+// non-nil slice so the JSON emits `[]` rather than `null` for an empty result.
+func deviceViews(rec *contract.SquadRecord, readyOnly bool, wantPlatform contract.Platform, reveal bool) []contract.DeviceView {
 	views := make([]contract.DeviceView, 0, len(rec.Devices))
 	for _, d := range rec.Devices {
 		if readyOnly && d.Status != contract.StatusReady {
@@ -96,7 +111,11 @@ func deviceViews(rec *contract.SquadRecord, readyOnly bool, wantPlatform contrac
 		if wantPlatform != "" && d.Platform != wantPlatform {
 			continue
 		}
-		views = append(views, rec.DeviceView(d))
+		if reveal {
+			views = append(views, rec.RevealedDeviceView(d))
+		} else {
+			views = append(views, rec.DeviceView(d))
+		}
 	}
 	return views
 }
