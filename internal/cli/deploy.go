@@ -67,7 +67,10 @@ func newDeployCmd() *cobra.Command {
 			"the default matrix, for both platforms; --platform filters it. The\n" +
 			"squad records the set's name, so a later deploy without matrix flags\n" +
 			"deploys that set again, read from the config as it is then. It can't\n" +
-			"be combined with spec flags.\n\n" +
+			"be combined with spec flags. The name is one for the whole squad,\n" +
+			"even with --platform: deploying another set for one platform makes a\n" +
+			"bare redeploy compare the other platform against that set too. Deploy\n" +
+			"the same set for both platforms, or dismiss the squad first.\n\n" +
 			"--window shows the devices, for a squad you use by hand. Android\n" +
 			"emulators boot with a window and the hardware keyboard on\n" +
 			"(hw.keyboard=yes), so the Mac keyboard types into the app; a running\n" +

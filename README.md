@@ -158,7 +158,11 @@ the config, and reuses the squad when its devices still match. A squad with
 no recorded set keeps using the default matrix. Combining `--device-set`
 with a spec flag, an unknown set, or a recorded set the config no longer
 defines exits `1`. A different `--device-set` on an existing squad follows
-the usual per-platform reuse rule. Spec flags record no set.
+the usual per-platform reuse rule. The squad records one set name for both
+platforms, even with `--platform`: after `deploy --device-set tablet
+--platform ios`, a bare redeploy compares the squad's Android devices
+against `tablet` too. Deploy the same set for both platforms, or `dismiss`
+the squad first. Spec flags record no set.
 
 `deploy --window` shows the devices, for a squad used by hand (the
 `simsquad` skill's dev squad always passes it; test squads never do).
@@ -168,6 +172,16 @@ with a window, keeping its data. A deploy without `--window` leaves a
 running windowed emulator alone and boots new emulators headless. On iOS it
 opens Simulator.app on each device, which also shows windows for every
 other booted sim.
+
+An Android emulator is found by its port, and after a reboot another
+emulator (your own, say) can hold a squad's port. simsquad acts on an
+emulator only when it answers with the squad's AVD name (`adb emu avd
+name`): deploy fails the device rather than install on or restart any
+other emulator, and `dismiss`, `sweep` and a deploy that resets the
+platform leave it running, with a warning, and delete only the squad's
+AVD. A squad emulator that ignores `adb emu kill` (still booting after an
+interrupted deploy) gets SIGTERM, then SIGKILL, on its recorded PID while
+that PID is still an emulator process.
 
 `deploy` exit codes: `0` = all devices ready · `2` = mixed (some ready, some
 errored) · `1` = none ready / bad args / build failed. Only the deployed
@@ -405,7 +419,11 @@ containing either:
 Run `simsquad equip` for an interactive setup wizard, or copy
 [`simsquad.toml.example`](simsquad.toml.example) and edit. See that file for the
 full annotated schema (`[project]`, `[context]`, `[secrets]`, `[agent]`,
-`[[ios.sims]]`, `[[android.sims]]`, `[device_sets.<name>]`).
+`[[ios.sims]]`, `[[android.sims]]`, `[device_sets.<name>]`). equip rewrites
+both files on save but keeps every `[context]` key, device set and
+`[agent]` value in the file it came from, so values you keep in
+`simsquad.local.toml` stay out of git. Put credentials in `[secrets]`,
+which equip always writes to the local file.
 
 **Secrets.** Test-account passwords and tokens go in `[secrets]` in
 `simsquad.local.toml`:
@@ -446,7 +464,9 @@ wholesale (its rows don't merge). In `simsquad equip`, the editor's **Device
 sets** group creates, renames, deletes and edits sets with the same pickers
 as the default matrix; `equip --add-ios-spec … --device-set NAME` appends to
 a set (creating it in `simsquad.toml`), and `equip --show` lists the sets.
-equip keeps each set in the file it came from.
+equip keeps each set in the file it came from; deleting a local set that
+overrides a shared one removes only the override, and the shared set
+stays.
 
 **Precedence**, highest to lowest:
 
@@ -480,10 +500,13 @@ a task without one, like `assembleDebug`, means `app`).
   Data is cleared before the install, not after: `pm clear` also deletes
   the on-demand splits `install-apks` leaves in external storage. For the
   same reason `reset` installs the squad's APK set again after clearing.
-  It skips that, with a warning, when the file is gone (a `gradle clean`)
-  or is newer than the squad's deploy (another squad deployed from the
-  same repo since); on-demand modules then can't install until the next
-  deploy.
+  Each bundle squad keeps its APK set at `~/.cache/simsquad/<squad>.apks`
+  (a hard link to the build's set where possible, else a copy), installs
+  from it and records it as `builds.android.apks_path`, so another
+  squad's deploy from the same repo doesn't change it; `dismiss` and
+  `sweep` remove it. `reset` skips the reinstall, with a warning, only
+  when that file is gone; on-demand modules then can't install until the
+  next deploy.
 
 A bundle task needs [bundletool](https://developer.android.com/tools/bundletool),
 which simsquad doesn't install: `brew install bundletool` (it runs on the
@@ -542,6 +565,7 @@ simsquad keeps a per-user registry and per-squad records under
 
 - `squads.json` — the registry, keyed by squad name.
 - `<name>.json` — one record per squad.
+- `<name>.apks` — the squad's own APK set, for an app bundle build.
 - `derived/` — xcodebuild derived-data + build logs (the expensive build cache).
 
 To wipe squad state without losing the build cache, remove the JSON files but

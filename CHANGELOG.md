@@ -43,12 +43,18 @@ All notable changes are recorded here. The format follows
   so a later `deploy --name X` with no matrix flags re-reads that set from
   the config and reuses the squad when its devices match. A squad with no
   recorded set uses the default matrix as before, spec flags record nothing,
-  and a recorded set the config no longer defines exits `1` naming it. In
-  `equip`, the editor's **Device sets** group creates, renames, deletes and
-  edits sets with the default matrix's pickers;
+  and a recorded set the config no longer defines exits `1` naming it. The
+  recorded name is one for the whole squad, even with `--platform`:
+  deploying another set for one platform makes a bare redeploy compare the
+  other platform against that set too, so deploy one set for both
+  platforms or `dismiss` first. In `equip`, the editor's **Device sets**
+  group creates, renames, deletes and edits sets with the default matrix's
+  pickers;
   `equip --add-ios-spec/--add-android-spec … --device-set NAME` appends to a
   set (creating it in `simsquad.toml`); `equip --show` lists the sets as
   `device_sets`; and saving keeps every set in the file it came from.
+  Deleting a local set that overrides a shared one removes only the
+  override, and the editor says the shared set stays.
 - **`deploy --window` shows the devices, for a squad used by hand.**
   Android emulators it boots start with a window (`-gpu auto` instead of
   headless `swiftshader_indirect`) and with `hw.keyboard=yes` written into
@@ -116,21 +122,30 @@ All notable changes are recorded here. The format follows
   now need `simsquad devices --name X --reveal`. `run report` masks by
   name again when reading an older `deploy.json`, and `report.md` shows a
   secret as `` `<secret>` ``. This ships in a minor release.
-- **Reusing an Android emulator checks that it is the squad's own, with or
-  without `--window`.** Before installing on or restarting a reachable
-  emulator, deploy asks it which AVD it runs (`adb emu avd name`, retried
-  up to three times). When another AVD holds the squad's port (after a
-  reboot, the user's own emulator can take it), the device fails with
-  `reuse: port N is held by another emulator (<name>), not <avd>`; when the
-  name can't be read, it fails with `reuse: could not read the AVD name of
-  the emulator on port N (<adb error>)`. Either way nothing is killed,
-  booted or installed. Before, deploy installed the build on whatever
-  answered on the port, and a `--window` restart would have killed it.
+- **simsquad acts on an Android emulator only when it is the squad's
+  own.** An emulator is found by its recorded port, and after a reboot the
+  user's own emulator can take that port. Before installing on or
+  restarting a reachable emulator, deploy asks it which AVD it runs (`adb
+  emu avd name`, asked up to three times). When another AVD holds the
+  squad's port, the device fails with `reuse: port N is held by another
+  emulator (<name>), not <avd>`; when the name can't be read, it fails with
+  `reuse: could not read the AVD name of the emulator on port N (<adb
+  error>)`. Either way nothing is killed, booted or installed. Every
+  Android teardown (`dismiss`, `sweep` and its dismissal of squads whose
+  repo is gone, a deploy that resets the platform or cleans up after
+  itself) likewise kills an emulator only when it answers with the
+  squad's AVD name: another emulator on the port, or one whose name can't
+  be read, is left running with a warning, and only the squad's AVD is
+  deleted. Before, deploy installed the build on
+  whatever answered on the port, and teardown killed it.
 - **Reuse stops the squad's own emulator before rebooting it when it is
   alive but not answering adb** (for example still booting after an
   interrupted deploy), instead of starting a second instance that can't
-  lock the AVD. A started emulator that exits during boot now fails the
-  device with `reuse-boot: …` instead of being recorded.
+  lock the AVD. When it ignores `adb emu kill`, deploy sends SIGTERM, then
+  SIGKILL, to its recorded PID while that PID is still an emulator
+  process, and fails the device only when it still doesn't exit. A started
+  emulator that exits during boot now fails the device with `reuse-boot: …`
+  instead of being recorded.
 - **Workers always run on an explicit model.** `run new --worker
   claude|codex` (default `claude`) names the CLI the workers run on; any
   other value exits `1`. `run new --model <id>` sets the model for one
@@ -191,14 +206,17 @@ All notable changes are recorded here. The format follows
   `--preserve-data`, before the install rather than after it, since
   `pm clear` would also delete the on-demand modules' splits that
   `install-apks` leaves in external storage; a failed install is retried
-  once after an uninstall, as for an APK. `reset` on a bundle squad
-  installs the APK set again after clearing, to put those splits back,
-  and warns instead when the set is gone or newer than the squad's
-  deploy.
-  The set is written to a file of its own and renamed into place, so a
-  concurrent deploy from the same repo never installs a half-written one.
-  The set's path is recorded as `builds.android.apks_path` (additive,
-  omitempty) in place of `apk_path`. bundletool isn't a Homebrew
+  once after an uninstall, as for an APK. The build writes the set to a
+  file of its own and renames it into place, so a concurrent deploy from
+  the same repo never installs a half-written one. Each squad then
+  installs from its own copy, `~/.cache/simsquad/<squad>.apks` (a hard
+  link to the build's set where possible, else a copy), which only its
+  next deploy replaces and `dismiss` and `sweep` remove; its path is
+  recorded as `builds.android.apks_path` (additive, omitempty) in place of
+  `apk_path`. `reset` on a bundle squad installs that set again after
+  clearing, to put those splits back, so another squad's deploy from the
+  same repo doesn't change what it installs; it warns instead only when
+  the set is gone. bundletool isn't a Homebrew
   dependency: a `bundle*` task without it (checked before Gradle runs),
   or without a debug keystore (checked after, since a default-signed
   debug build creates one), fails the Android build with the fix (exit `1`). An `assemble*` task
@@ -249,9 +267,20 @@ All notable changes are recorded here. The format follows
   redacted there only from 4 characters on and never when it is `true` or
   `false` (`TOKEN_TTL=5` would mask every `5`, including a `5-hour limit
   reached`, and `SECRET_MENU=true` every `true`); outputs mask it
-  regardless.
+  regardless. Secrets that overlap in the output (`xyz12` and `12345678`
+  in `xyz12345678`) are masked together as one `<secret>`. `worker.log` is
+  written `0600`, since it can still hold a value the redaction skips.
 - **`simsquad.local.toml` is written `0600`** by `equip`, since it holds
   `[secrets]`; an existing `0644` file is tightened.
+- **`equip` keeps each `[context]` key in the file it came from.** Saving
+  no longer moves `[context]` values from `simsquad.local.toml` (passwords
+  included) into the committed `simsquad.toml`. A local key that overrides
+  a shared one keeps both values in their files, keys added in the editor
+  go to `simsquad.toml`, and clearing a local override in the editor
+  brings back the shared value. equip also writes `[context]` keys and
+  every string it saves (`[project]` paths included) as valid TOML, so a
+  context key with a dot or a space, or a value with control characters,
+  no longer breaks the next load.
 - **Malformed `--context`, `--secret`, `--set` and `--set-secret` entries
   no longer echo the entry.** The error names the flag and the entry's
   position (`--context entry 2 is malformed: expected KEY=VALUE`), or the

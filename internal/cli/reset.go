@@ -27,7 +27,10 @@ func newResetCmd() *cobra.Command {
 		Long: "Terminates the installed app and wipes its data container on each ready\n" +
 			"device in the squad, without re-provisioning — a consumer gets a virgin\n" +
 			"app instance between test scenarios. iOS wipes the data container; Android\n" +
-			"runs `pm clear`. Restrict to specific devices with --device (repeatable);\n" +
+			"runs `pm clear`, and on a squad deployed from an app bundle installs the\n" +
+			"squad's own APK set (builds.android.apks_path) again, to put back the\n" +
+			"on-demand modules the clear removes; it warns and skips that when the\n" +
+			"set is gone. Restrict to specific devices with --device (repeatable);\n" +
 			"the default is every ready device. Emits the reset device ids as JSON.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runReset(cmd, name, devices)

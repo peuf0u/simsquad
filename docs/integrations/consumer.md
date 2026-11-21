@@ -201,10 +201,16 @@ trap '
   bail.
 - **Deploy exit code 1**: nothing usable. The JSON descriptor is still
   emitted on stdout; the failure detail is inside.
-- **Reuse with a different matrix**: `deploy --name=foo` where `foo`
-  already exists with a different `--ios-spec` errors with
-  "not reusable; run `simsquad dismiss --name foo` first". Either change
-  the spec to match, or dismiss + redeploy.
+- **Which devices the exit code counts**: only the deployed platforms'
+  (`deploy --platform`), so a broken device on a platform left out doesn't
+  change it, while stdout is still the whole squad. A deployed platform
+  whose build failed counts as not ready, even when it has no devices.
+- **Reuse with a different matrix**: reuse is decided per platform. A
+  platform whose devices match is reused, one the squad lacks is added,
+  and a mismatched one is reset when none of its devices is ready; when
+  one is, `deploy --name=foo` errors with "not reusable with the requested
+  iOS matrix/status; run `simsquad dismiss --name foo` first" (or
+  Android). Either change the spec to match, or dismiss + redeploy.
 - **Crashed orchestrator**: your `trap dismiss EXIT` should fire. If
   simsquad-managed sims are left on disk anyway, `simsquad sweep` cleans
   up any orphan `simsquad-*-(ios|android)-N` sims that aren't in the
