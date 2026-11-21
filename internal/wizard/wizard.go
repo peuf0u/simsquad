@@ -580,8 +580,8 @@ func validatePositiveInt(value string) error {
 func renderProjectTOML(state wizardState) (string, error) {
 	var b strings.Builder
 	b.WriteString("[project]\n")
-	b.WriteString("ios_scheme = " + strconv.Quote(state.iosScheme) + "\n")
-	b.WriteString("android_gradle_task = " + strconv.Quote(state.gradleTask) + "\n")
+	b.WriteString("ios_scheme = " + tomlQuote(state.iosScheme) + "\n")
+	b.WriteString("android_gradle_task = " + tomlQuote(state.gradleTask) + "\n")
 	if len(state.testContext) > 0 {
 		b.WriteString("\n[context]\n")
 		keys := make([]string, 0, len(state.testContext))
@@ -590,7 +590,7 @@ func renderProjectTOML(state wizardState) (string, error) {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			b.WriteString(k + " = " + strconv.Quote(state.testContext[k]) + "\n")
+			b.WriteString(tomlKey(k) + " = " + tomlQuote(state.testContext[k]) + "\n")
 		}
 	}
 	agent, err := renderAgentTable(state.projectAgent)
@@ -626,8 +626,8 @@ func writeAndroidRow(b *strings.Builder, spec contract.AndroidSpec) {
 func renderLocalTOML(state wizardState) (string, error) {
 	var b strings.Builder
 	b.WriteString("[project]\n")
-	b.WriteString("ios_repo = " + strconv.Quote(state.iosRepo) + "\n")
-	b.WriteString("android_repo = " + strconv.Quote(state.androidRepo) + "\n")
+	b.WriteString("ios_repo = " + tomlQuote(state.iosRepo) + "\n")
+	b.WriteString("android_repo = " + tomlQuote(state.androidRepo) + "\n")
 	if len(state.secrets) > 0 {
 		b.WriteString("\n[secrets]\n")
 		keys := make([]string, 0, len(state.secrets))
