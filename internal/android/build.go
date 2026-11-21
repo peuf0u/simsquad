@@ -18,11 +18,61 @@ import (
 // simsquad.toml.
 const DefaultGradleTask = ":app:assembleDebug"
 
-// APKOutputRel is the relative directory under the Android repo where Gradle
-// writes APKs. We walk the subtree (`app/build/outputs/apk/**/*.apk`) rather
-// than hardcoding a flavor/variant subdir — the wizard picks the newest APK
-// post-build, which lets any project layout work without configuration.
-const APKOutputRel = "app/build/outputs/apk"
+// BuildMode is how the Gradle task packages the app, which decides how
+// simsquad installs it.
+type BuildMode int
+
+const (
+	// ModeAPK is an assemble* task: one APK, installed with adb.
+	ModeAPK BuildMode = iota
+	// ModeBundle is a bundle* task: an app bundle (.aab), turned into an APK
+	// set and installed with bundletool, so dynamic feature modules come
+	// along with the base APK.
+	ModeBundle
+)
+
+func (m BuildMode) String() string {
+	if m == ModeBundle {
+		return "bundle"
+	}
+	return "apk"
+}
+
+// splitTask splits a Gradle task path into its project path and task name:
+// ":foo:bar:bundleX" → ("foo/bar", "bundleX"). A task without a project path
+// ("assembleDebug", ":assembleDebug") is taken as the app module's, as
+// simsquad assumed before the task decided the folder.
+func splitTask(task string) (project, name string) {
+	parts := strings.Split(strings.TrimPrefix(task, ":"), ":")
+	name = parts[len(parts)-1]
+	project = strings.Join(parts[:len(parts)-1], "/")
+	if project == "" {
+		project = "app"
+	}
+	return project, name
+}
+
+// TaskMode tells a bundle* task from any other, which builds APKs.
+func TaskMode(task string) BuildMode {
+	if _, name := splitTask(task); strings.HasPrefix(name, "bundle") {
+		return ModeBundle
+	}
+	return ModeAPK
+}
+
+// OutputDir is the folder, relative to the repo, where the task's module
+// writes its output: <module>/build/outputs/apk or …/bundle. We walk that
+// subtree rather than hardcoding a flavor/variant subdir and take the newest
+// file, which lets any variant work without configuration. A custom
+// buildDir/projectDir in settings.gradle isn't followed.
+func OutputDir(task string) string {
+	project, _ := splitTask(task)
+	kind := "apk"
+	if TaskMode(task) == ModeBundle {
+		kind = "bundle"
+	}
+	return project + "/build/outputs/" + kind
+}
 
 // BuildResult captures the success output of a Gradle build invocation.
 type BuildResult struct {
@@ -65,16 +115,17 @@ func ReadApplicationID(apk string) (string, error) {
 	return m[1], nil
 }
 
-// latestAPK walks <repo>/app/build/outputs/apk for *.apk files and returns
-// the most recently modified one. Returns empty string when none exist.
+// latestArtifact walks <repo>/<rel> for files with the extension ext (".apk"
+// or ".aab") and returns the most recently modified one. Returns empty string
+// when none exist.
 //
 // We intentionally don't constrain by flavor/variant subdir — `assembleDebug`
 // vs `assembleDevDebug` vs `assembleStagingDebug` all produce APKs under
 // different subdirs of the same parent, and picking newest works across all
 // configurations. The Python predecessor hardcoded `dev/debug/`; the constant
 // was deliberately dropped on port.
-func latestAPK(repo string) string {
-	root := filepath.Join(repo, APKOutputRel)
+func latestArtifact(repo, rel, ext string) string {
+	root := filepath.Join(repo, rel)
 	if !isDir(root) {
 		return ""
 	}
@@ -84,7 +135,7 @@ func latestAPK(repo string) string {
 		if err != nil {
 			return nil
 		}
-		if d.IsDir() || filepath.Ext(path) != ".apk" {
+		if d.IsDir() || filepath.Ext(path) != ext {
 			return nil
 		}
 		info, err := d.Info()
@@ -116,13 +167,14 @@ func Build(opts BuildOptions) (BuildResult, error) {
 	if sha == "" {
 		sha = "nogit"
 	}
-	preExisting := latestAPK(opts.Repo)
+	outRel := OutputDir(task)
+	preExisting := latestArtifact(opts.Repo, outRel, ".apk")
 
 	if opts.NoBuild {
 		if preExisting == "" {
 			return BuildResult{}, fmt.Errorf(
 				"--no-build set but no APK under %s. drop --no-build or run with --force-build first",
-				filepath.Join(opts.Repo, APKOutputRel),
+				filepath.Join(opts.Repo, outRel),
 			)
 		}
 		bid, err := ReadApplicationID(preExisting)
@@ -155,11 +207,11 @@ func Build(opts BuildOptions) (BuildResult, error) {
 		return BuildResult{}, err
 	}
 
-	apk := latestAPK(opts.Repo)
+	apk := latestArtifact(opts.Repo, outRel, ".apk")
 	if apk == "" {
 		return BuildResult{}, fmt.Errorf(
 			"gradle reported success but no APK under %s. Log: %s",
-			filepath.Join(opts.Repo, APKOutputRel), logPath,
+			filepath.Join(opts.Repo, outRel), logPath,
 		)
 	}
 	bid, err := ReadApplicationID(apk)
