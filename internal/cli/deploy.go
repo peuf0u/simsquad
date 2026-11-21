@@ -59,7 +59,9 @@ func newDeployCmd() *cobra.Command {
 			"spec flags.\n\n" +
 			"Stdout is the whole squad, with devices of platforms left out at their\n" +
 			"stored status. The exit code counts only this deploy's platforms:\n" +
-			"0 = all ready, 2 = mixed, 1 = none ready / build failed / bad args.\n\n" +
+			"0 = all ready, 2 = mixed, 1 = none ready / build failed / bad args.\n" +
+			"A platform whose build failed counts as not ready; its devices stay in\n" +
+			"the squad as error and the next deploy resets them.\n\n" +
 			"Spec flags (repeatable):\n" +
 			"  --ios-spec     DEVICE:RUNTIME:COUNT          e.g. 'iPhone 17:iOS 26.4:1'\n" +
 			"  --android-spec DEVICE:IMAGE:COUNT[:TARGET]   e.g. 'pixel_7:system-images;android-34;google_apis;arm64-v8a:1'\n\n" +
@@ -461,7 +463,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 	// The exit code reports what this deploy did: only its platforms'
 	// devices count, so a broken device on a platform left out of the
 	// deploy doesn't change it. Stdout still shows the whole squad.
-	code := exitCodeFromDevices(result.devices())
+	code := exitCodeFromDevices(result.deployedDevices(rec))
 	if createdThisRun && code == 1 {
 		// Build/provision produced nothing usable and we created this squad
 		// this run — don't leave a stale empty record to block or confuse the
@@ -647,6 +649,30 @@ func markStale(devs []contract.Device, msg string) []contract.Device {
 	for i := range out {
 		out[i].Status = contract.StatusError
 		out[i].ErrorMessage = msg
+	}
+	return out
+}
+
+// deployedDevices is what the exit code counts: the deployed platforms'
+// devices in the merged record, including those kept as error after a
+// failed build. A deployed platform whose build failed and that has no
+// devices counts as one not-ready slot, so a failed build is never hidden
+// behind the other platform's ready devices.
+func (r deployResult) deployedDevices(rec *contract.SquadRecord) []contract.Device {
+	iosDevs, androidDevs := splitByPlatform(rec.Devices)
+	failedSlot := contract.Device{Status: contract.StatusError}
+	var out []contract.Device
+	if r.ios {
+		out = append(out, iosDevs...)
+		if r.iosBuildFailed && len(iosDevs) == 0 {
+			out = append(out, failedSlot)
+		}
+	}
+	if r.android {
+		out = append(out, androidDevs...)
+		if r.androidBuildFailed && len(androidDevs) == 0 {
+			out = append(out, failedSlot)
+		}
 	}
 	return out
 }

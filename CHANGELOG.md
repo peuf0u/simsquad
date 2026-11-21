@@ -17,11 +17,17 @@ All notable changes are recorded here. The format follows
   platform: matching devices are reused, a platform the squad lacks is
   added (so a bare deploy on an iOS-only squad adds Android), and a
   mismatched platform is reset when none of its devices is ready and
-  refused when one is. Stdout is still the whole squad; the exit code
-  counts only the deployed platforms' devices. Deploy now merges its
-  result into the record under the index lock and creates a new squad in
-  one locked step, so concurrent deploys of different platforms, and a
-  `set-context` during a deploy, are no longer lost. The `simsquad-test`
+  refused when one is; a reset never touches the rest of the squad, its
+  context or `created_at`. A failed build keeps that platform's devices
+  (still running the old build) in the squad as `error`, with their ports,
+  and the next deploy resets them. Stdout is still the whole squad; the
+  exit code counts only the deployed platforms' devices, with a failed
+  build counting as not ready. Deploy now merges its result into the
+  record under the index lock and creates a new squad in one locked step,
+  so concurrent deploys of different platforms, and a `set-context` during
+  a deploy, are no longer lost. A squad dismissed while its deploy runs
+  stays dismissed: the deploy tears down what it provisioned and exits
+  `1`. The `simsquad-test`
   skill deploys only the run's `platforms`. Skill contract 4; rerun
   `simsquad skill install` to update the installed skills.
 

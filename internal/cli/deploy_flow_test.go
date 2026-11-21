@@ -738,8 +738,8 @@ func TestDeployFailedAndroidBuildKeepsDevicesAndPorts(t *testing.T) {
 	})
 
 	pub, code, err := deployCLI(t, "--name", "s")
-	if err != nil || code != 0 {
-		t.Fatalf("deploy: code %d err %v, want 0 (only the provisioned iOS sim counts)", code, err)
+	if err != nil || code != 2 {
+		t.Fatalf("deploy: code %d err %v, want 2 (iOS ready, Android build failed)", code, err)
 	}
 	if len(f.androidProvisions) != 0 {
 		t.Fatal("android provisioned despite the failed build")
@@ -1008,5 +1008,20 @@ func TestDeployDoesNotResurrectSquadDismissedMidDeploy(t *testing.T) {
 	}
 	if len(f.deviceTeardowns) != 1 || f.deviceTeardowns[0].UDID != "ios-new-0" {
 		t.Fatalf("device teardowns = %+v, want the sim this deploy provisioned", f.deviceTeardowns)
+	}
+}
+
+// A deployed platform whose build failed counts as a not-ready slot even
+// when it has no devices: ready iOS plus a failed Android build is mixed.
+func TestDeployExitCodeCountsFailedBuildWithoutDevices(t *testing.T) {
+	newDeployRepo(t, deployToml)
+	f := installFakeDeploy(t)
+	f.androidBuildErr = errors.New("gradle failed")
+	if _, code, err := deployCLI(t, "--name", "s"); err != nil || code != 2 {
+		t.Fatalf("code %d err %v, want 2", code, err)
+	}
+	f.iosBuildErr = errors.New("xcodebuild failed")
+	if _, code, err := deployCLI(t, "--name", "s2"); err != nil || code != 1 {
+		t.Fatalf("everything failed: code %d err %v, want 1", code, err)
 	}
 }

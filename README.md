@@ -141,7 +141,8 @@ can't be combined with spec flags.
 
 `deploy` exit codes: `0` = all devices ready · `2` = mixed (some ready, some
 errored) · `1` = none ready / bad args / build failed. Only the deployed
-platforms' devices count; stdout is still the whole squad.
+platforms' devices count, and a platform whose build failed counts as not
+ready; stdout is still the whole squad.
 
 ## Agent skills
 
