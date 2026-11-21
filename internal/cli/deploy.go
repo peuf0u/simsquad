@@ -400,8 +400,10 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		androidPorts   map[string]int
 	)
 	var provGroup errgroup.Group
+	iosProvisioned := hasIos && builds.IOS != nil && builds.IOS.Error == "" && builds.IOS.AppPath != ""
+	androidProvisioned := hasAndroid && builds.Android != nil && builds.Android.Error == "" && builds.Android.APKPath != ""
 
-	if hasIos && builds.IOS != nil && builds.IOS.Error == "" && builds.IOS.AppPath != "" {
+	if iosProvisioned {
 		iosIn := ios.ProvisionInput{
 			Name:            squadName,
 			Specs:           iosSpecs,
@@ -419,7 +421,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		})
 	}
 
-	if hasAndroid && builds.Android != nil && builds.Android.Error == "" && builds.Android.APKPath != "" {
+	if androidProvisioned {
 		andIn := android.ProvisionInput{
 			Name:            squadName,
 			Specs:           androidSpecs,
@@ -451,12 +453,14 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		}
 	}
 	result := deployResult{
-		ios:            hasIos,
-		android:        hasAndroid,
-		builds:         builds,
-		iosDevices:     iosDevices,
-		androidDevices: androidDevices,
-		androidPorts:   androidPorts,
+		ios:                hasIos,
+		android:            hasAndroid,
+		builds:             builds,
+		iosDevices:         iosDevices,
+		androidDevices:     androidDevices,
+		androidPorts:       androidPorts,
+		iosBuildFailed:     hasIos && !iosProvisioned,
+		androidBuildFailed: hasAndroid && !androidProvisioned,
 	}
 	rec, err = state.UpdateRecord(squadName, result.mergeInto)
 	if err != nil {
@@ -591,19 +595,36 @@ type deployResult struct {
 	iosDevices     []contract.Device
 	androidDevices []contract.Device
 	androidPorts   map[string]int
+	// A platform whose build failed (or produced no artifact) was not
+	// provisioned: its stored devices are still running the old build.
+	iosBuildFailed, androidBuildFailed bool
 }
 
 // mergeInto replaces the deployed platforms' devices and builds entries in
 // rec with this deploy's, and for Android its port reservations too. The
 // other platform's devices, builds entry and ports, and the context, stay
 // as rec has them. Devices keep the iOS-then-Android order.
+//
+// A deployed platform whose build failed only gets its builds entry
+// replaced: its stored devices are still running, so dropping them (and
+// their ports) would let another squad be handed the same emulator port and
+// the next deploy recreate a device on top of a running one. They are
+// marked error instead, so `devices --ready` skips a device on a stale build
+// and the next deploy resets them.
 func (r deployResult) mergeInto(rec *contract.SquadRecord) error {
 	iosDevs, androidDevs := splitByPlatform(rec.Devices)
 	if r.ios {
 		rec.Builds.IOS = r.builds.IOS
-		iosDevs = r.iosDevices
+		if r.iosBuildFailed {
+			iosDevs = markStale(iosDevs, "not reinstalled: the iOS build failed (see builds.ios.error); the next deploy resets this device")
+		} else {
+			iosDevs = r.iosDevices
+		}
 	}
-	if r.android {
+	if r.android && r.androidBuildFailed {
+		rec.Builds.Android = r.builds.Android
+		androidDevs = markStale(androidDevs, "not reinstalled: the Android build failed (see builds.android.error); the next deploy resets this device")
+	} else if r.android {
 		rec.Builds.Android = r.builds.Android
 		androidDevs = r.androidDevices
 		// Ports holds only Android emulator reservations, so the deploy's
@@ -615,6 +636,15 @@ func (r deployResult) mergeInto(rec *contract.SquadRecord) error {
 	}
 	rec.Devices = append(append([]contract.Device{}, iosDevs...), androidDevs...)
 	return nil
+}
+
+func markStale(devs []contract.Device, msg string) []contract.Device {
+	out := append([]contract.Device{}, devs...)
+	for i := range out {
+		out[i].Status = contract.StatusError
+		out[i].ErrorMessage = msg
+	}
+	return out
 }
 
 // devices is every device this deploy provisioned, iOS first.

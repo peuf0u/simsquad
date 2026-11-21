@@ -726,3 +726,83 @@ func TestDeployCleanupKeepsOtherPlatformsDevices(t *testing.T) {
 		t.Fatal("squad unregistered")
 	}
 }
+
+// A failed build on a reused platform keeps that platform's devices — they
+// are still running — and its port reservations, so no other squad is handed
+// the same emulator port and the next deploy doesn't recreate a device on
+// top of a running one. The kept devices turn error so `devices --ready`
+// skips them and the next deploy resets them.
+func TestDeployFailedAndroidBuildKeepsDevicesAndPorts(t *testing.T) {
+	newDeployRepo(t, deployToml)
+	f := installFakeDeploy(t)
+	f.androidBuildErr = errors.New("gradle failed")
+	and := seededAndroid("s", testAndImage, contract.StatusReady)
+	seedSquad(t, &contract.SquadRecord{
+		Name:    "s",
+		Devices: []contract.Device{seededIOS("s", contract.StatusReady), and},
+		Ports:   map[string]int{and.Name: 5554},
+	})
+
+	pub, code, err := deployCLI(t, "--name", "s")
+	if err != nil || code != 0 {
+		t.Fatalf("deploy: code %d err %v, want 0 (only the provisioned iOS sim counts)", code, err)
+	}
+	if len(f.androidProvisions) != 0 {
+		t.Fatal("android provisioned despite the failed build")
+	}
+	rec := loadTestRecord(t, "s")
+	gotAnd := devicesOf(rec, contract.PlatformAndroid)
+	if len(gotAnd) != 1 || gotAnd[0].UDID != and.UDID || gotAnd[0].Status != contract.StatusError || gotAnd[0].ErrorMessage == "" {
+		t.Fatalf("android devices = %+v, want the emulator kept as error", gotAnd)
+	}
+	if len(rec.Ports) != 1 || rec.Ports[and.Name] != 5554 {
+		t.Fatalf("ports = %v, want the emulator's reservation kept", rec.Ports)
+	}
+	if rec.Builds.Android == nil || rec.Builds.Android.Error == "" {
+		t.Fatalf("builds.android = %+v, want the build error", rec.Builds.Android)
+	}
+	if len(pub.Devices) != 2 {
+		t.Fatalf("stdout devices = %+v", pub.Devices)
+	}
+
+	// The next deploy resets the stale emulator rather than adding a second
+	// one with the same name.
+	f.androidBuildErr = nil
+	if _, code, err := deployCLI(t, "--name", "s", "--platform", "android"); err != nil || code != 0 {
+		t.Fatalf("redeploy: code %d err %v", code, err)
+	}
+	if len(f.deviceTeardowns) != 1 || f.deviceTeardowns[0].UDID != and.UDID {
+		t.Fatalf("device teardowns = %+v, want the stale emulator reset", f.deviceTeardowns)
+	}
+	if len(f.androidProvisions) != 1 || len(f.androidProvisions[0].ExistingDevices) != 0 {
+		t.Fatalf("android provisions = %+v, want one fresh", f.androidProvisions)
+	}
+}
+
+func TestDeployFailedIOSBuildKeepsDevices(t *testing.T) {
+	newDeployRepo(t, deployToml)
+	f := installFakeDeploy(t)
+	f.iosBuildErr = errors.New("xcodebuild failed")
+	sim := seededIOS("s", contract.StatusReady)
+	seedSquad(t, &contract.SquadRecord{Name: "s", Devices: []contract.Device{sim}})
+
+	if _, code, err := deployCLI(t, "--name", "s", "--platform", "ios"); err != nil || code != 1 {
+		t.Fatalf("deploy: code %d err %v, want 1 (nothing provisioned)", code, err)
+	}
+	rec := loadTestRecord(t, "s")
+	if rec == nil || len(rec.Devices) != 1 || rec.Devices[0].UDID != sim.UDID ||
+		rec.Devices[0].Status != contract.StatusError || rec.Devices[0].ErrorMessage == "" {
+		t.Fatalf("record = %+v, want the sim kept as error", rec)
+	}
+
+	f.iosBuildErr = nil
+	if _, code, err := deployCLI(t, "--name", "s", "--platform", "ios"); err != nil || code != 0 {
+		t.Fatalf("redeploy: code %d err %v", code, err)
+	}
+	if len(f.squadTeardowns)+len(f.deviceTeardowns) == 0 {
+		t.Fatal("redeploy did not reset the stale sim")
+	}
+	if got := loadTestRecord(t, "s"); len(got.Devices) != 1 || got.Devices[0].Status != contract.StatusReady {
+		t.Fatalf("devices after redeploy = %+v, want one fresh ready sim", got.Devices)
+	}
+}
