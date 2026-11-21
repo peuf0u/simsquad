@@ -180,8 +180,8 @@ name`): deploy fails the device rather than install on or restart any
 other emulator, and `dismiss`, `sweep` and a deploy that resets the
 platform leave it running, with a warning, and delete only the squad's
 AVD. A new emulator gets a port `adb devices` doesn't list, and deploy
-installs on it only once the emulator answering on that port runs the
-squad's AVD and is the one it started.
+installs on it only while the emulator it started is still running on that
+port and the emulator answering there doesn't run another AVD.
 
 A squad emulator still booting after an interrupted deploy may ignore `adb
 emu kill`, and on teardown may not answer the name query either. simsquad

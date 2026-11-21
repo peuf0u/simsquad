@@ -672,18 +672,21 @@ func provisionEmulatorSlot(s emulatorSlot, ctx emulatorContext) contract.Device 
 }
 
 // verifyStartedEmulator checks that the emulator answering on serial after
-// a fresh boot is the one cmd started: it runs avd, and cmd is still alive
-// as avd's emulator on port. The caller kills cmd on an error; it never
-// touches the emulator that answered.
+// a fresh boot is the one cmd started: cmd is still alive as avd's emulator
+// on port, and the emulator on serial doesn't run another AVD. A name query
+// that fails (the console can miss one under a wide parallel matrix) is no
+// reason to reject a boot whose process is provably ours on our port. The
+// caller kills cmd on an error; it never touches the emulator that answered.
 func verifyStartedEmulator(cmd *exec.Cmd, serial, avd string, port int) error {
-	running, err := RunningAVDName(serial)
-	if err != nil {
-		return fmt.Errorf("could not read the AVD name of the emulator on port %d (%s)", port, err.Error())
-	}
-	if running != avd {
+	running, nameErr := RunningAVDName(serial)
+	if nameErr == nil && running != avd {
 		return fmt.Errorf("port %d is held by another emulator (%s), not %s", port, running, avd)
 	}
 	if !squadEmulatorPIDAlive(cmd.Process.Pid, avd, port) {
+		if nameErr != nil {
+			return fmt.Errorf("the emulator started for %s exited during boot, and the AVD name of the emulator on port %d could not be read (%s)",
+				avd, port, nameErr.Error())
+		}
 		return fmt.Errorf("the emulator started for %s exited during boot; another instance of it holds port %d", avd, port)
 	}
 	return nil

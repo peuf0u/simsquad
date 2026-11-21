@@ -663,8 +663,8 @@ func TestFreshBootFailsWhenAnotherEmulatorAnswersOnThePort(t *testing.T) {
 			"boot: port 5556 is held by another emulator (Pixel_8_API_35), not " + flowAVD},
 		{"started emulator stays", false, nil, "Pixel_8_API_35",
 			"boot: port 5556 is held by another emulator (Pixel_8_API_35), not " + flowAVD},
-		{"name unreadable", false, []string{"noname"}, "",
-			"boot: could not read the AVD name of the emulator on port 5556 (error: could not connect to TCP port 5557)"},
+		{"name unreadable, started emulator exited", true, []string{"exitearly", "noname"}, "",
+			"boot: the emulator started for " + flowAVD + " exited during boot, and the AVD name of the emulator on port 5556 could not be read (error: could not connect to TCP port 5557)"},
 		{"another instance of the squad's AVD", true, []string{"exitearly"}, "",
 			"boot: the emulator started for " + flowAVD + " exited during boot; another instance of it holds port 5556"},
 	}
@@ -703,6 +703,28 @@ func TestFreshBootFailsWhenAnotherEmulatorAnswersOnThePort(t *testing.T) {
 				t.Fatalf("started emulator %d still runs, want it killed", started)
 			}
 		})
+	}
+}
+
+// Review round 6, item 2: under a wide matrix the console can miss the
+// name query. A started emulator still alive with the squad's AVD and port
+// in its arguments is provably the one answering, so the boot stands.
+func TestFreshBootAcceptsItsLiveEmulatorWhenTheNameQueryFails(t *testing.T) {
+	f := newFakeSDK(t, false, "hw.keyboard=no\n")
+	f.touch(t, "noname")
+
+	dev := provisionEmulatorSlot(
+		emulatorSlot{name: flowAVD, port: 5556},
+		emulatorContext{APKPath: "/app.apk", BundleID: "com.example"},
+	)
+	if dev.Status != contract.StatusReady {
+		t.Fatalf("status = %s (%q), want ready", dev.Status, dev.ErrorMessage)
+	}
+	if dev.EmulatorPID != f.lastPID(t) {
+		t.Fatalf("emulator_pid = %d, want the started emulator's %d", dev.EmulatorPID, f.lastPID(t))
+	}
+	if got := f.calls(t); !strings.HasSuffix(got, "adb install -r -t /app.apk\nadb shell pm clear com.example\n") {
+		t.Fatalf("calls =\n%s\nwant the install and clear", got)
 	}
 }
 
