@@ -151,9 +151,15 @@ func TestTestSkillAlwaysPassesTheWorkerModel(t *testing.T) {
 	if len(runNew) == 0 {
 		t.Fatal("skill has no `simsquad run new` example")
 	}
+	// The skill says to run commands exactly as shown, so a hard-coded
+	// `--worker claude` would put a Codex orchestrator's workers on a
+	// Claude model; the block carries a placeholder instead.
 	for _, c := range runNew {
-		if !strings.Contains(c, " --worker ") {
-			t.Errorf("run new example does not pass --worker: %s", c)
+		if !strings.Contains(c, " --worker <") {
+			t.Errorf("run new example does not pass a --worker placeholder: %s", c)
+		}
+		if regexp.MustCompile(`--worker (claude|codex)\b`).MatchString(c) {
+			t.Errorf("run new example hard-codes the worker CLI: %s", c)
 		}
 	}
 	m := regexp.MustCompile(`(?s)## 4\. Start the run\n(.*?)\n## `).FindStringSubmatch(skill)

@@ -97,7 +97,7 @@ Then decide whether to wait:
 ## 4. Start the run
 
 ```sh
-simsquad run new .simsquad/drafts/<slug>.feature --worker claude --out .simsquad/run-new.json
+simsquad run new .simsquad/drafts/<slug>.feature --worker <claude or codex: the CLI you are running in> --out .simsquad/run-new.json
 ```
 
 `--worker` names the CLI you run in, which the workers run on too: pass

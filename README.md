@@ -276,7 +276,8 @@ simsquad run new qa/features/login.feature > run-new.json
   (`simsquad.local.toml` over `simsquad.toml`), else the default for
   `--worker` (default `claude`): `sonnet` for `claude`, `gpt-6.1-sol` for
   `codex`. Any other `--worker` exits `1`. The ids are passed on as given,
-  never validated.
+  never validated. `worker_model` is one value for both CLIs: set it only
+  when it suits every CLI the team uses, or pass `--model` per run.
 - Creates `.simsquad/runs/<run-id>/` in the config dir with
   `feature.feature` (a copy) and `run.json` (title, source, squad,
   platforms, deadline, worker and worker model, `app_notes` and the

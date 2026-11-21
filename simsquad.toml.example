@@ -54,7 +54,9 @@ api = "staging"
 # Model id for workers, passed to the worker command as given (never
 # validated). `run new --model` overrides it. Unset = the default for
 # `run new --worker`: "sonnet" for claude (the default worker),
-# "gpt-6.1-sol" for codex.
+# "gpt-6.1-sol" for codex. The one value applies to claude and codex
+# workers alike: set it only when it suits every CLI the team uses, or pass
+# `run new --model` per run instead.
 # worker_model = "sonnet"
 # Squad for test runs (default "qa-<repo>") and for everyday agent use
 # (default "dev-<repo>"). Set them when two repos share a folder name.

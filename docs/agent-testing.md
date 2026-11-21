@@ -176,7 +176,9 @@ Every worker runs on an explicit model. `run new --worker claude|codex`
 (default `claude`) names the CLI the workers run on, and the model is
 `run new --model`, else `[agent] worker_model` (`simsquad.local.toml` over
 `simsquad.toml`), else the default for that CLI: `sonnet` for `claude`,
-`gpt-6.1-sol` for `codex`. `run.json` records both as `worker` and
+`gpt-6.1-sol` for `codex`. `worker_model` applies to `claude` and `codex`
+workers alike, so set it only when it suits every CLI the team uses, or
+pass `run new --model` per run. `run.json` records both as `worker` and
 `worker_model`, and the skill passes the model to the worker command as
 given.
 
