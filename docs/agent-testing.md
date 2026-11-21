@@ -125,7 +125,7 @@ skill:
 | Check the setup | `simsquad skill status` | The skills match the binary; mobilecli is installed and new enough |
 | Draft | (the agent) | Writes the feature file to `.simsquad/drafts/<slug>.feature` |
 | Start | `simsquad run new` | Parses the Gherkin, picks the squad (`qa-<repo>`) and platforms, sets the worker time limit, creates `.simsquad/runs/<run-id>/` |
-| Deploy | `simsquad deploy --force-build` | Builds the working tree and installs it on the equipped devices, booting any that are down |
+| Deploy | `simsquad deploy --platform <p> --force-build` | One `--platform` per run platform: builds the working tree and installs it on those platforms' equipped devices, booting any that are down; the squad's other platform is left alone |
 | List devices | `simsquad devices --ready` | The device rows the workers get |
 | Workers | `simsquad run worker -- claude -p …` or `-- codex exec …` | One headless agent per device, all at once; simsquad kills each worker and everything it started at the time limit |
 | Validate | `simsquad run validate` | Checks each worker's `result.json` against the result schema |
@@ -249,8 +249,6 @@ workers with `codex exec --sandbox danger-full-access`.
 
 ## Known gaps
 
-- A run restricted to one platform still builds and boots every equipped
-  platform ([#23](https://github.com/peuf0u/simsquad/issues/23)).
 - Projects whose iOS and Android apps live in separate repos have no
   documented home for the config, skills and app notes
   ([#22](https://github.com/peuf0u/simsquad/issues/22)).
