@@ -557,18 +557,16 @@ func TestResetAppReinstallsTheAPKSetAfterClearing(t *testing.T) {
 	}
 }
 
-// Without the APK set on disk (an APK squad, or the set was deleted) reset
+// Without an APK set (an APK squad, or a set reset can't vouch for) reset
 // only clears.
 func TestResetAppOnlyClearsWithoutAnAPKSet(t *testing.T) {
-	for _, set := range []string{"", "/gone/app.apks"} {
-		f := newFakeSDK(t, true, "hw.keyboard=no\n")
-		f.withBundletool(t)
-		if err := ResetApp("emulator-5556", "com.example", set); err != nil {
-			t.Fatal(err)
-		}
-		want := "adb shell am force-stop com.example\nadb shell pm clear com.example\n"
-		if got := f.calls(t); got != want {
-			t.Fatalf("set %q: calls =\n%s\nwant\n%s", set, got, want)
-		}
+	f := newFakeSDK(t, true, "hw.keyboard=no\n")
+	f.withBundletool(t)
+	if err := ResetApp("emulator-5556", "com.example", ""); err != nil {
+		t.Fatal(err)
+	}
+	want := "adb shell am force-stop com.example\nadb shell pm clear com.example\n"
+	if got := f.calls(t); got != want {
+		t.Fatalf("calls =\n%s\nwant\n%s", got, want)
 	}
 }

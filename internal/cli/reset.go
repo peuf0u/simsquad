@@ -3,6 +3,8 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -85,12 +87,6 @@ func runReset(cmd *cobra.Command, name string, only []string) error {
 	logger := progress.New()
 	defer logger.Close()
 
-	// A bundle squad's APK set, installed again after the clear.
-	var androidAPKSet string
-	if rec.Builds.Android != nil {
-		androidAPKSet = rec.Builds.Android.APKSetPath
-	}
-
 	resetIDs := []string{}
 	var failures []resetFailure
 	matched := 0
@@ -109,7 +105,12 @@ func runReset(cmd *cobra.Command, name string, only []string) error {
 		case contract.PlatformIOS:
 			rerr = ios.ResetApp(dev.UDID, dev.BundleID)
 		case contract.PlatformAndroid:
-			rerr = android.ResetApp(dev.UDID, dev.BundleID, androidAPKSet)
+			set, skip := resetAPKSet(rec, dev)
+			if skip != "" {
+				logger.Warn("reset: "+skip, progress.F("id", dev.UDID),
+					progress.F("apks", rec.Builds.Android.APKSetPath))
+			}
+			rerr = android.ResetApp(dev.UDID, dev.BundleID, set)
 		default:
 			rerr = fmt.Errorf("unknown platform %q", dev.Platform)
 		}
@@ -131,4 +132,32 @@ func runReset(cmd *cobra.Command, name string, only []string) error {
 		out["errors"] = failures
 	}
 	return writeJSON(cmd, out)
+}
+
+// resetAPKSet returns the APK set reset installs again on an Android device
+// after clearing it, since the clear deletes the on-demand modules' splits
+// that install-apks left in external storage. It is "" for a squad without a
+// bundle build, and "" with skip set to the reason (for a warning) when the
+// set on disk can't be trusted to be the one this squad's deploy installed:
+// gone, or written after the device's ready_at, as when a later deploy from
+// the same repo renamed its own set over it.
+func resetAPKSet(rec *contract.SquadRecord, dev contract.Device) (set, skip string) {
+	const consequence = "; on-demand modules won't install until the next deploy"
+	if rec.Builds.Android == nil || rec.Builds.Android.APKSetPath == "" {
+		return "", ""
+	}
+	path := rec.Builds.Android.APKSetPath
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", "the squad's APK set no longer exists" + consequence
+	}
+	readyAt, err := time.Parse(time.RFC3339, dev.ReadyAt)
+	if err != nil {
+		return "", "the device has no ready_at to tell the deployed APK set by" + consequence
+	}
+	// ready_at has second precision and is stamped after the install.
+	if info.ModTime().Truncate(time.Second).After(readyAt) {
+		return "", "the APK set on disk is newer than this squad's deploy" + consequence
+	}
+	return path, ""
 }

@@ -140,7 +140,9 @@ All notable changes are recorded here. The format follows
   `pm clear` would also delete the on-demand modules' splits that
   `install-apks` leaves in external storage; a failed install is retried
   once after an uninstall, as for an APK. `reset` on a bundle squad
-  installs the APK set again after clearing, to put those splits back.
+  installs the APK set again after clearing, to put those splits back,
+  and warns instead when the set is gone or newer than the squad's
+  deploy.
   The set is written to a file of its own and renamed into place, so a
   concurrent deploy from the same repo never installs a half-written one.
   The set's path is recorded as `builds.android.apks_path` (additive,

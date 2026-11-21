@@ -409,9 +409,11 @@ a task without one, like `assembleDebug`, means `app`).
   list only the base and its config splits while the features are there.
   Data is cleared before the install, not after: `pm clear` also deletes
   the on-demand splits `install-apks` leaves in external storage. For the
-  same reason `reset` installs the squad's APK set again after clearing;
-  if that file is gone (a `gradle clean`), on-demand modules can't install
-  until the next deploy.
+  same reason `reset` installs the squad's APK set again after clearing.
+  It skips that, with a warning, when the file is gone (a `gradle clean`)
+  or is newer than the squad's deploy (another squad deployed from the
+  same repo since); on-demand modules then can't install until the next
+  deploy.
 
 A bundle task needs [bundletool](https://developer.android.com/tools/bundletool),
 which simsquad doesn't install: `brew install bundletool` (it runs on the
