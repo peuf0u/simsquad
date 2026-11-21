@@ -1,10 +1,13 @@
 package android
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // StageAPKSet makes dst the squad's own copy of the APK set at src, replacing
@@ -33,6 +36,36 @@ func StageAPKSet(src, dst string) error {
 		return fmt.Errorf("stage APK set: %w", err)
 	}
 	return nil
+}
+
+// RemoveAPKSet deletes the squad's APK set at dst (StageAPKSet) and any
+// temporary file a stage killed before its rename left next to it
+// (<dst>.<digits>.tmp, os.CreateTemp's pattern). Neither existing is not an
+// error.
+func RemoveAPKSet(dst string) error {
+	var errs []error
+	if err := os.Remove(dst); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		errs = append(errs, err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(dst))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		errs = append(errs, err)
+	}
+	prefix := filepath.Base(dst) + "."
+	for _, e := range entries {
+		mid, ok := strings.CutPrefix(e.Name(), prefix)
+		if !ok {
+			continue
+		}
+		mid, ok = strings.CutSuffix(mid, ".tmp")
+		if !ok || mid == "" || strings.Trim(mid, "0123456789") != "" {
+			continue
+		}
+		if err := os.Remove(filepath.Join(filepath.Dir(dst), e.Name())); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func copyAPKSet(src, dst string) error {

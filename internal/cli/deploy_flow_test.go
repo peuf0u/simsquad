@@ -1287,3 +1287,49 @@ func TestDeployProvisionsABundleBuildsAPKSet(t *testing.T) {
 		t.Fatal("a finished bundle build reads as a claim marker")
 	}
 }
+
+// Review round 5, item 5a: a squad dismissed while its bundle build runs
+// gets its APK set staged after the dismiss removed it; the deploy that
+// finds the squad gone removes the set too.
+func TestDeployRemovesTheAPKSetOfASquadDismissedMidDeploy(t *testing.T) {
+	newDeployRepo(t, deployToml)
+	f := installFakeDeploy(t)
+	f.androidBundle = true
+	f.duringAndroidBuild = func() {
+		if _, code := runRoot(t, "dismiss", "--name", "s"); code != 0 {
+			t.Errorf("dismiss: exit %d", code)
+		}
+	}
+
+	if _, _, err := deployCLI(t, "--name", "s", "--platform", "android"); err == nil || !strings.Contains(err.Error(), "dismissed") {
+		t.Fatalf("err %v, want a dismissed-during-deploy error", err)
+	}
+	if _, err := os.Stat(util.SquadAPKSetPath("s")); !os.IsNotExist(err) {
+		t.Fatalf("stat the squad's APK set: %v, want it removed", err)
+	}
+}
+
+// Review round 5, item 5c: a redeploy that builds an APK (assemble) records
+// no APK set, so the squad's set from an earlier bundle deploy goes.
+func TestDeployAssembleRedeployRemovesTheOldAPKSet(t *testing.T) {
+	newDeployRepo(t, deployToml)
+	f := installFakeDeploy(t)
+	f.androidBundle = true
+	if _, code, err := deployCLI(t, "--name", "s", "--platform", "android"); err != nil || code != 0 {
+		t.Fatalf("bundle deploy: code %d err %v", code, err)
+	}
+	if _, err := os.Stat(util.SquadAPKSetPath("s")); err != nil {
+		t.Fatalf("stat the squad's APK set after the bundle deploy: %v", err)
+	}
+
+	f.androidBundle = false
+	if _, code, err := deployCLI(t, "--name", "s", "--platform", "android"); err != nil || code != 0 {
+		t.Fatalf("assemble deploy: code %d err %v", code, err)
+	}
+	if b := loadTestRecord(t, "s").Builds.Android; b == nil || b.APKSetPath != "" || b.APKPath == "" {
+		t.Fatalf("builds.android = %+v, want an APK and no APK set", b)
+	}
+	if _, err := os.Stat(util.SquadAPKSetPath("s")); !os.IsNotExist(err) {
+		t.Fatalf("stat the squad's APK set: %v, want it removed", err)
+	}
+}

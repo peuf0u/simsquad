@@ -219,7 +219,8 @@ All notable changes are recorded here. The format follows
   the same repo never installs a half-written one. Each squad then
   installs from its own copy, `~/.cache/simsquad/<squad>.apks` (a hard
   link to the build's set where possible, else a copy), which only its
-  next deploy replaces and `dismiss` and `sweep` remove; its path is
+  next deploy replaces (an APK deploy removes it) and `dismiss` and `sweep`
+  remove, with any temporary copy an interrupted stage left; its path is
   recorded as `builds.android.apks_path` (additive, omitempty) in place of
   `apk_path`. `reset` on a bundle squad installs that set again after
   clearing, to put those splits back, so another squad's deploy from the

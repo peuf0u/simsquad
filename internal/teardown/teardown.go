@@ -85,8 +85,9 @@ func Squad(name string, logger *progress.Logger) error {
 	if err != nil {
 		return err
 	}
-	// The squad's own APK set (android.StageAPKSet) goes with its record.
-	if err := os.Remove(util.SquadAPKSetPath(name)); err != nil && !errors.Is(err, fs.ErrNotExist) && logger != nil {
+	// The squad's own APK set (android.StageAPKSet) goes with its record,
+	// with what a killed stage left next to it.
+	if err := android.RemoveAPKSet(util.SquadAPKSetPath(name)); err != nil && logger != nil {
 		logger.Warn("teardown: remove-apk-set", progress.F("name", name), progress.F("error", err.Error()))
 	}
 	if rec == nil {

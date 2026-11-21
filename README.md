@@ -511,8 +511,8 @@ a task without one, like `assembleDebug`, means `app`).
   Each bundle squad keeps its APK set at `~/.cache/simsquad/<squad>.apks`
   (a hard link to the build's set where possible, else a copy), installs
   from it and records it as `builds.android.apks_path`, so another
-  squad's deploy from the same repo doesn't change it; `dismiss` and
-  `sweep` remove it. `reset` skips the reinstall, with a warning, only
+  squad's deploy from the same repo doesn't change it; a deploy that
+  builds an APK instead, `dismiss` and `sweep` remove it. `reset` skips the reinstall, with a warning, only
   when that file is gone; on-demand modules then can't install until the
   next deploy.
 
@@ -576,7 +576,8 @@ simsquad keeps a per-user registry and per-squad records under
 - `<name>.apks` — the squad's own APK set, for an app bundle build.
 - `derived/` — xcodebuild derived-data + build logs (the expensive build cache).
 
-To wipe squad state without losing the build cache, remove the JSON files but
+To wipe squad state without losing the build cache, remove the JSON files and
+the `*.apks` files (with any `*.apks.*.tmp` left by an interrupted deploy) but
 keep `derived/`.
 
 ## Known limitations

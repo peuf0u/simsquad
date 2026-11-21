@@ -3,7 +3,6 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"sort"
 	"strconv"
@@ -440,6 +439,10 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 					return nil
 				}
 				setPath = own
+			} else {
+				// An APK build records no set: one from an earlier bundle
+				// deploy is nothing reset may install any more.
+				removeSquadAPKSet(squadName, logger)
 			}
 			androidBuild.APKPath = res.APKPath
 			androidBuild.APKSetPath = setPath
@@ -534,6 +537,9 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		// would undo the dismiss, so tear down what this run provisioned
 		// and print nothing: there is no squad to describe.
 		deployVia.teardownDevices(result.devices(), logger)
+		// A bundle build staged the squad's APK set after the dismiss
+		// removed it.
+		removeSquadAPKSet(squadName, logger)
 		return fmt.Errorf("deploy: squad %q was dismissed during the deploy; tore down the %d device(s) this deploy provisioned", squadName, len(result.devices()))
 	}
 	if err != nil {
@@ -822,9 +828,9 @@ func cleanupCreatedSquad(name string, result deployResult, logger *progress.Logg
 }
 
 // removeSquadAPKSet deletes the squad's own APK set (android.StageAPKSet)
-// along with its record. A squad without one has nothing to delete.
+// and a killed stage's leftovers. A squad without one has nothing to delete.
 func removeSquadAPKSet(name string, logger *progress.Logger) {
-	if err := os.Remove(util.SquadAPKSetPath(name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err := android.RemoveAPKSet(util.SquadAPKSetPath(name)); err != nil {
 		logger.Warn("deploy: remove-apk-set", progress.F("name", name), progress.F("error", err.Error()))
 	}
 }

@@ -3,6 +3,7 @@ package teardown
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/peuf0u/simsquad/internal/contract"
@@ -62,14 +63,25 @@ func TestSquadRemovesTheSquadsAPKSet(t *testing.T) {
 	if err := state.RegisterSquad(state.RegisterSquadInput{Name: "s", StateFile: util.StateFileFor("s")}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(set, []byte("set"), 0o600); err != nil {
-		t.Fatal(err)
+	// A killed stage leaves its temporary file next to the set; another
+	// squad's is not this squad's to remove.
+	tmp := set + ".123456.tmp"
+	other := util.SquadAPKSetPath("s-2") + ".654321.tmp"
+	for _, p := range []string{set, tmp, other} {
+		if err := os.WriteFile(p, []byte("set"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	if err := Squad("s", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(set); !os.IsNotExist(err) {
-		t.Fatalf("stat the squad's APK set: %v, want it removed", err)
+	for _, p := range []string{set, tmp} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Fatalf("stat %s: %v, want it removed", filepath.Base(p), err)
+		}
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Fatalf("stat another squad's stage leftover: %v, want it kept", err)
 	}
 }
