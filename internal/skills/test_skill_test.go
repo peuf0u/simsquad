@@ -614,3 +614,24 @@ func TestTestSkillDocumentsWorkerOutcomesAndRetry(t *testing.T) {
 		}
 	}
 }
+
+// Issue #37: the device row a worker gets shows secrets as <secret>; it
+// fetches the real value with `devices --reveal`, types it, and keeps it out
+// of every file it writes.
+func TestWorkerFetchesSecretsWithReveal(t *testing.T) {
+	_, worker := installedTestSkill(t)
+	cmds := strings.Join(fencedCommands(worker, "simsquad"), "\n")
+	if !strings.Contains(cmds, `simsquad devices --name "$SQUAD" --reveal`) {
+		t.Errorf("worker prompt has no `simsquad devices --name \"$SQUAD\" --reveal` example:\n%s", cmds)
+	}
+	for _, want := range []string{"<secret>", "mobilecli", "log.md", "result.json", "file names"} {
+		if !strings.Contains(worker, want) {
+			t.Errorf("worker prompt does not mention %q", want)
+		}
+	}
+	for _, line := range fencedCommands(worker, "simsquad") {
+		if strings.Contains(line, "--reveal") && (strings.Contains(line, "--out") || strings.Contains(line, ">")) {
+			t.Errorf("worker prompt writes revealed secrets to a file: %s", line)
+		}
+	}
+}

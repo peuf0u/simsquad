@@ -50,7 +50,23 @@ with a `blocked_reason`. Write nothing else in its place, such as a
    `app_notes`, the project has no app notes: say so in `log.md` and go on
    without them.
 3. Your device row's `context`: the test context (persona, API stage,
-   credentials). Use these values to log in and reach the feature.
+   credentials). Use these values to log in and reach the feature. A
+   value of `<secret>` is a secret, such as a password: see Secrets.
+
+## Secrets
+
+A context value that reads `<secret>` stands for a secret. When a step
+needs it, fetch the real value:
+
+```sh
+simsquad devices --name "$SQUAD" --reveal
+```
+
+Every row carries the same `context`. Type the value with `mobilecli io
+text` and keep it out of everything you write: never put it in `log.md`,
+`result.json` or file names. Where they need it, name the key instead
+("typed `password`"). Run the command exactly as shown, without `--out`
+or a redirect, so the value never lands in a file.
 
 ## Your tools
 

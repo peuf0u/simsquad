@@ -224,6 +224,7 @@ func TestSkillInstallWritesWorkerPermissionsForClaudeAndCodex(t *testing.T) {
 		"Bash(mobilecli:*)",
 		"Bash(simsquad reset:*)",
 		"Bash(simsquad run validate:*)",
+		"Bash(simsquad devices:*)",
 		"Edit(.simsquad/runs/**)",
 	}
 	if strings.Join(settings.Permissions.Allow, "|") != strings.Join(wantAllow, "|") {
@@ -235,13 +236,14 @@ func TestSkillInstallWritesWorkerPermissionsForClaudeAndCodex(t *testing.T) {
 		`prefix_rule(pattern = ["mobilecli"], decision = "allow")`,
 		`prefix_rule(pattern = ["simsquad", "reset"], decision = "allow")`,
 		`prefix_rule(pattern = ["simsquad", "run", "validate"], decision = "allow")`,
+		`prefix_rule(pattern = ["simsquad", "devices"], decision = "allow")`,
 	} {
 		if !strings.Contains(rules, want) {
 			t.Errorf("codex rules lack %s:\n%s", want, rules)
 		}
 	}
-	if n := strings.Count(rules, "prefix_rule("); n != 3 {
-		t.Errorf("codex rules allow %d commands, want only mobilecli, simsquad reset and simsquad run validate:\n%s", n, rules)
+	if n := strings.Count(rules, "prefix_rule("); n != 4 {
+		t.Errorf("codex rules allow %d commands, want only mobilecli, simsquad reset, simsquad run validate and simsquad devices:\n%s", n, rules)
 	}
 	for _, want := range []string{".claude/settings.json", ".codex/rules/simsquad.rules"} {
 		if !contains(got.Files, want) {

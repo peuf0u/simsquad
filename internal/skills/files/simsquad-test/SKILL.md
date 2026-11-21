@@ -177,7 +177,9 @@ simsquad devices --name "$SQUAD" --ready --out "$RUN_DIR/devices.json"
 
 Keep the rows whose `platform` is in the run's `platforms`. Each row has
 `platform`, `id`, `name`, `model`, `os_version`, `bundle_id`, `status` and
-the squad `context`. No rows left: go to step 9.
+the squad `context`, where a secret such as a password shows as
+`<secret>`. Leave it so: a worker fetches the value itself. No rows left:
+go to step 9.
 
 ## 7. Start the workers
 
@@ -230,6 +232,7 @@ Then start one worker per device, all at once. For each device, with
      -- claude -p "Read $RUN_DIR/workers/$DEVICE_ID/prompt.md and follow it." \
      --add-dir "$SKILL_DIR" --add-dir "$NOTES_DIR" \
      --allowedTools "Bash(mobilecli:*)" "Bash(simsquad reset:*)" "Bash(simsquad run validate:*)" \
+     "Bash(simsquad devices:*)" \
      "Edit(/$RUN_DIR/**)" \
      --model "$WORKER_MODEL"
    ```
@@ -238,6 +241,8 @@ Then start one worker per device, all at once. For each device, with
    a permission prompt, and `claude -p` ignores the project's
    `.claude/settings.json` in a folder nobody has trusted interactively.
 
+   - `"Bash(simsquad devices:*)"` lets the worker fetch a `<secret>`
+     context value with `simsquad devices --reveal` to log in.
    - `--add-dir` lets the worker read `worker.md` and the app notes
      wherever they live. Leave out `--add-dir "$NOTES_DIR"` when there is
      no `NOTES_DIR`.
