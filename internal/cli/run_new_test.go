@@ -348,10 +348,88 @@ test_squad = "Team QA"
 		t.Fatalf("squad = %q, want team-qa", got.SquadName)
 	}
 	if got.WorkerModel != "some-model-that-does-not-exist" {
-		t.Fatalf("worker_model = %q", got.WorkerModel)
+		t.Fatalf("worker_model = %q, want the TOML value over the default", got.WorkerModel)
 	}
 	if readRunRecord(t, got.RunDir).WorkerModel != got.WorkerModel {
 		t.Fatal("run.json worker_model mismatch")
+	}
+
+	// The TOML value wins over the codex default too, and --model wins over
+	// the TOML value.
+	if got := mustRunNew(t, "x.feature", "--fresh", "--worker", "codex"); got.WorkerModel != "some-model-that-does-not-exist" {
+		t.Fatalf("--worker codex worker_model = %q, want the TOML value", got.WorkerModel)
+	}
+	got = mustRunNew(t, "x.feature", "--fresh", "--model", "opus")
+	if got.WorkerModel != "opus" {
+		t.Fatalf("--model worker_model = %q, want opus", got.WorkerModel)
+	}
+	if rec := readRunRecord(t, got.RunDir); rec.WorkerModel != "opus" {
+		t.Fatalf("run.json worker_model = %q, want opus", rec.WorkerModel)
+	}
+}
+
+// TestRunNewWorkerModelDefaults: with no [agent].worker_model the run still
+// names a model, the built-in default for the worker CLI, so workers never
+// fall back to whatever their host CLI defaults to on this machine.
+func TestRunNewWorkerModelDefaults(t *testing.T) {
+	cases := []struct {
+		args       []string
+		wantWorker string
+		wantModel  string
+	}{
+		{nil, "claude", "sonnet"},
+		{[]string{"--worker", "claude"}, "claude", "sonnet"},
+		{[]string{"--worker", "codex"}, "codex", "gpt-6.1-sol"},
+		{[]string{"--worker", "codex", "--model", "gpt-6.1"}, "codex", "gpt-6.1"},
+	}
+	for _, tc := range cases {
+		t.Run(strings.Join(append([]string{"args"}, tc.args...), " "), func(t *testing.T) {
+			repo := newEquippedRepo(t, "app", equipBoth)
+			writeTestFile(t, filepath.Join(repo, "x.feature"), "Feature: X\n  Scenario: one\n    Given something\n")
+
+			got := mustRunNew(t, append([]string{"x.feature"}, tc.args...)...)
+
+			if got.Worker != tc.wantWorker || got.WorkerModel != tc.wantModel {
+				t.Errorf("stdout worker/worker_model = %q/%q, want %q/%q", got.Worker, got.WorkerModel, tc.wantWorker, tc.wantModel)
+			}
+			if rec := readRunRecord(t, got.RunDir); rec.Worker != tc.wantWorker || rec.WorkerModel != tc.wantModel {
+				t.Errorf("run.json worker/worker_model = %q/%q, want %q/%q", rec.Worker, rec.WorkerModel, tc.wantWorker, tc.wantModel)
+			}
+		})
+	}
+}
+
+// TestRunNewLocalWorkerModelWinsOverShared: simsquad.local.toml overrides
+// simsquad.toml for worker_model, and both override the built-in default.
+func TestRunNewLocalWorkerModelWinsOverShared(t *testing.T) {
+	repo := newEquippedRepo(t, "app", equipBoth+"\n[agent]\nworker_model = \"shared-model\"\n")
+	writeTestFile(t, filepath.Join(repo, "simsquad.local.toml"), "[agent]\nworker_model = \"local-model\"\n")
+	writeTestFile(t, filepath.Join(repo, "x.feature"), "Feature: X\n  Scenario: one\n    Given something\n")
+
+	if got := mustRunNew(t, "x.feature"); got.WorkerModel != "local-model" {
+		t.Fatalf("worker_model = %q, want local-model", got.WorkerModel)
+	}
+}
+
+func TestRunNewRejectsUnknownWorker(t *testing.T) {
+	repo := newEquippedRepo(t, "app", equipBoth)
+	writeTestFile(t, filepath.Join(repo, "x.feature"), "Feature: X\n  Scenario: one\n    Given something\n")
+
+	_, err := runRunNew(t, "x.feature", "--worker", "gemini")
+	if err == nil {
+		t.Fatal("want an error for --worker gemini")
+	}
+	var ee *ExitError
+	if errors.As(err, &ee) {
+		t.Fatal("a bad --worker is a plain error (exit 1), not an ExitError")
+	}
+	for _, want := range []string{"gemini", "claude", "codex"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".simsquad")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a refused run must not create .simsquad/ (stat err = %v)", err)
 	}
 }
 

@@ -40,17 +40,45 @@ const (
 // RunsDir is the run folder root, relative to the app repo.
 var RunsDir = filepath.Join(".simsquad", "runs")
 
+// DefaultWorker is the worker CLI when `run new --worker` is not given.
+const DefaultWorker = "claude"
+
+// DefaultWorkerModels is the model each worker CLI runs on when neither
+// `--model` nor `[agent].worker_model` names one, so a run never falls back
+// to whatever the host CLI defaults to on this machine. Its keys are the
+// accepted `--worker` values. Bumping a default model is a one-line change
+// here.
+var DefaultWorkerModels = map[string]string{
+	"claude": "sonnet",
+	"codex":  "gpt-6.1-sol",
+}
+
 // Options configures New.
 type Options struct {
 	// FeaturePath is the feature file as given on the command line.
 	FeaturePath string
 	// Fresh gives the run its own uniquely named squad.
 	Fresh bool
+	// Worker is the CLI the workers run on, a key of DefaultWorkerModels;
+	// empty means DefaultWorker.
+	Worker string
+	// Model overrides the worker model for this run; empty falls back to
+	// `[agent].worker_model`, then Worker's default.
+	Model string
 }
 
 // New sets up a test run in the repo found from the working directory and
 // returns its record and run folder.
 func New(opts Options) (contract.RunRecord, string, error) {
+	worker := opts.Worker
+	if worker == "" {
+		worker = DefaultWorker
+	}
+	defaultModel, ok := DefaultWorkerModels[worker]
+	if !ok {
+		return contract.RunRecord{}, "", fmt.Errorf("unknown --worker %q: must be claude or codex", worker)
+	}
+
 	src, err := os.ReadFile(opts.FeaturePath)
 	if err != nil {
 		return contract.RunRecord{}, "", fmt.Errorf("read feature file: %w", err)
@@ -78,7 +106,8 @@ func New(opts Options) (contract.RunRecord, string, error) {
 		FeatureFile:  opts.FeaturePath,
 		Source:       feat.Source,
 		Fresh:        opts.Fresh,
-		WorkerModel:  cfg.AgentWorkerModel(),
+		Worker:       worker,
+		WorkerModel:  workerModel(opts.Model, cfg.AgentWorkerModel(), defaultModel),
 		AppNotes:     appNotes(configDir),
 		Scenarios:    []contract.RunScenario{},
 	}
@@ -130,6 +159,19 @@ func New(opts Options) (contract.RunRecord, string, error) {
 		return contract.RunRecord{}, "", err
 	}
 	return rec, runDir, nil
+}
+
+// workerModel resolves the run's model: `--model`, else the TOML value
+// (simsquad.local.toml already merged over simsquad.toml), else the worker's
+// built-in default.
+func workerModel(flag, toml, def string) string {
+	if flag != "" {
+		return flag
+	}
+	if toml != "" {
+		return toml
+	}
+	return def
 }
 
 // appNotes is the absolute path of the config dir's app notes, or "" when

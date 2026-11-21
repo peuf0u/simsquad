@@ -21,7 +21,9 @@ type RunNewOutput struct {
 	Fresh           bool     `json:"fresh"`
 	Platforms       []string `json:"platforms"`
 	DeadlineSeconds int      `json:"deadline_seconds"`
-	WorkerModel     string   `json:"worker_model"`
+	// Worker and WorkerModel are RunRecord's, echoed for the orchestrator.
+	Worker      string `json:"worker"`
+	WorkerModel string `json:"worker_model"`
 	// AppNotes is RunRecord.AppNotes, echoed for the orchestrator.
 	AppNotes string `json:"app_notes,omitempty"`
 }
@@ -42,7 +44,12 @@ type RunRecord struct {
 	Fresh           bool     `json:"fresh"`
 	Platforms       []string `json:"platforms"`
 	DeadlineSeconds int      `json:"deadline_seconds"`
-	WorkerModel     string   `json:"worker_model"`
+	// Worker is the CLI the workers run on (`claude` or `codex`), from
+	// `run new --worker`.
+	Worker string `json:"worker"`
+	// WorkerModel is the model the workers run on, never empty: `run new
+	// --model`, else `[agent].worker_model`, else Worker's built-in default.
+	WorkerModel string `json:"worker_model"`
 	// AppNotes is the absolute path of the app notes (qa/README.md at the
 	// config dir), so workers read them without guessing which repo holds
 	// them; omitted when the file doesn't exist.
