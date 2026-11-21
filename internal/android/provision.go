@@ -355,18 +355,43 @@ func runningAVDName(serial string) (string, error) {
 	return "", lastErr
 }
 
+// stopEmulator's waits: for `adb emu kill`, then for each signal after it.
+// Variables so fake-SDK tests run in test time.
+var (
+	stopExitTimeout   = EmulatorExitTimeout
+	stopSignalTimeout = 5 * time.Second
+)
+
 // stopEmulator asks a running emulator to exit and waits until it has, so
-// the windowed boot that follows can take its port.
+// the boot that follows can take its port and lock its AVD.
 func stopEmulator(dev contract.Device) error {
 	adb, err := ADB()
 	if err != nil {
 		return err
 	}
 	_ = killEmulatorADB(dev.UDID)
-	if !WaitGone(EmulatorGoneProbe(dev, adb), EmulatorExitTimeout, EmulatorExitPoll) {
-		return fmt.Errorf("emulator %s did not exit within %s", dev.UDID, EmulatorExitTimeout)
+	gone := EmulatorGoneProbe(dev, adb)
+	if WaitGone(gone, stopExitTimeout, EmulatorExitPoll) {
+		return nil
 	}
-	return nil
+	// An emulator still booting (after an interrupted deploy, say) may not
+	// honour `emu kill`, and its qemu keeps the AVD locked. Signal the
+	// recorded PID, but only while it is still an emulator process: PIDs
+	// are reused, and the check runs right before each signal.
+	if dev.EmulatorPID > 0 {
+		for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL} {
+			if !emulatorProcessAlive(dev.EmulatorPID) {
+				return nil
+			}
+			_ = syscall.Kill(dev.EmulatorPID, sig)
+			if WaitGone(gone, stopSignalTimeout, EmulatorExitPoll) {
+				return nil
+			}
+		}
+		return fmt.Errorf("emulator %s (pid %d) did not exit after emu kill, SIGTERM and SIGKILL",
+			dev.UDID, dev.EmulatorPID)
+	}
+	return fmt.Errorf("emulator %s did not exit within %s", dev.UDID, stopExitTimeout)
 }
 
 // turnOnHWKeyboard sets hw.keyboard=yes on avd before a windowed boot. A

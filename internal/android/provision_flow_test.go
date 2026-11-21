@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -32,6 +33,9 @@ const flowAVD = "simsquad-x-android-0"
 //   - noname1: as noname, for the first query only (the marker goes with it).
 //   - noboot: a started emulator never comes up and wait-for-device fails.
 //   - exitearly: a started emulator exits at once (its AVD is locked).
+//   - nokill: `adb emu kill` is logged but the emulator keeps running, as
+//     one still booting may not honour it.
+//   - ignoreterm: an emulator started while it exists ignores SIGTERM.
 //
 // Every command that changes something is appended to log.
 type fakeSDK struct {
@@ -63,6 +67,9 @@ func runFakeEmulator(dir string) {
 			_ = f.Close()
 		}
 		_ = os.WriteFile(filepath.Join(dir, "lastpid"), []byte(strconv.Itoa(os.Getpid())), 0o644)
+	}
+	if exists("ignoreterm") {
+		signal.Ignore(syscall.SIGTERM)
 	}
 	if exists("exitearly") {
 		_ = os.WriteFile(filepath.Join(dir, "exited"), nil, 0o644)
@@ -116,7 +123,7 @@ fi
 shift 2
 case "$*" in
   "shell true") [ -e $d/up ] && [ ! -e $d/offline ] ;;
-  "emu kill") echo "adb emu kill" >> $d/log; rm -f $d/up $d/offline ;;
+  "emu kill") echo "adb emu kill" >> $d/log; [ -e $d/nokill ] || rm -f $d/up $d/offline ;;
   "emu avd name")
     echo x >> $d/namecalls
     [ -e $d/up ] || exit 1
@@ -484,6 +491,75 @@ func TestReuseProceedsWhenTheAVDNameAnswersOnRetry(t *testing.T) {
 	}
 	if n := strings.Count(string(b), "\n"); n != 2 {
 		t.Fatalf("emu avd name ran %d times, want 2", n)
+	}
+}
+
+// shortStopWaits makes stopEmulator's waits test-sized.
+func shortStopWaits(t *testing.T) {
+	t.Helper()
+	oldExit, oldSignal := stopExitTimeout, stopSignalTimeout
+	t.Cleanup(func() { stopExitTimeout, stopSignalTimeout = oldExit, oldSignal })
+	stopExitTimeout, stopSignalTimeout = 500*time.Millisecond, time.Second
+}
+
+func processGone(pid int) bool {
+	return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
+}
+
+// Review round 4: an emulator still booting after an interrupted deploy may
+// not honour `adb emu kill`, and qemu would keep the AVD locked. stopEmulator
+// then signals the recorded PID, still a verified emulator process: SIGTERM
+// first, SIGKILL when that is ignored too.
+func TestStopEmulatorSignalsTheRecordedPIDWhenEmuKillIsIgnored(t *testing.T) {
+	for _, ignoreTerm := range []bool{false, true} {
+		t.Run(fmt.Sprint("ignoreterm=", ignoreTerm), func(t *testing.T) {
+			f := newFakeSDK(t, false, "hw.keyboard=no\n")
+			shortStopWaits(t)
+			if ignoreTerm {
+				f.touch(t, "ignoreterm")
+			}
+			pid := f.startEmulator(t)
+			f.touch(t, "nokill")
+
+			dev := reusedEmulator(false)
+			dev.EmulatorPID = pid
+			if err := stopEmulator(dev); err != nil {
+				t.Fatal(err)
+			}
+			for deadline := time.Now().Add(time.Second); !processGone(pid) && time.Now().Before(deadline); {
+				time.Sleep(10 * time.Millisecond)
+			}
+			if !processGone(pid) {
+				t.Fatalf("emulator %d still exists, want it stopped by a signal", pid)
+			}
+			if got := f.calls(t); got != "adb emu kill\n" {
+				t.Fatalf("calls =\n%s\nwant only the emu kill", got)
+			}
+		})
+	}
+}
+
+// A recorded PID that is no longer an emulator (reused by another program)
+// is never signalled; the stop fails as before.
+func TestStopEmulatorLeavesAPIDThatIsNotAnEmulator(t *testing.T) {
+	f := newFakeSDK(t, true, "hw.keyboard=no\n")
+	shortStopWaits(t)
+	f.touch(t, "nokill")
+	other := exec.Command("sleep", "30")
+	if err := other.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = other.Process.Kill(); _ = other.Wait() })
+
+	dev := reusedEmulator(false)
+	dev.EmulatorPID = other.Process.Pid
+	// The PID probe says the emulator is gone (the PID isn't one), so the
+	// stop succeeds without signalling anything.
+	if err := stopEmulator(dev); err != nil {
+		t.Fatal(err)
+	}
+	if processGone(other.Process.Pid) {
+		t.Fatal("a process that is not an emulator was signalled")
 	}
 }
 
