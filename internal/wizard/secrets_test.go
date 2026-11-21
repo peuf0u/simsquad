@@ -1,6 +1,7 @@
 package wizard
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -224,5 +225,57 @@ func TestBubbleEditorContextRejectsSecretKey(t *testing.T) {
 	m = next.(editorModel)
 	if m.state.testContext["password"] != "" || m.message == "" || strings.Contains(m.message, "hunter3") {
 		t.Fatalf("context %v message %q, want password refused without its value", m.state.testContext, m.message)
+	}
+}
+
+// simsquad.local.toml holds [secrets], so equip writes it owner-only,
+// tightening a file an older equip wrote 0644.
+func TestEquipWritesLocalFilePrivate(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, config.ProjectFile), secretsProject)
+	writeFile(t, filepath.Join(dir, config.LocalFile), secretsLocal)
+	if err := os.Chmod(filepath.Join(dir, config.LocalFile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	state, err := loadState(dir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writeState(dir, state, true); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(filepath.Join(dir, config.LocalFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fi.Mode().Perm(); got != 0o600 {
+		t.Fatalf("simsquad.local.toml mode = %o, want 600", got)
+	}
+}
+
+// The context screen masks a key whose name marks it secret (a legacy
+// password in plain [context]) until that field is edited.
+func TestBubbleEditorContextMasksSecretNamedKey(t *testing.T) {
+	t.Parallel()
+	m := secretsEditor()
+	m.state.testContext["Password"] = "hunter2"
+	m.cursor = -1
+	for i, item := range m.currentMenuItems() {
+		if item.action == actionEditContext {
+			m.cursor = i
+		}
+	}
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(editorModel)
+	view := m.View()
+	if strings.Contains(view, "hunter2") || !strings.Contains(view, "••••") || !strings.Contains(view, "alice") {
+		t.Fatalf("context screen: want Password masked and user shown:\n%s", view)
+	}
+	m.fieldIdx = 0 // Password sorts before user
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(editorModel)
+	if m.mode != editorValue || !strings.Contains(m.View(), "hunter2") {
+		t.Fatalf("editing Password: want the real value in the input:\n%s", m.View())
 	}
 }

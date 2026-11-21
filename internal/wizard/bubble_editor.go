@@ -1789,7 +1789,9 @@ const addKeyValueLabel = "Add new (KEY=VALUE)"
 
 // keyValueFields lays out the context or secrets screen: one field per
 // existing key (alphabetised) plus the trailing "Add new" field. Empty
-// existing values commit a delete; the new-key field parses on save.
+// existing values commit a delete; the new-key field parses on save. With
+// secret every field is masked; otherwise a key whose name marks it secret
+// (a password in plain [context]) is.
 func keyValueFields(values map[string]string, secret bool) []editorField {
 	keys := make([]string, 0, len(values))
 	for k := range values {
@@ -1798,7 +1800,7 @@ func keyValueFields(values map[string]string, secret bool) []editorField {
 	sort.Strings(keys)
 	fields := make([]editorField, 0, len(keys)+1)
 	for _, k := range keys {
-		fields = append(fields, editorField{label: k, value: values[k], secret: secret})
+		fields = append(fields, editorField{label: k, value: values[k], secret: secret || contract.SecretByName(k)})
 	}
 	return append(fields, editorField{label: addKeyValueLabel, secret: secret})
 }

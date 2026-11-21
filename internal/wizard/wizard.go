@@ -247,7 +247,7 @@ func writeState(configDir string, state wizardState, overwrite bool) (Result, er
 	if err := os.WriteFile(projectPath, []byte(project), 0o644); err != nil {
 		return Result{}, fmt.Errorf("equip: write %s: %w", config.ProjectFile, err)
 	}
-	if err := os.WriteFile(localPath, []byte(local), 0o644); err != nil {
+	if err := writePrivateFile(localPath, []byte(local)); err != nil {
 		return Result{}, fmt.Errorf("equip: write %s: %w", config.LocalFile, err)
 	}
 	gitignore := filepath.Join(configDir, ".gitignore")
@@ -261,6 +261,17 @@ func writeState(configDir string, state wizardState, overwrite bool) (Result, er
 		Summary:     summarize(configDir, state),
 		Wrote:       true,
 	}, nil
+}
+
+// writePrivateFile writes data to path readable by the user only:
+// simsquad.local.toml holds [secrets]. An existing file (an older equip
+// wrote it 0644) is tightened before the data goes in, since WriteFile sets
+// the mode only on a file it creates.
+func writePrivateFile(path string, data []byte) error {
+	if err := os.Chmod(path, 0o600); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
 }
 
 func defaults(cwd string) wizardState {

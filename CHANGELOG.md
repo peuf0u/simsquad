@@ -243,8 +243,13 @@ All notable changes are recorded here. The format follows
   command line, `succeeded in …:` and its stdout), so a
   `devices --reveal` would land in the run folder. When the worker folder
   sits in a run folder, `run worker` reads the squad from `run.json` and
-  replaces each secret value with `<secret>` line by line as it writes the
-  log, so a value split across writes is still caught.
+  replaces each secret value, raw or JSON-escaped as `devices --reveal`
+  prints it, with `<secret>` as it writes the log, so a value split across
+  writes is still caught. A value secret only by its key's name is
+  redacted there only from 4 characters on (`TOKEN_TTL=5` would mask every
+  `5`, including a `5-hour limit reached`); outputs mask it regardless.
+- **`simsquad.local.toml` is written `0600`** by `equip`, since it holds
+  `[secrets]`; an existing `0644` file is tightened.
 - **Malformed `--context`, `--secret`, `--set` and `--set-secret` entries
   no longer echo the entry.** The error names the flag and the entry's
   position (`--context entry 2 is malformed: expected KEY=VALUE`), or the

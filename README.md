@@ -335,8 +335,10 @@ code (e.g. `-9`). Only these fixed texts are recorded, never lines from
 the log, which can hold credentials from the squad's context. When `--dir`
 sits in a run folder (`<run>/workers/<id>`), the squad named by
 `<run>/run.json` has its secret values replaced by `<secret>` in
-`worker.log` as it is written: a Codex worker's output repeats the
-commands it ran and their output, `devices --reveal` included.
+`worker.log` as it is written, raw or JSON-escaped: a Codex worker's
+output repeats the commands it ran and their output, `devices --reveal`
+included. A value secret only by its key's name is redacted there from 4
+characters on, so `TOKEN_TTL=5` doesn't mask every `5`.
 
 Running `run worker` again on the same `--dir` is a retry. Before the
 worker starts, the earlier attempt's outputs (everything except
@@ -418,7 +420,8 @@ output (see Concepts). `[secrets]` and `[context]` are separate sources:
 alone, `--context` leaves `[secrets]` alone, and a key in both is an
 error. A context key named like `password`, `secret` or `token` is a secret
 even in `[context]`. `[secrets]` in `simsquad.toml` works, but deploy warns
-that it is committed; `equip` saves secrets to `simsquad.local.toml`.
+that it is committed; `equip` saves secrets to `simsquad.local.toml`,
+which it writes `0600`.
 
 **Device sets.** Besides the default matrix, the equipment can hold named
 device matrices, deployed with `deploy --device-set NAME`:
