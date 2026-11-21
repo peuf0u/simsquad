@@ -1,11 +1,8 @@
 package wizard
 
 import (
-	"os"
-	"path/filepath"
-	"strings"
-
 	"github.com/peuf0u/simsquad/internal/android"
+	"github.com/peuf0u/simsquad/internal/config"
 )
 
 // featureModules returns the dynamic feature modules of the Android repo,
@@ -15,15 +12,7 @@ func featureModules(configDir, repo string) []string {
 	if repo == "" {
 		return nil
 	}
-	if strings.HasPrefix(repo, "~/") {
-		if home, err := os.UserHomeDir(); err == nil {
-			repo = filepath.Join(home, repo[2:])
-		}
-	}
-	if !filepath.IsAbs(repo) {
-		repo = filepath.Join(configDir, repo)
-	}
-	return android.DynamicFeatureModules(repo)
+	return android.DynamicFeatureModules(config.ResolvePath(configDir, repo))
 }
 
 // defaultGradleTask is the task a new config starts with: the bundle task

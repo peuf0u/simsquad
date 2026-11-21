@@ -127,6 +127,12 @@ func (c *Config) GetString(dotted string) string {
 // paths are resolved against ConfigDir; absolute paths and ~-prefixed paths
 // pass through (after expansion). Returns "" for the empty input.
 func (c *Config) ResolveProjectPath(value string) string {
+	return ResolvePath(c.configDir, value)
+}
+
+// ResolvePath is ResolveProjectPath for a config dir without a loaded
+// Config: equip resolves the repo being edited, before anything is saved.
+func ResolvePath(configDir, value string) string {
 	if value == "" {
 		return ""
 	}
@@ -139,7 +145,7 @@ func (c *Config) ResolveProjectPath(value string) string {
 		abs, _ := filepath.Abs(value)
 		return abs
 	}
-	abs, _ := filepath.Abs(filepath.Join(c.configDir, value))
+	abs, _ := filepath.Abs(filepath.Join(configDir, value))
 	return abs
 }
 
