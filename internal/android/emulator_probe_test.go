@@ -43,7 +43,7 @@ func TestEmulatorGoneProbe(t *testing.T) {
 			t.Fatal(err)
 		}
 		fake := filepath.Join(t.TempDir(), "qemu-fake")
-		copyFile(t, self, fake)
+		linkOrCopy(t, self, fake)
 		cmd := exec.Command(fake, "-test.run=^TestHelperSleep$")
 		cmd.Env = append(os.Environ(), "SIMSQUAD_TEST_HELPER_SLEEP=1")
 		if err := cmd.Start(); err != nil {
@@ -85,8 +85,16 @@ func TestEmulatorGoneProbe(t *testing.T) {
 	})
 }
 
-func copyFile(t *testing.T, src, dst string) {
+// linkOrCopy hard-links src to dst, copying it when the link fails (another
+// file system, say). Each fake SDK used to copy the test binary, and macOS
+// assesses every new executable it sees before running it: under a busy
+// syspolicyd that stalled exec. A link adds no new file content to assess,
+// while its path still holds "emulator" for the PID probe.
+func linkOrCopy(t *testing.T, src, dst string) {
 	t.Helper()
+	if err := os.Link(src, dst); err == nil {
+		return
+	}
 	in, err := os.Open(src)
 	if err != nil {
 		t.Fatal(err)

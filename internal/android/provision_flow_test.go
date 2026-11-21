@@ -39,7 +39,7 @@ type fakeSDK struct {
 
 const fakeEmulatorEnv = "SIMSQUAD_FAKE_EMULATOR_DIR"
 
-// TestMain lets the test binary stand in for the emulator: copied to
+// TestMain lets the test binary stand in for the emulator: linked to
 // <sdk>/emulator/emulator and started with the fake's state dir in the
 // environment, it runs runFakeEmulator instead of the tests.
 func TestMain(m *testing.M) {
@@ -141,7 +141,7 @@ esac
 	if err := os.MkdirAll(filepath.Join(sdk, "emulator"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	copyFile(t, self, filepath.Join(sdk, "emulator", "emulator"))
+	linkOrCopy(t, self, filepath.Join(sdk, "emulator", "emulator"))
 	writeFile(t, filepath.Join(sdk, "cmdline-tools", "latest", "bin", "avdmanager"),
 		"#!/bin/sh\necho "+flowAVD+"\n")
 	return f
