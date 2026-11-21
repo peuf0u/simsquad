@@ -148,7 +148,6 @@ type deployOps struct {
 	androidBuild         func(android.BuildOptions) (android.BuildResult, error)
 	iosProvision         func(ios.ProvisionInput) []contract.Device
 	androidProvision     func(android.ProvisionInput) android.ProvisionResult
-	teardownSquad        func(name string, logger *progress.Logger) error
 	teardownDevices      func(devs []contract.Device, logger *progress.Logger)
 }
 
@@ -159,7 +158,6 @@ var deployVia = deployOps{
 	androidBuild:         android.Build,
 	iosProvision:         ios.Provision,
 	androidProvision:     android.Provision,
-	teardownSquad:        teardown.Squad,
 	teardownDevices:      teardown.Devices,
 }
 
@@ -238,31 +236,15 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 	}
 
 	co := claimOpts{
-		iosSpecs:        deployedIosSpecs,
-		androidSpecs:    deployedAndroidSpecs,
-		clearCtx:        opts.clearCtx,
-		tomlCtx:         tomlCtx,
-		ctxOverrides:    ctxOverrides,
-		allowWholeReset: true,
+		iosSpecs:     deployedIosSpecs,
+		androidSpecs: deployedAndroidSpecs,
+		clearCtx:     opts.clearCtx,
+		tomlCtx:      tomlCtx,
+		ctxOverrides: ctxOverrides,
 	}
 	claim, err := claimSquad(squadName, co)
 	if err != nil {
 		return err
-	}
-	if claim.plan.wholeReset {
-		// Nothing in the squad is ready or matching — e.g. a previous deploy
-		// failed at build. Reset it instead of forcing a manual dismiss in
-		// the build-debug retry loop, then claim the name afresh. Should
-		// another deploy recreate it in between, the second claim decides
-		// per platform on that squad instead.
-		logger.Info("deploy: reset-empty", progress.F("name", claim.rec.Name))
-		if terr := deployVia.teardownSquad(claim.rec.Name, logger); terr != nil {
-			logger.Warn("deploy: reset-empty", progress.F("error", terr.Error()))
-		}
-		co.allowWholeReset = false
-		if claim, err = claimSquad(squadName, co); err != nil {
-			return err
-		}
 	}
 	rec := claim.rec
 	createdThisRun := claim.created
@@ -514,12 +496,11 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 // how this deploy treats it. The matrices are the deployed platforms' only
 // (nil for a platform left out).
 type claimOpts struct {
-	iosSpecs        []contract.IosSpec
-	androidSpecs    []contract.AndroidSpec
-	clearCtx        bool
-	tomlCtx         map[string]string
-	ctxOverrides    map[string]string
-	allowWholeReset bool
+	iosSpecs     []contract.IosSpec
+	androidSpecs []contract.AndroidSpec
+	clearCtx     bool
+	tomlCtx      map[string]string
+	ctxOverrides map[string]string
 }
 
 // squadClaim is claimSquad's outcome. devices is the existing squad's device
@@ -535,7 +516,7 @@ type squadClaim struct {
 // index lock, so two deploys of a new name can't both create it: the second
 // finds the squad and takes the per-platform path. On an existing squad it
 // makes the per-platform plan, refuses when the plan does, and otherwise
-// saves this deploy's context (unless the whole squad is about to reset). A
+// saves this deploy's context. A
 // new squad is saved with its context and registered before provisioning, so
 // concurrent invocations see its claim on ports and physical serials.
 func claimSquad(name string, o claimOpts) (squadClaim, error) {
@@ -554,15 +535,11 @@ func claimSquad(name string, o claimOpts) (squadClaim, error) {
 				return fmt.Errorf("deploy: squad %q exists in registry but has no state file; run `simsquad dismiss --name %s` first", name, name)
 			}
 			plan := planDeploy(*existing, o.iosSpecs, o.androidSpecs)
-			plan.wholeReset = plan.wholeReset && o.allowWholeReset
 			if p := plan.refused(); p != "" {
 				// A working platform on a different matrix — refuse to clobber it.
 				return fmt.Errorf("deploy: squad %q is not reusable with the requested %s matrix/status; run `simsquad dismiss --name %s` first", name, p, name)
 			}
 			c = squadClaim{rec: existing, plan: plan, devices: existing.Devices}
-			if plan.wholeReset {
-				return nil
-			}
 			// --clear-context wipes first. Then context layers on top — CLI
 			// flags if any are present (TOML ignored), otherwise TOML. Either
 			// way the *source* overrides matching keys in the existing
@@ -726,13 +703,12 @@ const (
 )
 
 // deployPlan is the per-platform reuse decision for a deploy onto an existing
-// squad. wholeReset is set when every device the squad holds sits on a
-// resetting platform: the squad is then torn down and created fresh (new
-// created_at, context from this deploy only), which is what a full-matrix
-// mismatch with nothing ready did before reuse was decided per platform.
+// squad. A resetting platform is reset on its own even when its devices are
+// all the squad holds: a deploy changes only its own platforms' part of the
+// record and never deletes a record another deploy may be using, so the
+// squad, its context and created_at always survive a reset.
 type deployPlan struct {
 	ios, android platformAction
-	wholeReset   bool
 }
 
 // refused names the first platform the plan refuses, or "" when it refuses
@@ -766,16 +742,6 @@ func planDeploy(rec contract.SquadRecord, iosSpecs []contract.IosSpec, androidSp
 	if len(androidSpecs) > 0 {
 		p.android = decidePlatform(androidDevs, androidSpecsMatch(androidDevs, androidSpecs))
 	}
-	if p.refused() != "" || (p.ios != actionReset && p.android != actionReset) {
-		return p
-	}
-	for _, d := range rec.Devices {
-		if (d.Platform == contract.PlatformIOS && p.ios != actionReset) ||
-			(d.Platform == contract.PlatformAndroid && p.android != actionReset) {
-			return p
-		}
-	}
-	p.wholeReset = true
 	return p
 }
 

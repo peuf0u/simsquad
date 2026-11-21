@@ -536,8 +536,8 @@ func TestHasReadyDevice(t *testing.T) {
 // TestPlanDeploy is the per-platform reuse table: for each platform in the
 // deploy, no devices → add, matching devices → reuse, mismatch with nothing
 // ready → reset, mismatch with a ready device → refuse. A platform outside
-// the deploy gets no action. When every device the squad holds sits on a
-// resetting platform, the whole squad resets, as before per-platform reuse.
+// the deploy gets no action. A resetting platform is reset on its own even
+// when its devices are all the squad holds; the squad is never reset whole.
 func TestPlanDeploy(t *testing.T) {
 	t.Parallel()
 
@@ -584,12 +584,12 @@ func TestPlanDeploy(t *testing.T) {
 			deployPlan{ios: actionRefuse, android: actionReuse}},
 		{"refuse even when the other platform resets", []contract.Device{iosOtherReady, andOtherBroken}, iosWant, andWant,
 			deployPlan{ios: actionRefuse, android: actionReset}},
-		{"every device on resetting platforms → whole reset", []contract.Device{iosOtherBroken, andOtherBroken}, iosWant, andWant,
-			deployPlan{ios: actionReset, android: actionReset, wholeReset: true}},
-		{"reset plus an added platform → whole reset", []contract.Device{iosOtherBroken}, iosWant, andWant,
-			deployPlan{ios: actionReset, android: actionAdd, wholeReset: true}},
-		{"only platform resets, its devices are all the squad has → whole reset", []contract.Device{iosOtherBroken}, iosWant, nil,
-			deployPlan{ios: actionReset, wholeReset: true}},
+		{"every device on resetting platforms → both reset", []contract.Device{iosOtherBroken, andOtherBroken}, iosWant, andWant,
+			deployPlan{ios: actionReset, android: actionReset}},
+		{"reset plus an added platform", []contract.Device{iosOtherBroken}, iosWant, andWant,
+			deployPlan{ios: actionReset, android: actionAdd}},
+		{"only platform resets, its devices are all the squad has", []contract.Device{iosOtherBroken}, iosWant, nil,
+			deployPlan{ios: actionReset}},
 		{"untouched platform's devices keep the squad", []contract.Device{iosOtherBroken, andOtherBroken}, iosWant, nil,
 			deployPlan{ios: actionReset}},
 	}

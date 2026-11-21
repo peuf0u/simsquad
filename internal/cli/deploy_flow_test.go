@@ -69,7 +69,6 @@ type fakeDeploy struct {
 	androidProvisions  []android.ProvisionInput
 	// androidFail makes fresh Android slots come back errored.
 	androidFail     bool
-	squadTeardowns  []string
 	deviceTeardowns []contract.Device
 }
 
@@ -152,11 +151,6 @@ func installFakeDeploy(t *testing.T) *fakeDeploy {
 				}
 			}
 			return res
-		},
-		teardownSquad: func(name string, _ *progress.Logger) error {
-			f.squadTeardowns = append(f.squadTeardowns, name)
-			_ = state.RemoveRecord(name)
-			return state.RemoveSquad(name)
 		},
 		teardownDevices: func(devs []contract.Device, _ *progress.Logger) {
 			f.deviceTeardowns = append(f.deviceTeardowns, devs...)
@@ -391,9 +385,6 @@ func TestDeployResetsOnlyTheMismatchedPlatform(t *testing.T) {
 	if err != nil || code != 0 {
 		t.Fatalf("deploy: code %d err %v", code, err)
 	}
-	if len(f.squadTeardowns) != 0 {
-		t.Fatalf("squad torn down %v, want only the Android devices reset", f.squadTeardowns)
-	}
 	if len(f.deviceTeardowns) != 1 || f.deviceTeardowns[0].UDID != staleAndroid.UDID {
 		t.Fatalf("device teardowns = %+v, want the stale emulator only", f.deviceTeardowns)
 	}
@@ -426,7 +417,7 @@ func TestDeployRefusesMismatchedPlatformWithReadyDevice(t *testing.T) {
 	if code != -1 || err == nil || !strings.Contains(err.Error(), "not reusable") {
 		t.Fatalf("code %d err %v, want a not-reusable refusal", code, err)
 	}
-	if f.iosBuilds+f.androidBuilds != 0 || len(f.deviceTeardowns)+len(f.squadTeardowns) != 0 {
+	if f.iosBuilds+f.androidBuilds != 0 || len(f.deviceTeardowns) != 0 {
 		t.Fatal("refused deploy built or tore something down")
 	}
 	after, _ := os.ReadFile(util.StateFileFor("s"))
@@ -435,37 +426,40 @@ func TestDeployRefusesMismatchedPlatformWithReadyDevice(t *testing.T) {
 	}
 }
 
-// Without --platform, a squad whose every platform mismatches with nothing
-// ready resets as a whole, exactly as before per-platform reuse: devices
-// gone, created_at fresh, old context dropped.
-func TestDeployWholeResetWhenEveryPlatformResets(t *testing.T) {
+// A platform that resets is reset on its own even when its devices are all
+// the squad holds: the record, its context and created_at survive. Here a
+// failed iOS build leaves the sim stale, and the next good deploy resets it.
+func TestDeployResetKeepsSquadContextAndCreatedAt(t *testing.T) {
 	newDeployRepo(t, deployToml)
 	f := installFakeDeploy(t)
+	sim := seededIOS("s", contract.StatusReady)
 	seedSquad(t, &contract.SquadRecord{
-		Name: "s",
-		Devices: []contract.Device{
-			func() contract.Device { d := seededIOS("s", contract.StatusError); d.Runtime = "iOS 18.0"; return d }(),
-			seededAndroid("s", testAndImageOld, contract.StatusError),
-		},
-		Context: map[string]string{"old": "1"},
+		Name:    "s",
+		Devices: []contract.Device{sim},
+		Context: map[string]string{"token": "abc"},
 	})
+	f.iosBuildErr = errors.New("xcodebuild failed")
+	if _, code, err := deployCLI(t, "--name", "s", "--platform", "ios"); err != nil || code != 1 {
+		t.Fatalf("failed deploy: code %d err %v", code, err)
+	}
+	f.iosBuildErr = nil
+	if _, code, err := deployCLI(t, "--name", "s", "--platform", "ios"); err != nil || code != 0 {
+		t.Fatalf("good deploy: code %d err %v", code, err)
+	}
 
-	pub, code, err := deployCLI(t, "--name", "s", "--context", "user=bob")
-	if err != nil || code != 0 {
-		t.Fatalf("deploy: code %d err %v", code, err)
-	}
-	if len(f.squadTeardowns) != 1 {
-		t.Fatalf("squad teardowns = %v, want one whole reset", f.squadTeardowns)
-	}
 	rec := loadTestRecord(t, "s")
-	if rec.CreatedAt == "2026-01-01T00:00:00Z" {
-		t.Fatal("created_at kept, want a fresh squad")
+	if rec == nil || rec.CreatedAt != "2026-01-01T00:00:00Z" || rec.Context["token"] != "abc" {
+		t.Fatalf("record = %+v, want the squad kept with token=abc and its created_at", rec)
 	}
-	if len(rec.Context) != 1 || rec.Context["user"] != "bob" {
-		t.Fatalf("context = %v, want only the new source", rec.Context)
+	if len(f.deviceTeardowns) != 1 || f.deviceTeardowns[0].UDID != sim.UDID {
+		t.Fatalf("device teardowns = %+v, want the stale sim reset", f.deviceTeardowns)
 	}
-	if len(rec.Devices) != 2 || pub.Reused {
-		t.Fatalf("devices = %+v reused=%v", rec.Devices, pub.Reused)
+	last := f.iosProvisions[len(f.iosProvisions)-1]
+	if len(last.ExistingDevices) != 0 {
+		t.Fatalf("last iOS provision reused %+v, want a fresh one", last.ExistingDevices)
+	}
+	if len(rec.Devices) != 1 || rec.Devices[0].Status != contract.StatusReady {
+		t.Fatalf("devices = %+v, want one fresh ready sim", rec.Devices)
 	}
 }
 
@@ -597,9 +591,8 @@ func TestDeployKeepsContextSetDuringDeploy(t *testing.T) {
 
 func testClaimOpts() claimOpts {
 	return claimOpts{
-		iosSpecs:        []contract.IosSpec{{Device: testIOSDevice, Runtime: testIOSRuntime, Count: 1}},
-		ctxOverrides:    map[string]string{"user": "alice"},
-		allowWholeReset: true,
+		iosSpecs:     []contract.IosSpec{{Device: testIOSDevice, Runtime: testIOSRuntime, Count: 1}},
+		ctxOverrides: map[string]string{"user": "alice"},
 	}
 }
 
@@ -616,7 +609,7 @@ func TestClaimSquadSecondCreateTakesReusePath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.created || second.plan.ios != actionAdd || second.plan.wholeReset {
+	if second.created || second.plan.ios != actionAdd {
 		t.Fatalf("second claim = %+v, want the existing squad with iOS to add", second)
 	}
 	if second.rec.CreatedAt != first.rec.CreatedAt {
@@ -716,9 +709,6 @@ func TestDeployCleanupKeepsOtherPlatformsDevices(t *testing.T) {
 	if _, code, err := deployCLI(t, "--name", "s", "--platform", "ios"); err != nil || code != 1 {
 		t.Fatalf("code %d err %v, want exit 1", code, err)
 	}
-	if len(f.squadTeardowns) != 0 {
-		t.Fatalf("whole squad torn down: %v", f.squadTeardowns)
-	}
 	rec := loadTestRecord(t, "s")
 	if rec == nil || len(rec.Devices) != 1 || rec.Devices[0] != and {
 		t.Fatalf("record = %+v, want the squad kept with the concurrent emulator", rec)
@@ -803,7 +793,7 @@ func TestDeployFailedIOSBuildKeepsDevices(t *testing.T) {
 	if _, code, err := deployCLI(t, "--name", "s", "--platform", "ios"); err != nil || code != 0 {
 		t.Fatalf("redeploy: code %d err %v", code, err)
 	}
-	if len(f.squadTeardowns)+len(f.deviceTeardowns) == 0 {
+	if len(f.deviceTeardowns) == 0 {
 		t.Fatal("redeploy did not reset the stale sim")
 	}
 	if got := loadTestRecord(t, "s"); len(got.Devices) != 1 || got.Devices[0].Status != contract.StatusReady {
@@ -880,8 +870,9 @@ func TestDeployConcurrentPlatformSurvivesCleanupOfFailedCreate(t *testing.T) {
 	}
 }
 
-// The same while a deploy of the other platform resets the whole squad.
-func TestDeployConcurrentPlatformSurvivesWholeReset(t *testing.T) {
+// A deploy of the other platform that resets its own devices — here the
+// squad's only devices — while B builds leaves B's part of the record alone.
+func TestDeployConcurrentPlatformSurvivesPlatformReset(t *testing.T) {
 	for _, cFails := range []bool{false, true} {
 		t.Run(fmt.Sprintf("reset deploy fails=%v", cFails), func(t *testing.T) {
 			newDeployRepo(t, deployToml)
@@ -892,7 +883,7 @@ func TestDeployConcurrentPlatformSurvivesWholeReset(t *testing.T) {
 				f.iosBuildErr = errors.New("xcodebuild failed")
 			}
 			f.duringAndroidBuild = func() {
-				// C: iOS is the squad's only platform and it resets → whole reset.
+				// C: iOS is the squad's only platform and it resets.
 				_, _, err := deployCLI(t, "--name", "s", "--platform", "ios")
 				if err != nil {
 					t.Errorf("C: %v", err)
@@ -903,10 +894,13 @@ func TestDeployConcurrentPlatformSurvivesWholeReset(t *testing.T) {
 			if err != nil || code != 0 {
 				t.Fatalf("B: code %d err %v", code, err)
 			}
-			if len(f.squadTeardowns) != 1 {
-				t.Fatalf("squad teardowns = %v, want C's whole reset", f.squadTeardowns)
+			if len(f.deviceTeardowns) == 0 || f.deviceTeardowns[0].UDID != broken.UDID {
+				t.Fatalf("device teardowns = %+v, want C's iOS reset", f.deviceTeardowns)
 			}
 			rec := loadTestRecord(t, "s")
+			if rec != nil && rec.CreatedAt != "2026-01-01T00:00:00Z" {
+				t.Fatalf("created_at = %s, want the squad kept", rec.CreatedAt)
+			}
 			if rec == nil || len(devicesOf(rec, contract.PlatformAndroid)) != 1 || rec.Builds.Android == nil || len(rec.Ports) != 1 {
 				t.Fatalf("record = %+v, want B's emulator, build and port", rec)
 			}
