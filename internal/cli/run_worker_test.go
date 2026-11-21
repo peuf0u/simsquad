@@ -195,3 +195,25 @@ func TestRunWorkerTimeoutKillsChildProcesses(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 }
+
+// run worker finds the squad from the worker folder's run.json and redacts
+// that squad's secrets from worker.log, e.g. a revealed password a Codex
+// worker's output repeats.
+func TestRunWorkerRedactsTheSquadsSecrets(t *testing.T) {
+	t.Setenv("SIMSQUAD_CACHE_DIR", t.TempDir())
+	seedSecretSquad(t, "sq")
+	run := t.TempDir()
+	writeTestFile(t, filepath.Join(run, "run.json"), `{"run_id": "r", "squad_name": "sq"}`)
+	dir := filepath.Join(run, "workers", "udid-1")
+	script := "echo 'exec simsquad devices --name sq --reveal'; echo '\"pin\": \"4711\", \"password\": \"hunter2\", \"user\": \"alice\"'"
+	if _, _, err := runWorker(t, "--dir", dir, "--timeout", "10", "--", "sh", "-c", script); err != nil {
+		t.Fatalf("run worker: %v", err)
+	}
+	log := readFile(t, filepath.Join(dir, "worker.log"))
+	if strings.Contains(log, "4711") || strings.Contains(log, "hunter2") {
+		t.Fatalf("worker.log shows a secret:\n%s", log)
+	}
+	if !strings.Contains(log, `"pin": "<secret>"`) || !strings.Contains(log, `"user": "alice"`) {
+		t.Fatalf("worker.log lost its other text:\n%s", log)
+	}
+}

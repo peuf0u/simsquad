@@ -272,3 +272,75 @@ func TestRunWorkerCleanExitWithResultIgnoresUsageLimitText(t *testing.T) {
 		t.Errorf("status = %q, want %q: a written result wins", got, StatusOK)
 	}
 }
+
+// Issue #37: a Codex worker's output carries the commands it ran and their
+// output, so a `simsquad devices --reveal` puts the squad's secrets in
+// worker.log unless run worker redacts them as it writes the log.
+func TestRunWorkerRedactsSecretsInLog(t *testing.T) {
+	dir := t.TempDir()
+	// The secret arrives split across writes, on stdout and on stderr.
+	script := "printf 'login hun'; sleep 0.1; printf 'ter2 ok\n'; echo 'pin 4711' >&2; printf 'tail hunter2'"
+	status, err := RunWorker(context.Background(), Worker{
+		Dir:     dir,
+		Timeout: 10 * time.Second,
+		Command: []string{"sh", "-c", script},
+		Redact:  []string{"hunter2", "4711"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != StatusNoResult {
+		t.Errorf("status = %q, want %q", status, StatusNoResult)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, LogFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := string(b)
+	if strings.Contains(log, "hunter2") || strings.Contains(log, "4711") {
+		t.Fatalf("worker.log shows a secret:\n%s", log)
+	}
+	for _, want := range []string{"login <secret> ok\n", "pin <secret>\n", "tail <secret>"} {
+		if !strings.Contains(log, want) {
+			t.Errorf("worker.log lacks %q:\n%s", want, log)
+		}
+	}
+}
+
+// A worker that leaves a background process holding its output open still
+// finishes once its own process exits.
+func TestRunWorkerRedactingDoesNotWaitForGrandchildren(t *testing.T) {
+	dir := t.TempDir()
+	start := time.Now()
+	status, err := RunWorker(context.Background(), Worker{
+		Dir:     dir,
+		Timeout: 30 * time.Second,
+		Command: []string{"sh", "-c", "sleep 20 & " + writeResultScript(dir)},
+		Redact:  []string{"hunter2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != StatusOK {
+		t.Errorf("status = %q, want ok", status)
+	}
+	if took := time.Since(start); took > 10*time.Second {
+		t.Fatalf("run worker waited %s for a grandchild", took)
+	}
+}
+
+func TestLineRedactor(t *testing.T) {
+	var out strings.Builder
+	r := newLineRedactor(&out, []string{"cd", "abcdef"})
+	for _, chunk := range []string{"xxab", "cdef yy cd\nzz a", "bcdef"} {
+		if _, err := r.Write([]byte(chunk)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if want := "xx<secret> yy <secret>\nzz <secret>"; out.String() != want {
+		t.Fatalf("redacted = %q, want %q", out.String(), want)
+	}
+}

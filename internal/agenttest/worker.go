@@ -56,7 +56,18 @@ type Worker struct {
 	Timeout  time.Duration // hard deadline, measured from start
 	Command  []string      // argv; Command[0] is looked up on PATH
 	Progress io.Writer     // human progress lines (stderr); may be nil
+	// Redact lists the squad's secret values. Each is replaced by
+	// contract.SecretMask in worker.log as the log is written: a Codex
+	// worker's output repeats the commands it ran and their output, a
+	// revealed secret included. With none, the output goes straight to
+	// the file.
+	Redact []string
 }
+
+// redactGrace is how long Wait keeps reading the worker's output after the
+// worker itself exited, when the output runs through a redacting pipe: a
+// process the worker left in the background may hold the pipe open forever.
+const redactGrace = 2 * time.Second
 
 // RunWorker starts w.Command and waits for it. It returns the outcome
 // status; an error means the worker could not be supervised at all (bad
@@ -86,9 +97,27 @@ func RunWorker(ctx context.Context, w Worker) (string, error) {
 	// input, and a headless worker has nobody to talk to anyway.
 	cmd.Stdin = nil
 	// Log to a real file, not a pipe: with a pipe, Wait would also block on
-	// any grandchild still holding the write end.
-	cmd.Stdout = logf
-	cmd.Stderr = logf
+	// any grandchild still holding the write end. Redacting needs the pipe,
+	// so then WaitDelay stops Wait from waiting on such a grandchild.
+	var redactor *lineRedactor
+	if len(w.Redact) > 0 {
+		redactor = newLineRedactor(logf, w.Redact)
+		// One writer for both streams: exec then never calls it from two
+		// goroutines at once.
+		cmd.Stdout = redactor
+		cmd.Stderr = redactor
+		cmd.WaitDelay = redactGrace
+	} else {
+		cmd.Stdout = logf
+		cmd.Stderr = logf
+	}
+	// flushLog writes the redactor's last, unfinished line once Wait is
+	// done with the output, before anything reads the log.
+	flushLog := func() {
+		if redactor != nil {
+			_ = redactor.Flush()
+		}
+	}
 	// Own process group, so a kill reaches every idb/simctl/adb process the
 	// worker started, not just its top process.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -105,6 +134,12 @@ func RunWorker(ctx context.Context, w Worker) (string, error) {
 
 	select {
 	case err := <-done:
+		flushLog()
+		// The worker exited cleanly; only a grandchild kept the output
+		// open past redactGrace.
+		if errors.Is(err, exec.ErrWaitDelay) {
+			err = nil
+		}
 		// The group is not killed after a normal exit: mobilecli's per-user
 		// daemon may live in it and is shared by parallel workers.
 		if err == nil {
@@ -132,6 +167,7 @@ func RunWorker(ctx context.Context, w Worker) (string, error) {
 		return status, writeStatus(w.Dir, status)
 	case <-timer.C:
 		killGroup(cmd.Process.Pid, done)
+		flushLog()
 		w.progress("worker killed after %ds (timebox %ds)",
 			int(time.Since(started).Seconds()), int(w.Timeout.Seconds()))
 		return StatusTimeout, writeStatus(w.Dir, StatusTimeout)
@@ -139,6 +175,7 @@ func RunWorker(ctx context.Context, w Worker) (string, error) {
 		// simsquad itself is being interrupted: don't leave the worker
 		// running unsupervised. No status is recorded; the run is aborted.
 		killGroup(cmd.Process.Pid, done)
+		flushLog()
 		return "", ctx.Err()
 	}
 }
