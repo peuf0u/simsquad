@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -134,5 +135,36 @@ func TestRunValidateAcceptsGoodResults(t *testing.T) {
 				t.Fatalf("got %+v exit %d, want valid with errors [] and exit 0", got, code)
 			}
 		})
+	}
+}
+
+// TestRunValidateIgnoresEarlierAttempts: only <worker-dir>/result.json
+// counts. A result kept from an earlier attempt neither stands in for a
+// missing current one nor spoils a valid one.
+func TestRunValidateIgnoresEarlierAttempts(t *testing.T) {
+	stale := filepath.Join(t.TempDir(), "ABC-123")
+	writeTreeFile(t, filepath.Join(stale, "attempts/1/result.json"),
+		readFile(t, "testdata/validate/good/result.json"))
+	if got, code := runValidate(t, stale); got.Valid || code != 1 {
+		t.Errorf("only attempts/1/result.json: got %+v exit %d, want invalid", got, code)
+	}
+
+	good := filepath.Join(t.TempDir(), "good")
+	for _, rel := range []string{"result.json", "screenshots/scenario-01.png", "screenshots/step-001.png"} {
+		writeTreeFile(t, filepath.Join(good, rel), readFile(t, filepath.Join("testdata/validate/good", rel)))
+	}
+	writeTreeFile(t, filepath.Join(good, "attempts/1/result.json"), "{")
+	if got, code := runValidate(t, good); !got.Valid || code != 0 {
+		t.Errorf("valid result beside a broken attempts/1/result.json: got %+v exit %d, want valid", got, code)
+	}
+}
+
+func writeTreeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
