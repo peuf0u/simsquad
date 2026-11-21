@@ -25,7 +25,14 @@ var pluginIDRx = regexp.MustCompile(`["']` + regexp.QuoteMeta(dynamicFeaturePlug
 // or through a version-catalog alias. A line with `apply false` only
 // declares the plugin (the root build file does) and doesn't count. build/
 // and hidden folders are skipped.
+//
+// Only a Gradle root (settings.gradle[.kts] or gradlew at the top) is
+// searched: equip asks again for every prefix typed into the repo field, and
+// walking / or the home folder would be slow and trip macOS privacy prompts.
 func DynamicFeatureModules(repo string) []string {
+	if repo == "" || !isGradleRoot(repo) {
+		return nil
+	}
 	accessors := dynamicFeatureAccessors(repo)
 	var mods []string
 	_ = filepath.WalkDir(repo, func(path string, d fs.DirEntry, err error) error {
@@ -50,6 +57,15 @@ func DynamicFeatureModules(repo string) []string {
 	})
 	sort.Strings(mods)
 	return mods
+}
+
+func isGradleRoot(dir string) bool {
+	for _, marker := range []string{"settings.gradle", "settings.gradle.kts", "gradlew"} {
+		if isFile(filepath.Join(dir, marker)) {
+			return true
+		}
+	}
+	return false
 }
 
 func appliesDynamicFeature(buildFile string, accessors []string) bool {

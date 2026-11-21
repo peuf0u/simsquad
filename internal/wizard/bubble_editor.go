@@ -347,8 +347,7 @@ func (m editorModel) startAction(action editorAction) (tea.Model, tea.Cmd) {
 			{label: "iOS repo", value: m.state.iosRepo},
 			{label: "Android repo", value: m.state.androidRepo},
 			{label: "iOS scheme", value: m.state.iosScheme},
-			{label: "Gradle task", value: m.state.gradleTask,
-				choices: gradleTaskChoices(m.configDir, m.state.androidRepo, m.state.gradleTask)},
+			{label: "Gradle task", value: m.state.gradleTask},
 		}
 	case actionEditContext:
 		m.mode = editorFields
@@ -574,6 +573,12 @@ func (m *editorModel) backFromFields() {
 }
 
 func (m *editorModel) startValueEdit() {
+	// The Gradle task's choices depend on the Android repo field above it,
+	// which may have been edited on this screen, so they're worked out now.
+	if m.inputKind == actionProject && m.fieldIdx == 3 {
+		m.fields[3].choices = gradleTaskChoices(m.configDir,
+			strings.TrimSpace(m.fields[1].value), strings.TrimSpace(m.fields[3].value))
+	}
 	if len(m.fields[m.fieldIdx].choices) > 0 {
 		m.startChoiceSelect()
 		return

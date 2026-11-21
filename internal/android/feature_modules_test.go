@@ -16,6 +16,7 @@ import (
 // build file) and files under build/ don't count.
 func TestDynamicFeatureModules(t *testing.T) {
 	repo := t.TempDir()
+	writeFile(t, filepath.Join(repo, "settings.gradle.kts"), "")
 	writeFile(t, filepath.Join(repo, "gradle", "libs.versions.toml"), `[versions]
 agp = "8.5.0"
 
@@ -52,6 +53,27 @@ dfm_short = "com.android.dynamic-feature:8.5.0"
 	}
 }
 
+// Only a Gradle root is searched. equip asks on every prefix typed into the
+// repo field, and walking / or the home folder would be slow and trip macOS
+// privacy prompts.
+func TestDynamicFeatureModulesSearchesOnlyAGradleRoot(t *testing.T) {
+	parent := t.TempDir()
+	writeFile(t, filepath.Join(parent, "android", "home", "build.gradle.kts"),
+		"plugins {\n    id(\"com.android.dynamic-feature\")\n}\n")
+	if got := DynamicFeatureModules(parent); len(got) != 0 {
+		t.Fatalf("DynamicFeatureModules(not a Gradle root) = %v, want none", got)
+	}
+	for _, marker := range []string{"settings.gradle", "settings.gradle.kts", "gradlew"} {
+		repo := t.TempDir()
+		writeFile(t, filepath.Join(repo, marker), "")
+		writeFile(t, filepath.Join(repo, "home", "build.gradle.kts"),
+			"plugins {\n    id(\"com.android.dynamic-feature\")\n}\n")
+		if got := DynamicFeatureModules(repo); len(got) != 1 {
+			t.Errorf("with %s: DynamicFeatureModules = %v, want [home]", marker, got)
+		}
+	}
+}
+
 func TestDynamicFeatureModulesNoneInAPlainRepo(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, filepath.Join(repo, "app", "build.gradle.kts"),
@@ -67,6 +89,7 @@ func TestAPKBuildWarnsAboutDynamicFeatureModules(t *testing.T) {
 	fakeAAPT2(t, "com.example")
 	repo := t.TempDir()
 	writeFile(t, filepath.Join(repo, "app", "build", "outputs", "apk", "debug", "app-debug.apk"), "")
+	writeFile(t, filepath.Join(repo, "settings.gradle"), "")
 	writeFile(t, filepath.Join(repo, "home", "build.gradle.kts"),
 		"plugins {\n    id(\"com.android.dynamic-feature\")\n}\n")
 

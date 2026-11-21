@@ -19,6 +19,7 @@ func featureRepo(t *testing.T, withFeature bool) (configDir string) {
 			t.Fatal(err)
 		}
 	}
+	writeFile(t, filepath.Join(configDir, "android", "settings.gradle.kts"), "")
 	writeFile(t, filepath.Join(configDir, "android", "app", "build.gradle.kts"),
 		"plugins {\n    id(\"com.android.application\")\n}\n")
 	if withFeature {
@@ -73,5 +74,37 @@ func TestBubbleEditorGradleTaskOffersTheBundleTask(t *testing.T) {
 
 	if model := open(featureRepo(t, false)); model.mode != editorValue {
 		t.Fatalf("mode = %v, want the text field", model.mode)
+	}
+}
+
+// The choices follow the Android repo as edited on the same screen, not as
+// it was when the screen opened.
+func TestBubbleEditorGradleTaskChoicesFollowTheEditedRepo(t *testing.T) {
+	t.Parallel()
+	configDir := featureRepo(t, true)
+	if err := os.MkdirAll(filepath.Join(configDir, "plain"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	model := editorModel{
+		configDir: configDir,
+		state:     wizardState{androidRepo: "plain", gradleTask: ":app:assembleDebug"},
+		mode:      editorMenu,
+		cursor:    1, // Edit project settings.
+	}
+	next, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = next.(editorModel)
+
+	model.fieldIdx = 1 // Android repo.
+	next, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = next.(editorModel)
+	model.edit.SetValue("android")
+	next, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = next.(editorModel)
+
+	model.fieldIdx = 3 // Gradle task.
+	next, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = next.(editorModel)
+	if model.mode != editorSelect {
+		t.Fatalf("mode = %v, want the picker offering the bundle task", model.mode)
 	}
 }
