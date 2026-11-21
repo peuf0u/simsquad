@@ -70,8 +70,9 @@ The set of feature files and scenarios selected by a tag expression, such as
 _Avoid_: collection, batch, test plan
 
 **App notes**:
-The app repo's standing knowledge for workers (navigation tricks, test
-accounts, known quirks), shared by every feature file.
+The project's standing knowledge for workers (navigation tricks, test
+accounts, known quirks), shared by every feature file. It lives in
+`qa/README.md` at the config dir.
 _Avoid_: project context, knowledge base
 
 **Test run**:

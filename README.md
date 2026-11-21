@@ -374,7 +374,8 @@ folder holding `simsquad.toml`. `skill install` writes the skills there,
 `run new` puts run folders under its `.simsquad/runs/`, and workers read
 the app notes from its `qa/README.md`. Commit the config dir so colleagues
 get the config, skills, app notes and saved feature files when they clone;
-`equip` and `skill install` warn when it isn't inside a git work tree.
+`equip` (when it creates the config) and `skill install` warn when it isn't
+inside a git work tree.
 
 | | Single repo | Umbrella workspace repo | Split repos (home repo) |
 |---|---|---|---|

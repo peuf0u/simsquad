@@ -71,7 +71,11 @@ All notable changes are recorded here. The format follows
   that hint (exit `0`). `equip` (when it creates the config) and `skill
   install` warn once on stderr when the config dir isn't inside a git work
   tree. The `simsquad-test` skill lists other unfinished runs from the run
-  folder's parent, whatever folder the agent is in.
+  folder's parent, whatever folder the agent is in. If an older simsquad
+  installed your skills at the git toplevel above a config in a
+  subfolder, re-run `simsquad skill install` from the config dir and
+  remove the old `.agents/`, `.claude/skills/` and `.codex/` copies at the
+  git toplevel.
 
 ### Fixed
 
