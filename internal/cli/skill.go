@@ -2,10 +2,13 @@ package cli
 
 import (
 	"errors"
+	"fmt"
+	"io"
 
 	"github.com/spf13/cobra"
 
 	"github.com/peuf0u/simsquad/internal/config"
+	"github.com/peuf0u/simsquad/internal/util"
 )
 
 // newSkillCmd assembles the `skill` group: installing the embedded agent
@@ -41,4 +44,15 @@ var errNoConfig = errors.New("no simsquad.toml found; run `simsquad equip` first
 // workers read qa/README.md from. Empty when there is no config.
 func skillsRoot() string {
 	return config.FindConfigDir(".")
+}
+
+// warnIfNotShared tells the user, on w (stderr), that a config dir outside
+// a git work tree keeps its skills, app notes and feature files to this
+// machine. It never blocks: a scratch folder is a valid place to try
+// simsquad out.
+func warnIfNotShared(w io.Writer, dir string) {
+	if util.InGitWorkTree(dir) {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "simsquad: %s is not inside a git work tree: skills, app notes and feature files here won't be shared; see README › Project layouts\n", dir)
 }

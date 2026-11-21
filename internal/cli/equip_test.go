@@ -21,6 +21,13 @@ type equipOut struct {
 // not be shown). It returns stdout and the error.
 func runEquip(t *testing.T, answer *bool, args ...string) (string, error) {
 	t.Helper()
+	out, _, err := runEquipIO(t, answer, args...)
+	return out, err
+}
+
+// runEquipIO is runEquip that also returns stderr.
+func runEquipIO(t *testing.T, answer *bool, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
 	root := NewRootCmd()
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	root.SetOut(out)
@@ -41,8 +48,8 @@ func runEquip(t *testing.T, answer *bool, args ...string) (string, error) {
 	}
 	t.Cleanup(func() { Version, offerSkillInstall = prevVersion, prevOffer })
 
-	err := root.Execute()
-	return out.String(), err
+	err = root.Execute()
+	return out.String(), errOut.String(), err
 }
 
 func decodeEquip(t *testing.T, raw string) equipOut {
@@ -229,4 +236,40 @@ func TestEquipInstallsSkillsAtTheConfigDir(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(base, ".agents")); !os.IsNotExist(err) {
 		t.Errorf("skills written at the git toplevel (err=%v)", err)
 	}
+}
+
+// TestEquipWarnsOutsideGitOnlyWhenCreatingConfig: creating the config
+// outside a git work tree warns once on stderr, even when the skills are
+// installed in the same run; editing an existing config doesn't warn.
+func TestEquipWarnsOutsideGitOnlyWhenCreatingConfig(t *testing.T) {
+	t.Run("creates outside git", func(t *testing.T) {
+		newBareDir(t)
+		_, stderr, err := runEquipIO(t, nil, "--add-ios-spec", equipSpec, "--install-skills")
+		if err != nil {
+			t.Fatalf("equip: %v", err)
+		}
+		if n := strings.Count(stderr, notSharedWarning); n != 1 {
+			t.Errorf("warning printed %d times, want once; stderr:\n%s", n, stderr)
+		}
+	})
+	t.Run("creates inside git", func(t *testing.T) {
+		gitInit(t, newBareDir(t))
+		_, stderr, err := runEquipIO(t, nil, "--add-ios-spec", equipSpec, "--install-skills=false")
+		if err != nil {
+			t.Fatalf("equip: %v", err)
+		}
+		if strings.Contains(stderr, notSharedWarning) {
+			t.Errorf("warned inside a git work tree:\n%s", stderr)
+		}
+	})
+	t.Run("edits outside git", func(t *testing.T) {
+		newAppRepo(t)
+		_, stderr, err := runEquipIO(t, nil, "--add-ios-spec", equipSpec, "--install-skills=false")
+		if err != nil {
+			t.Fatalf("equip: %v", err)
+		}
+		if strings.Contains(stderr, notSharedWarning) {
+			t.Errorf("warned when editing an existing config:\n%s", stderr)
+		}
+	})
 }

@@ -34,6 +34,8 @@ type Result struct {
 	Gitignore   string
 	Summary     ConfigSummary
 	Wrote       bool
+	// Created is true when the wizard wrote a config where none was found.
+	Created bool
 }
 
 // ConfigSummary is the read-only shape emitted by `equip --show` and included
@@ -101,7 +103,9 @@ func RunEquipWizard(opts Options) (Result, error) {
 	if len(opts.AddIOS) > 0 || len(opts.AddAndroid) > 0 {
 		state.iosSpecs = append(state.iosSpecs, opts.AddIOS...)
 		state.androidSpec = append(state.androidSpec, opts.AddAndroid...)
-		return writeState(configDir, state, true)
+		res, err := writeState(configDir, state, true)
+		res.Created = err == nil && !hasConfig
+		return res, err
 	}
 
 	if !stdinIsTerminal() {
@@ -123,7 +127,9 @@ func RunEquipWizard(opts Options) (Result, error) {
 	if err := runAndroidMatrix(&state); err != nil {
 		return Result{}, err
 	}
-	return writeState(configDir, state, opts.Force)
+	res, err := writeState(configDir, state, opts.Force)
+	res.Created = err == nil
+	return res, err
 }
 
 func loadState(configDir string, hasConfig bool) (wizardState, error) {

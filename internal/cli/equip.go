@@ -56,6 +56,9 @@ func newEquipCmd() *cobra.Command {
 			if !res.Wrote {
 				return writeJSON(cmd, res.Summary)
 			}
+			if res.Created {
+				warnIfNotShared(cmd.ErrOrStderr(), filepath.Dir(res.ProjectFile))
+			}
 			out := map[string]any{
 				"written": []string{res.ProjectFile, res.LocalFile},
 				"gitignore": map[string]string{

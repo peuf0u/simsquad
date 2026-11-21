@@ -52,16 +52,23 @@ func gitInit(t *testing.T, dir string) {
 // with a fixed binary version.
 func runSkill(t *testing.T, args ...string) (string, error) {
 	t.Helper()
+	out, _, err := runSkillIO(t, args...)
+	return out, err
+}
+
+// runSkillIO is runSkill that also returns stderr.
+func runSkillIO(t *testing.T, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
 	prev := Version
 	Version = "9.9.9"
 	t.Cleanup(func() { Version = prev })
 	root := NewRootCmd()
-	out := &bytes.Buffer{}
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	root.SetOut(out)
-	root.SetErr(&bytes.Buffer{})
+	root.SetErr(errOut)
 	root.SetArgs(append([]string{"skill"}, args...))
-	err := root.Execute()
-	return out.String(), err
+	err = root.Execute()
+	return out.String(), errOut.String(), err
 }
 
 func mustInstall(t *testing.T, args ...string) skillInstallOut {
@@ -381,4 +388,37 @@ func TestSkillInstallWithoutConfigRefusesWithEquipHint(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, ".agents")); !os.IsNotExist(err) {
 		t.Errorf("refused install still wrote .agents/ (err=%v)", err)
 	}
+}
+
+// notSharedWarning is the warning for a config dir outside git.
+const notSharedWarning = "skills, app notes and feature files here won't be shared; see README › Project layouts"
+
+// TestSkillInstallWarnsOutsideGit: a config dir outside a git work tree
+// gets one stderr warning, and the install still succeeds.
+func TestSkillInstallWarnsOutsideGit(t *testing.T) {
+	t.Run("outside git", func(t *testing.T) {
+		repo := newAppRepo(t)
+		out, stderr, err := runSkillIO(t, "install")
+		if err != nil {
+			t.Fatalf("skill install: %v", err)
+		}
+		if n := strings.Count(stderr, notSharedWarning); n != 1 {
+			t.Errorf("warning printed %d times, want once; stderr:\n%s", n, stderr)
+		}
+		if strings.Contains(out, "shared") {
+			t.Errorf("warning leaked onto stdout:\n%s", out)
+		}
+		readFile(t, filepath.Join(repo, ".agents", "skills", "simsquad", "SKILL.md"))
+	})
+	t.Run("inside git", func(t *testing.T) {
+		repo := newAppRepo(t)
+		gitInit(t, repo)
+		_, stderr, err := runSkillIO(t, "install")
+		if err != nil {
+			t.Fatalf("skill install: %v", err)
+		}
+		if strings.Contains(stderr, notSharedWarning) {
+			t.Errorf("warned inside a git work tree:\n%s", stderr)
+		}
+	})
 }

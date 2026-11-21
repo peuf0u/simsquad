@@ -47,6 +47,7 @@ func newSkillInstallCmd() *cobra.Command {
 			if root == "" {
 				return fmt.Errorf("skill install: %w", errNoConfig)
 			}
+			warnIfNotShared(cmd.ErrOrStderr(), root)
 			res, err := skills.Install(skills.Options{
 				Root:    root,
 				Dir:     dir,
