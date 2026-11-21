@@ -306,7 +306,7 @@ func readBundleApplicationID(bundletool, aab string) (string, error) {
 // same repo installing the set reads a whole one, its own or this one.
 func buildAPKSet(bundletool, aab string) (string, error) {
 	set := strings.TrimSuffix(aab, ".aab") + ".apks"
-	f, err := os.CreateTemp(filepath.Dir(set), filepath.Base(set)+".*.tmp")
+	f, err := os.CreateTemp(filepath.Dir(set), strings.TrimSuffix(filepath.Base(set), ".apks")+".*.tmp.apks")
 	if err != nil {
 		return "", fmt.Errorf("create APK set: %w", err)
 	}

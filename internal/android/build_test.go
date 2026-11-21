@@ -171,6 +171,10 @@ func TestBundleBuildMakesTheAPKSetFromTheTasksVariant(t *testing.T) {
 	if tmp == set || filepath.Dir(tmp) != filepath.Dir(set) {
 		t.Fatalf("build-apks wrote %s, want a file of its own beside %s", tmp, set)
 	}
+	// bundletool refuses an --output without the .apks extension.
+	if filepath.Ext(tmp) != ".apks" {
+		t.Fatalf("build-apks --output=%s, want a .apks name", tmp)
+	}
 	if got, err := os.ReadFile(set); err != nil || string(got) != "set\n" {
 		t.Fatalf("APK set %s = %q, %v; want what build-apks wrote", set, got, err)
 	}
