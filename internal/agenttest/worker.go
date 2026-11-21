@@ -13,16 +13,25 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
+
+	"github.com/peuf0u/simsquad/internal/contract"
 )
 
 // Worker outcomes. StatusOK is reported on stdout only; the other values are
 // also written to the worker's status file, which the report step reads and
-// which overrides even a valid result.json.
+// which overrides even a valid result.json. A non-zero exit that matches no
+// known reason is "error: worker exited <code>".
 const (
-	StatusOK      = "ok"
-	StatusTimeout = "blocked: timeout"
+	StatusOK         = "ok"
+	StatusTimeout    = "blocked: timeout"
+	StatusUsageLimit = "error: usage limit"
+	// StatusNoResult is a clean exit that left no result.json: the worker
+	// stopped without its output (it couldn't write it, or gave up). The
+	// report uses the same wording for a worker dir with neither.
+	StatusNoResult = "error: no " + contract.ResultFileName
 )
 
 // StatusFile is the worker-dir file holding a blocked/error outcome.
@@ -92,13 +101,20 @@ func RunWorker(ctx context.Context, w Worker) (string, error) {
 		// The group is not killed after a normal exit: mobilecli's per-user
 		// daemon may live in it and is shared by parallel workers.
 		if err == nil {
-			return StatusOK, nil
+			if _, statErr := os.Stat(filepath.Join(w.Dir, contract.ResultFileName)); statErr == nil {
+				return StatusOK, nil
+			}
+			w.progress("%s", StatusNoResult)
+			return StatusNoResult, writeStatus(w.Dir, StatusNoResult)
 		}
 		var exitErr *exec.ExitError
 		if !errors.As(err, &exitErr) {
 			return "", fmt.Errorf("wait for worker: %w", err)
 		}
 		status := fmt.Sprintf("error: worker exited %d", exitCode(exitErr))
+		if usageLimitHit(filepath.Join(w.Dir, LogFile)) {
+			status = StatusUsageLimit
+		}
 		w.progress("%s", status)
 		return status, writeStatus(w.Dir, status)
 	case <-timer.C:
@@ -112,6 +128,55 @@ func RunWorker(ctx context.Context, w Worker) (string, error) {
 		killGroup(cmd.Process.Pid, done)
 		return "", ctx.Err()
 	}
+}
+
+// usageLimitMessages are the messages a harness prints when it stops
+// because the account ran out of usage, matched case-insensitively as
+// substrings of the log tail (curly apostrophes read as straight ones).
+// Keep each entry specific enough that an app under test is unlikely to
+// show it.
+var usageLimitMessages = []string{
+	// Claude Code: "Claude AI usage limit reached|<epoch>" (older CLIs),
+	// "Claude usage limit reached. Your limit will reset at …".
+	"usage limit reached",
+	// Claude Code: "5-hour limit reached ∙ resets 3pm".
+	"5-hour limit reached",
+	// Claude Code: "Weekly limit reached ∙ resets …", "Opus weekly limit reached".
+	"weekly limit reached",
+	// Codex: "You've hit your usage limit. Upgrade to Pro … or try again …".
+	"you've hit your usage limit",
+}
+
+// usageLimitTail is how much of the end of worker.log is searched: a
+// harness prints its limit message last, and older lines may quote app
+// text that only looks like one.
+const usageLimitTail = 8 << 10
+
+// usageLimitHit reports whether the tail of the worker log holds a known
+// usage-limit message. Only the verdict leaves this function, never log
+// text: a log can hold credentials from the test context.
+func usageLimitHit(logPath string) bool {
+	f, err := os.Open(logPath)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	off := max(info.Size()-usageLimitTail, 0)
+	buf := make([]byte, info.Size()-off)
+	if _, err := f.ReadAt(buf, off); err != nil && !errors.Is(err, io.EOF) {
+		return false
+	}
+	tail := strings.ToLower(strings.ReplaceAll(string(buf), "’", "'"))
+	for _, msg := range usageLimitMessages {
+		if strings.Contains(tail, msg) {
+			return true
+		}
+	}
+	return false
 }
 
 // termGrace is how long the worker gets to exit after SIGTERM before the

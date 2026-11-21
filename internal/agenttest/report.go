@@ -125,7 +125,7 @@ func loadDevice(runDir string, v contract.DeviceView) contract.ReportDevice {
 		dev.WorkerReason = status
 	case !hasResult:
 		dev.WorkerStatus = contract.WorkerError
-		dev.WorkerReason = "error: no " + contract.ResultFileName
+		dev.WorkerReason = StatusNoResult
 	case len(errs) > 0:
 		dev.WorkerStatus = contract.WorkerError
 		dev.WorkerReason = "error: invalid result"

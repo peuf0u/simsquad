@@ -39,9 +39,15 @@ func decodeWorkerStatus(t *testing.T, stdout string) string {
 	return got.Status
 }
 
+// writesResult is a worker shell script that writes result.json into dir by
+// absolute path (a worker runs in the caller's directory, not its own).
+func writesResult(dir string) string {
+	return "echo '{}' > '" + filepath.Join(dir, "result.json") + "'"
+}
+
 func TestRunWorkerCleanExitWritesNoStatus(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "workers", "ios-ABC")
-	stdout, _, err := runWorker(t, "--dir", dir, "--timeout", "10", "--", "sh", "-c", "echo hello; exit 0")
+	stdout, _, err := runWorker(t, "--dir", dir, "--timeout", "10", "--", "sh", "-c", "echo hello; "+writesResult(dir))
 	if err != nil {
 		t.Fatalf("run worker: %v", err)
 	}
@@ -58,7 +64,7 @@ func TestRunWorkerSuccessfulRetryClearsOldStatus(t *testing.T) {
 	if _, _, err := runWorker(t, "--dir", dir, "--timeout", "10", "--", "sh", "-c", "exit 3"); err != nil {
 		t.Fatalf("first attempt: %v", err)
 	}
-	stdout, _, err := runWorker(t, "--dir", dir, "--timeout", "10", "--", "true")
+	stdout, _, err := runWorker(t, "--dir", dir, "--timeout", "10", "--", "sh", "-c", writesResult(dir))
 	if err != nil {
 		t.Fatalf("retry: %v", err)
 	}
@@ -93,12 +99,26 @@ func TestRunWorkerNonZeroExitRecordsError(t *testing.T) {
 	}
 }
 
+func TestRunWorkerCleanExitWithoutResultRecordsError(t *testing.T) {
+	dir := t.TempDir()
+	stdout, _, err := runWorker(t, "--dir", dir, "--timeout", "10", "--", "sh", "-c", "echo done")
+	if err != nil {
+		t.Fatalf("run worker should record the missing result and succeed, got %v", err)
+	}
+	if got := decodeWorkerStatus(t, stdout); got != "error: no result.json" {
+		t.Errorf("stdout status = %q", got)
+	}
+	if got := readStatusFile(t, dir); got != "error: no result.json\n" {
+		t.Errorf("status file = %q", got)
+	}
+}
+
 func TestRunWorkerClosesInput(t *testing.T) {
 	dir := t.TempDir()
 	start := time.Now()
 	// `cat` copies its input until EOF; with an open stdin it would hang
 	// until the deadline and come back blocked.
-	stdout, _, err := runWorker(t, "--dir", dir, "--timeout", "5", "--", "cat")
+	stdout, _, err := runWorker(t, "--dir", dir, "--timeout", "5", "--", "sh", "-c", "cat; "+writesResult(dir))
 	if err != nil {
 		t.Fatalf("run worker: %v", err)
 	}

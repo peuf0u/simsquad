@@ -26,9 +26,12 @@ func newRunWorkerCmd() *cobra.Command {
 			"The command runs in its own process group with its input closed; its\n" +
 			"output goes to <worker-dir>/worker.log. When --timeout passes, the whole\n" +
 			"group (every process the worker started) is killed and <worker-dir>/status\n" +
-			"says `blocked: timeout`. A non-zero exit writes `error: worker exited <code>`.\n" +
-			"A clean exit writes no status file; a status file left by an earlier\n" +
-			"attempt is deleted before the worker starts.\n\n" +
+			"says `blocked: timeout`. A non-zero exit writes `error: usage limit` when\n" +
+			"the end of worker.log holds a known harness usage-limit message, else\n" +
+			"`error: worker exited <code>`. A clean exit without <worker-dir>/result.json\n" +
+			"writes `error: no result.json`; a clean exit with one writes no status file.\n" +
+			"Only these fixed texts are recorded, never log lines. A status file left\n" +
+			"by an earlier attempt is deleted before the worker starts.\n\n" +
 			"stdout is only {\"status\": …}: `ok`, or the status line written. The\n" +
 			"command exits 0 whenever the outcome was recorded, so one bad worker\n" +
 			"doesn't derail a fan-out; non-zero means simsquad itself was misused.",
