@@ -64,11 +64,17 @@ func Squad(name string, logger *progress.Logger) error {
 
 	Devices(rec.Devices, logger)
 
-	if err := state.RemoveRecord(name); err != nil && logger != nil {
-		logger.Warn("teardown: remove-record",
-			progress.F("name", name), progress.F("error", err.Error()))
-	}
-	if err := state.RemoveSquad(name); err != nil {
+	// Record and registry entry go in one locked step: a deploy upserting
+	// into this squad between the two would otherwise leave its devices in
+	// a record no registry entry points at, to be overwritten when the name
+	// is next created.
+	if err := state.WithIndexLockE(func() error {
+		if err := state.RemoveRecord(name); err != nil && logger != nil {
+			logger.Warn("teardown: remove-record",
+				progress.F("name", name), progress.F("error", err.Error()))
+		}
+		return state.RemoveSquadLocked(name)
+	}); err != nil {
 		return fmt.Errorf("teardown: remove squad %s: %w", name, err)
 	}
 	if logger != nil {

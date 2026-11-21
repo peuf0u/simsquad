@@ -62,10 +62,11 @@ type fakeDeploy struct {
 	iosBuildErr              error
 	// duringIOSBuild runs inside the fake iOS build, to interleave another
 	// writer with the deploy.
-	duringIOSBuild    func()
-	androidBuildErr   error
-	iosProvisions     []ios.ProvisionInput
-	androidProvisions []android.ProvisionInput
+	duringIOSBuild     func()
+	androidBuildErr    error
+	duringAndroidBuild func()
+	iosProvisions      []ios.ProvisionInput
+	androidProvisions  []android.ProvisionInput
 	// androidFail makes fresh Android slots come back errored.
 	androidFail     bool
 	squadTeardowns  []string
@@ -94,6 +95,9 @@ func installFakeDeploy(t *testing.T) *fakeDeploy {
 		},
 		androidBuild: func(o android.BuildOptions) (android.BuildResult, error) {
 			f.androidBuilds++
+			if f.duringAndroidBuild != nil {
+				f.duringAndroidBuild()
+			}
 			if f.androidBuildErr != nil {
 				return android.BuildResult{}, f.androidBuildErr
 			}
@@ -804,5 +808,140 @@ func TestDeployFailedIOSBuildKeepsDevices(t *testing.T) {
 	}
 	if got := loadTestRecord(t, "s"); len(got.Devices) != 1 || got.Devices[0].Status != contract.StatusReady {
 		t.Fatalf("devices after redeploy = %+v, want one fresh ready sim", got.Devices)
+	}
+}
+
+type deployOutcome struct {
+	stdout string
+	err    error
+}
+
+// deployCLIAsync runs `simsquad deploy` on its own goroutine; it must not
+// touch t, so the caller parses the outcome.
+func deployCLIAsync(args ...string) <-chan deployOutcome {
+	done := make(chan deployOutcome, 1)
+	go func() {
+		root := NewRootCmd()
+		out := &bytes.Buffer{}
+		root.SetOut(out)
+		root.SetErr(&bytes.Buffer{})
+		root.SetArgs(append([]string{"deploy"}, args...))
+		err := root.Execute()
+		done <- deployOutcome{stdout: out.String(), err: err}
+	}()
+	return done
+}
+
+// A creates a new squad with --platform ios; B claims it with --platform
+// android on the add path; A's build fails fast and its cleanup removes the
+// still-empty squad; then B finishes. B's devices, builds entry and ports
+// must still land in a registered record, and B must print its JSON.
+func TestDeployConcurrentPlatformSurvivesCleanupOfFailedCreate(t *testing.T) {
+	newDeployRepo(t, deployToml)
+	f := installFakeDeploy(t)
+	f.iosBuildErr = errors.New("xcodebuild failed")
+	bInBuild := make(chan struct{})
+	releaseB := make(chan struct{})
+	var bDone <-chan deployOutcome
+	f.duringAndroidBuild = func() {
+		close(bInBuild)
+		<-releaseB
+	}
+	f.duringIOSBuild = func() {
+		bDone = deployCLIAsync("--name", "s", "--platform", "android", "--context", "user=bob")
+		<-bInBuild
+	}
+
+	if _, code, err := deployCLI(t, "--name", "s", "--platform", "ios", "--context", "user=bob"); err != nil || code != 1 {
+		t.Fatalf("A: code %d err %v, want exit 1", code, err)
+	}
+	close(releaseB)
+	b := <-bDone
+	if b.err != nil {
+		t.Fatalf("B failed: %v", b.err)
+	}
+	var pub contract.SquadPublic
+	if err := json.Unmarshal([]byte(b.stdout), &pub); err != nil || len(pub.Devices) != 1 {
+		t.Fatalf("B stdout = %q (%v), want its squad JSON", b.stdout, err)
+	}
+	rec := loadTestRecord(t, "s")
+	if rec == nil {
+		t.Fatal("no record after B")
+	}
+	and := devicesOf(rec, contract.PlatformAndroid)
+	if len(and) != 1 || rec.Builds.Android == nil || rec.Ports[and[0].Name] != and[0].Port {
+		t.Fatalf("record = %+v, want B's emulator, build and port", rec)
+	}
+	if rec.Context["user"] != "bob" {
+		t.Fatalf("context = %v, want B's context kept", rec.Context)
+	}
+	if _, ok, _ := state.FindSquad("s"); !ok {
+		t.Fatal("squad not registered")
+	}
+}
+
+// The same while a deploy of the other platform resets the whole squad.
+func TestDeployConcurrentPlatformSurvivesWholeReset(t *testing.T) {
+	for _, cFails := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reset deploy fails=%v", cFails), func(t *testing.T) {
+			newDeployRepo(t, deployToml)
+			f := installFakeDeploy(t)
+			broken := seededIOS("s", contract.StatusError)
+			seedSquad(t, &contract.SquadRecord{Name: "s", Devices: []contract.Device{broken}})
+			if cFails {
+				f.iosBuildErr = errors.New("xcodebuild failed")
+			}
+			f.duringAndroidBuild = func() {
+				// C: iOS is the squad's only platform and it resets → whole reset.
+				_, _, err := deployCLI(t, "--name", "s", "--platform", "ios")
+				if err != nil {
+					t.Errorf("C: %v", err)
+				}
+			}
+
+			pub, code, err := deployCLI(t, "--name", "s", "--platform", "android")
+			if err != nil || code != 0 {
+				t.Fatalf("B: code %d err %v", code, err)
+			}
+			if len(f.squadTeardowns) != 1 {
+				t.Fatalf("squad teardowns = %v, want C's whole reset", f.squadTeardowns)
+			}
+			rec := loadTestRecord(t, "s")
+			if rec == nil || len(devicesOf(rec, contract.PlatformAndroid)) != 1 || rec.Builds.Android == nil || len(rec.Ports) != 1 {
+				t.Fatalf("record = %+v, want B's emulator, build and port", rec)
+			}
+			if _, ok, _ := state.FindSquad("s"); !ok {
+				t.Fatal("squad not registered")
+			}
+			if len(pub.Devices) == 0 {
+				t.Fatal("B printed no devices")
+			}
+		})
+	}
+}
+
+// Cleanup keeps the squad when the record shows another deploy's claim,
+// such as an emulator port it reserved before its devices exist.
+func TestDeployCleanupKeepsSquadWithAnotherDeploysPorts(t *testing.T) {
+	newDeployRepo(t, deployToml)
+	f := installFakeDeploy(t)
+	f.iosBuildErr = errors.New("xcodebuild failed")
+	f.duringIOSBuild = func() {
+		if _, err := state.UpdateRecord("s", func(r *contract.SquadRecord) error {
+			r.Ports = map[string]int{util.SimName("s", "android", 0): 5556}
+			return nil
+		}); err != nil {
+			t.Error(err)
+		}
+	}
+	if _, code, err := deployCLI(t, "--name", "s", "--platform", "ios"); err != nil || code != 1 {
+		t.Fatalf("code %d err %v, want 1", code, err)
+	}
+	rec := loadTestRecord(t, "s")
+	if rec == nil || rec.Ports[util.SimName("s", "android", 0)] != 5556 {
+		t.Fatalf("record = %+v, want the squad kept with the reservation", rec)
+	}
+	if _, ok, _ := state.FindSquad("s"); !ok {
+		t.Fatal("squad unregistered")
 	}
 }

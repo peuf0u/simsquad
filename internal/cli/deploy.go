@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"strconv"
 	"strings"
@@ -265,6 +266,19 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 	}
 	rec := claim.rec
 	createdThisRun := claim.created
+	// seed rebuilds the squad, with this deploy's context, should another
+	// deploy's failed-create cleanup or whole reset remove it while this one
+	// provisions; the port reservation and the final merge upsert with it.
+	seedCtx := maps.Clone(rec.Context)
+	seed := func() *contract.SquadRecord {
+		return &contract.SquadRecord{
+			Name:      squadName,
+			CreatedAt: util.NowISO(),
+			Devices:   []contract.Device{},
+			Context:   maps.Clone(seedCtx),
+			Ports:     map[string]int{},
+		}
+	}
 	// A squad created by this deploy has a zero plan: every platform is
 	// provisioned fresh and nothing counts as reused.
 	iosAction, androidAction := claim.plan.ios, claim.plan.android
@@ -430,6 +444,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 			ExistingDevices: existingAndroid,
 			PreserveData:    opts.preserve,
 			Logger:          logger,
+			Seed:            seed,
 		}
 		provGroup.Go(func() error {
 			done := logger.Step("android-provision", progress.F("slots", androidSlotCount(androidSpecs)))
@@ -462,7 +477,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		iosBuildFailed:     hasIos && !iosProvisioned,
 		androidBuildFailed: hasAndroid && !androidProvisioned,
 	}
-	rec, err = state.UpdateRecord(squadName, result.mergeInto)
+	rec, err = state.UpsertRecord(squadName, seed, result.mergeInto)
 	if err != nil {
 		return fmt.Errorf("deploy: final save: %w", err)
 	}
@@ -655,7 +670,9 @@ func (r deployResult) devices() []contract.Device {
 // cleanupCreatedSquad undoes a failed deploy of a squad it created: it tears
 // down the deploy's own devices and drops its platforms from the record. The
 // squad itself goes only when nothing is left in it — a concurrent deploy of
-// the other platform may have added devices meanwhile, and those stay.
+// the other platform may have added devices, a builds entry or emulator port
+// reservations meanwhile, and those keep it. (A concurrent deploy that has
+// written nothing yet recreates the squad through its upserts.)
 func cleanupCreatedSquad(name string, result deployResult, logger *progress.Logger) {
 	deployVia.teardownDevices(result.devices(), logger)
 	drop := deployResult{ios: result.ios, android: result.android}
@@ -665,7 +682,7 @@ func cleanupCreatedSquad(name string, result deployResult, logger *progress.Logg
 			return err
 		}
 		_ = drop.mergeInto(rec)
-		if len(rec.Devices) > 0 {
+		if len(rec.Devices) > 0 || len(rec.Ports) > 0 || rec.Builds.IOS != nil || rec.Builds.Android != nil {
 			return state.SaveRecord(rec)
 		}
 		if err := state.RemoveRecord(name); err != nil {
