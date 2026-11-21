@@ -54,6 +54,21 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- **Reusing an Android emulator checks that it is the squad's own, with or
+  without `--window`.** Before installing on or restarting a reachable
+  emulator, deploy asks it which AVD it runs (`adb emu avd name`, retried
+  up to three times). When another AVD holds the squad's port (after a
+  reboot, the user's own emulator can take it), the device fails with
+  `reuse: port N is held by another emulator (<name>), not <avd>`; when the
+  name can't be read, it fails with `reuse: could not read the AVD name of
+  the emulator on port N (<adb error>)`. Either way nothing is killed,
+  booted or installed. Before, deploy installed the build on whatever
+  answered on the port, and a `--window` restart would have killed it.
+- **Reuse stops the squad's own emulator before rebooting it when it is
+  alive but not answering adb** (for example still booting after an
+  interrupted deploy), instead of starting a second instance that can't
+  lock the AVD. A started emulator that exits during boot now fails the
+  device with `reuse-boot: …` instead of being recorded.
 - **Workers always run on an explicit model.** `run new --worker
   claude|codex` (default `claude`) names the CLI the workers run on; any
   other value exits `1`. `run new --model <id>` sets the model for one
