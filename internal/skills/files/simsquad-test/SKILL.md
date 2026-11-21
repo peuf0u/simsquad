@@ -121,15 +121,19 @@ When `run new` refuses, fix the cause and run it again:
 ## 5. Deploy
 
 ```sh
-simsquad deploy --name "$SQUAD" --force-build --out "$RUN_DIR/deploy.json"
+simsquad deploy --name "$SQUAD" --platform ios --platform android --force-build --out "$RUN_DIR/deploy.json"
 ```
 
-This rebuilds the app from the working tree and installs it on the
-equipped devices, booting any that are not running. The equipment is the
+Pass one `--platform` per entry of the run's `platforms` from step 4: the
+example is a run on both; a run whose `platforms` is `["ios"]` passes
+`--platform ios` alone. This rebuilds the app from the working tree and
+installs it on those platforms' equipped devices, booting any that are not
+running; the squad's other platform is left alone. The equipment is the
 only source of devices and context, so pass no other flags. It can take
 minutes.
 
-- Exit `0`: every device is ready. Exit `2`: some are; carry on with them.
+- Exit `0`: every device on the run's platforms is ready. Exit `2`: some
+  are; carry on with them.
 - Exit `1` with an error that the squad is not reusable with the requested
   matrix: the equipment changed since the squad was deployed. The squad
   belongs to this run, so dismiss it and deploy again, once:

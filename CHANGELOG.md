@@ -6,6 +6,25 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`deploy --platform ios|android` deploys only the chosen platforms.**
+  Repeatable; omitted, it means every equipped platform, as before. Each
+  chosen platform takes its `simsquad.toml` matrix, and a platform left out
+  gets no build, boot or install: its devices, `builds` entry and ports stay
+  in the record. An unequipped platform, or `--platform` with
+  `--ios-spec` / `--android-spec`, exits `1`. Reuse is now decided per
+  platform: matching devices are reused, a platform the squad lacks is
+  added (so a bare deploy on an iOS-only squad adds Android), and a
+  mismatched platform is reset when none of its devices is ready and
+  refused when one is. Stdout is still the whole squad; the exit code
+  counts only the deployed platforms' devices. Deploy now merges its
+  result into the record under the index lock and creates a new squad in
+  one locked step, so concurrent deploys of different platforms, and a
+  `set-context` during a deploy, are no longer lost. The `simsquad-test`
+  skill deploys only the run's `platforms`. Skill contract 4; rerun
+  `simsquad skill install` to update the installed skills.
+
 ### Fixed
 
 - **Dismissed squads no longer leave an AVD folder behind.** Android

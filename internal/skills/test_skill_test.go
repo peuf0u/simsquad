@@ -217,6 +217,26 @@ func TestTestSkillRedeploysWhenEquipmentChanged(t *testing.T) {
 	}
 }
 
+// A run deploys only its own platforms (issue #23), so a single-platform run
+// on a squad equipped for two neither builds nor boots the other platform.
+func TestTestSkillDeploysOnlyTheRunsPlatforms(t *testing.T) {
+	skill, _ := installedTestSkill(t)
+	m := regexp.MustCompile(`(?s)## 5\. Deploy\n(.*?)\n## `).FindStringSubmatch(skill)
+	if m == nil {
+		t.Fatal("skill has no `## 5. Deploy` step")
+	}
+	var deploy string
+	for _, line := range fencedCommands(m[1], "simsquad deploy") {
+		deploy = line
+	}
+	if !strings.Contains(deploy, "--platform") {
+		t.Errorf("deploy command %q passes no --platform", deploy)
+	}
+	if !strings.Contains(m[1], "`platforms`") {
+		t.Error("deploy step does not tie --platform to the run's `platforms`")
+	}
+}
+
 // Dry run 002's orchestrator appended `echo "exit $?"` to a simsquad call,
 // which turned an allowed command into one needing approval.
 func TestTestSkillRunsCommandsUnchained(t *testing.T) {
