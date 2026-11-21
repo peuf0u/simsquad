@@ -516,13 +516,9 @@ func summarize(configDir string, state wizardState) ConfigSummary {
 	if androidSpecs == nil {
 		androidSpecs = []contract.AndroidSpec{}
 	}
-	var ctx map[string]string
-	if len(state.testContext) > 0 {
-		ctx = make(map[string]string, len(state.testContext))
-		for k, v := range state.testContext {
-			ctx[k] = v
-		}
-	}
+	// The summary is printed (equip --show, equip's result), so secrets
+	// show masked like every other output.
+	ctx := contract.MaskContext(state.testContext, nil)
 	return ConfigSummary{
 		ConfigDir:   configDir,
 		ProjectFile: filepath.Join(configDir, config.ProjectFile),

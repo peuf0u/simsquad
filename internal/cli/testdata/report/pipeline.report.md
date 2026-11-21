@@ -11,7 +11,9 @@ Run `login-magic-link-20260612-170000` · squad `qa-app` · 2026-06-12T17:00:00Z
 | Key | Value |
 |---|---|
 | `API_STAGE` | staging |
+| `PASSWORD` | `<secret>` |
 | `PERSONA` | alice \| admin |
+| `api_token` | `<secret>` |
 
 ## Results
 

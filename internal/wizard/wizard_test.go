@@ -285,3 +285,26 @@ func readTestFile(t *testing.T, path string) string {
 	}
 	return string(data)
 }
+
+// equip --show masks a context key whose name marks it a secret.
+func TestRunEquipWizardShowMasksSecretNamedContext(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "simsquad.toml"), `[project]
+ios_scheme = "App"
+android_gradle_task = ":app:assembleDebug"
+
+[context]
+user = "alice"
+Password = "hunter2"
+`)
+	res, err := RunEquipWizard(Options{CWD: dir, Show: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"user": "alice", "Password": contract.SecretMask}
+	if !reflect.DeepEqual(res.Summary.Context, want) {
+		t.Fatalf("Summary.Context = %+v, want %+v", res.Summary.Context, want)
+	}
+}

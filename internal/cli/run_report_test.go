@@ -146,6 +146,11 @@ func TestRunReportPipeline(t *testing.T) {
 	if rep.Squad.Context["PERSONA"] != "alice | admin" {
 		t.Errorf("context not carried as-is: %v", rep.Squad.Context)
 	}
+	// PASSWORD arrives masked from deploy.json; api_token is raw, as a
+	// deploy.json written before secrets has it, and the name rule masks it.
+	if rep.Squad.Context["PASSWORD"] != "<secret>" || rep.Squad.Context["api_token"] != "<secret>" {
+		t.Errorf("secrets not masked: %v", rep.Squad.Context)
+	}
 	if ok := rep.device(t, "ABC-123"); ok.WorkerStatus != "ok" ||
 		ok.Findings[0].Evidence[0] != "workers/ABC-123/screenshots/step-001.png" {
 		t.Errorf("ABC-123 = %+v, want ok with evidence rewritten under workers/ABC-123/", ok)
@@ -176,9 +181,16 @@ func TestRunReportPipeline(t *testing.T) {
 		"blocked: timeout",
 		"![evidence](workers/ABC-123/screenshots/step-001.png)",
 		"| `PERSONA` | alice \\| admin |",
+		"| `PASSWORD` | `<secret>` |",
+		"| `api_token` | `<secret>` |",
 	} {
 		if !strings.Contains(md, fragment) {
 			t.Errorf("report.md missing %q:\n%s", fragment, md)
+		}
+	}
+	for _, raw := range []string{md, readFile(t, got.ReportJSON)} {
+		if strings.Contains(raw, "legacy-t0k") {
+			t.Errorf("a report shows the secret value:\n%s", raw)
 		}
 	}
 	// Non-English text survives verbatim, not as \u escapes.

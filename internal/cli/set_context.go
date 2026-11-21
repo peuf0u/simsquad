@@ -112,7 +112,7 @@ func runSetContext(cmd *cobra.Command, opts setContextOpts) error {
 		if len(rec.Context) == 0 {
 			rec.Context = nil // honour omitempty
 		}
-		updated = rec.Context
+		updated = rec.MaskedContext()
 		return state.SaveRecord(rec)
 	})
 	if lockErr != nil {
