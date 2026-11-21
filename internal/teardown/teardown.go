@@ -6,7 +6,10 @@
 //	iOS                 → simctl shutdown + simctl delete
 //	Android emulator    → adb emu kill, wait for it to exit (bounded),
 //	                      then avdmanager delete avd; the kill only when
-//	                      the serial answers with the squad's AVD name
+//	                      the serial answers with the squad's AVD name.
+//	                      When the name can't be read or emu kill is
+//	                      ignored, SIGTERM/SIGKILL on the recorded PID
+//	                      while its args name the squad's AVD and port
 //	Android physical    → adb uninstall <bundle>      (never delete device)
 //	orphan              → any simsquad-* sim/AVD not in the registry, and
 //	                      any simsquad-*.avd folder left without its .ini
@@ -145,6 +148,10 @@ func teardownIOS(dev contract.Device) error {
 	return nil
 }
 
+// emulatorExitTimeout bounds the wait for an emulator to exit after `adb emu
+// kill`. A variable so tests run in test time.
+var emulatorExitTimeout = android.EmulatorExitTimeout
+
 func teardownAndroidEmulator(dev contract.Device) error {
 	adb, err := android.ADB()
 	if err != nil {
@@ -154,9 +161,9 @@ func teardownAndroidEmulator(dev contract.Device) error {
 	if name == "" {
 		name = dev.Name
 	}
-	ours, left := squadEmulatorOnSerial(adb, dev.UDID, name)
+	owner, left := squadEmulatorOnSerial(adb, dev.UDID, name)
 	kill := func() {
-		if ours {
+		if owner == serialOurs {
 			_, _ = util.Run(adb, []string{"-s", dev.UDID, "emu", "kill"}, util.RunOpts{})
 		}
 	}
@@ -174,33 +181,62 @@ func teardownAndroidEmulator(dev contract.Device) error {
 		}
 		return nil
 	}
-	if !ours {
-		// No kill, so no exit to wait for.
+	gone := android.EmulatorGoneProbe(dev, adb)
+	switch owner {
+	case serialOurs:
+		// An emulator still booting may not honour emu kill; its recorded
+		// PID, while verified as the squad's emulator, is signalled before
+		// the AVD goes, so it isn't left running with its AVD deleted.
+		var signal func()
+		if dev.EmulatorPID > 0 {
+			signal = func() { android.SignalSquadEmulator(dev, gone) }
+		}
+		return stopThenDelete(kill, gone, signal, del, emulatorExitTimeout, android.EmulatorExitPoll)
+	case serialUnknown:
+		// The name can't be read (an emulator still booting, say). Its
+		// recorded PID, when verified as the squad's emulator by its
+		// arguments, settles it; otherwise it is left running (fail safe).
+		if dev.EmulatorPID > 0 && android.SquadEmulatorAlive(dev) && android.SignalSquadEmulator(dev, gone) {
+			return del()
+		}
+		return errors.Join(del(), left)
+	default:
+		// Nothing on the serial, or another AVD: no kill, so no exit to
+		// wait for.
 		return errors.Join(del(), left)
 	}
-	return stopThenDelete(kill, android.EmulatorGoneProbe(dev, adb), del,
-		android.EmulatorExitTimeout, android.EmulatorExitPoll)
 }
 
-// squadEmulatorOnSerial reports whether the emulator on serial runs the
-// squad's AVD (name), the only case in which teardown may kill it. The
-// serial is only a port: after a reboot another emulator, the user's own
-// say, can hold it (#33). An emulator that answers with another name, or
-// whose name can't be read, is left running (fail safe), and left says so
-// for the caller's warning. Nothing listed on the serial skips the name
-// query and its retries.
-func squadEmulatorOnSerial(adb, serial, name string) (ours bool, left error) {
+// serialOwner is what squadEmulatorOnSerial found on a squad emulator's
+// serial.
+type serialOwner int
+
+const (
+	serialFree    serialOwner = iota // adb doesn't list the serial
+	serialOurs                       // it runs the squad's AVD
+	serialForeign                    // it runs another AVD
+	serialUnknown                    // its AVD name can't be read
+)
+
+// squadEmulatorOnSerial reports who runs the emulator on serial: the
+// squad's AVD (name) is the only case in which teardown may kill it through
+// adb. The serial is only a port: after a reboot another emulator, the
+// user's own say, can hold it (#33). An emulator that answers with another
+// name, or whose name can't be read, is not killed through adb, and left
+// says so for the caller's warning. Nothing listed on the serial skips the
+// name query and its retries.
+func squadEmulatorOnSerial(adb, serial, name string) (owner serialOwner, left error) {
 	if adb == "" || name == "" || !android.ADBListsSerial(adb, serial) {
-		return false, nil
+		return serialFree, nil
 	}
 	running, err := android.RunningAVDName(serial)
 	if err != nil {
-		return false, fmt.Errorf("left the emulator on %s running: could not read its AVD name (%s)", serial, err.Error())
+		return serialUnknown, fmt.Errorf("left the emulator on %s running: could not read its AVD name (%s)", serial, err.Error())
 	}
 	if running != name {
-		return false, fmt.Errorf("left the emulator on %s running: it runs %s, not %s", serial, running, name)
+		return serialForeign, fmt.Errorf("left the emulator on %s running: it runs %s, not %s", serial, running, name)
 	}
-	return true, nil
+	return serialOurs, nil
 }
 
 func teardownAndroidPhysical(dev contract.Device) error {

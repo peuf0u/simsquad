@@ -2,6 +2,7 @@ package teardown
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -22,6 +23,7 @@ func TestStopThenDeleteWaitsForTheEmulatorToBeGone(t *testing.T) {
 	err := stopThenDelete(
 		func() { events = append(events, "kill") },
 		gone,
+		func() { events = append(events, "fallback") },
 		func() error { events = append(events, "delete"); return nil },
 		time.Minute, time.Millisecond,
 	)
@@ -49,6 +51,7 @@ func TestStopThenDeleteDeletesAnywayAfterTheTimeout(t *testing.T) {
 	err := stopThenDelete(
 		func() {},
 		func() bool { return false },
+		nil,
 		func() error { deletedAfter = time.Since(start); return wantErr },
 		timeout, 5*time.Millisecond,
 	)
@@ -57,5 +60,26 @@ func TestStopThenDeleteDeletesAnywayAfterTheTimeout(t *testing.T) {
 	}
 	if deletedAfter < timeout {
 		t.Fatalf("deleted after %s, before the %s timeout", deletedAfter, timeout)
+	}
+}
+
+// An emulator that hasn't exited by the timeout (one still booting may
+// ignore emu kill) gets the fallback before the delete.
+func TestStopThenDeleteRunsTheFallbackBeforeDeletingAfterTheTimeout(t *testing.T) {
+	t.Parallel()
+
+	var events []string
+	err := stopThenDelete(
+		func() { events = append(events, "kill") },
+		func() bool { return false },
+		func() { events = append(events, "fallback") },
+		func() error { events = append(events, "delete"); return nil },
+		10*time.Millisecond, time.Millisecond,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(events, " "); got != "kill fallback delete" {
+		t.Fatalf("events = %s, want kill fallback delete", got)
 	}
 }

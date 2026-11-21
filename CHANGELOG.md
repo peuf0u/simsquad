@@ -135,8 +135,8 @@ All notable changes are recorded here. The format follows
   repo is gone, a deploy that resets the platform or cleans up after
   itself) likewise kills an emulator only when it answers with the
   squad's AVD name: another emulator on the port, or one whose name can't
-  be read, is left running with a warning, and only the squad's AVD is
-  deleted. A new emulator gets a port no squad records and `adb devices`
+  be read and whose recorded PID isn't the squad's emulator, is left
+  running with a warning, and only the squad's AVD is deleted. A new emulator gets a port no squad records and `adb devices`
   doesn't list, and after its boot deploy checks that the emulator
   answering is the one it started, running the squad's AVD; otherwise it
   kills the one it started and fails the device with `boot: port N is held
@@ -239,6 +239,11 @@ All notable changes are recorded here. The format follows
   teardown (`dismiss`, `sweep`, a failed `deploy`) now waits up to 15s for
   the emulator to exit before deleting its AVD; an emulator still shutting
   down could recreate `simsquad-*.avd/` holding only `emulator-user.ini`.
+  When the squad's emulator hasn't exited by then, or doesn't answer the
+  AVD name query (still booting after an interrupted deploy, say),
+  teardown sends SIGTERM, then SIGKILL, to its recorded PID while that
+  process's arguments name the squad's AVD and port, and deletes the AVD
+  after, instead of leaving the emulator running without it.
   `simsquad sweep` also removes such a folder when it has no `.ini` and no
   squad tracks it (in `$ANDROID_AVD_HOME`, or `~/.android/avd`), and lists
   it under `pruned.android`.
