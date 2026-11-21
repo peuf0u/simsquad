@@ -229,7 +229,10 @@ func TestTestSkillRedeploysWhenEquipmentChanged(t *testing.T) {
 	// The runs folder is the config dir's (issue #22), so the loop finds it
 	// from the run folder, whatever folder the agent is in (via `..`: the
 	// skill avoids `$(…)`, which Claude Code asks approval for).
-	if !strings.Contains(m[1], `for d in "$RUN_DIR"/../*/; do`) {
+	// ${RUN_DIR:?} stops the loop when the agent forgot to substitute the
+	// variable; a bare "$RUN_DIR" would walk / and print nothing, which the
+	// step reads as "dismiss".
+	if !strings.Contains(m[1], `for d in "${RUN_DIR:?}"/../*/; do`) {
 		t.Error("deploy step does not list the other runs from $RUN_DIR's parent")
 	}
 	if strings.Contains(m[1], "in .simsquad/runs/") {
