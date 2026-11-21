@@ -50,27 +50,45 @@ func MatchOrphan(name string) bool { return orphanRx.MatchString(name) }
 // A missing squad record is not an error; the registry entry (if any) is
 // still removed so a stale index doesn't accumulate.
 func Squad(name string, logger *progress.Logger) error {
-	rec, err := state.LoadRecord(name)
+	// Load the record and remove it with its registry entry in one locked
+	// step, then tear the devices down outside the lock. A deploy's final
+	// merge landing during the (slow) device teardown then finds the record
+	// gone and cleans up after itself, instead of saving devices into a
+	// record this function deletes a moment later.
+	var rec *contract.SquadRecord
+	err := state.WithIndexLockE(func() error {
+		var err error
+		rec, err = state.LoadRecord(name)
+		if err != nil {
+			return fmt.Errorf("teardown: load record %s: %w", name, err)
+		}
+		if rec == nil {
+			// Still drop the registry entry so a stale index doesn't
+			// accumulate; failing to is not worth an error here.
+			_ = state.RemoveSquadLocked(name)
+			return nil
+		}
+		if err := state.RemoveRecord(name); err != nil && logger != nil {
+			logger.Warn("teardown: remove-record",
+				progress.F("name", name), progress.F("error", err.Error()))
+		}
+		if err := state.RemoveSquadLocked(name); err != nil {
+			return fmt.Errorf("teardown: remove squad %s: %w", name, err)
+		}
+		return nil
+	})
 	if err != nil {
-		return fmt.Errorf("teardown: load record %s: %w", name, err)
+		return err
 	}
 	if rec == nil {
 		if logger != nil {
 			logger.Info("teardown: no-state", progress.F("name", name))
 		}
-		_ = state.RemoveSquad(name)
 		return nil
 	}
 
 	Devices(rec.Devices, logger)
 
-	if err := state.RemoveRecord(name); err != nil && logger != nil {
-		logger.Warn("teardown: remove-record",
-			progress.F("name", name), progress.F("error", err.Error()))
-	}
-	if err := state.RemoveSquad(name); err != nil {
-		return fmt.Errorf("teardown: remove squad %s: %w", name, err)
-	}
 	if logger != nil {
 		logger.Success("teardown: removed", progress.F("name", name))
 	}
@@ -84,12 +102,16 @@ func Squad(name string, logger *progress.Logger) error {
 // caller's point of view either way.
 func Devices(devs []contract.Device, logger *progress.Logger) {
 	for _, dev := range devs {
-		if err := teardownDevice(dev); err != nil && logger != nil {
+		if err := tearDownDevice(dev); err != nil && logger != nil {
 			logger.Warn("teardown: device-error",
 				progress.F("udid", dev.UDID), progress.F("error", err.Error()))
 		}
 	}
 }
+
+// tearDownDevice is teardownDevice behind a seam, so tests can act while a
+// teardown is in progress without touching simctl or adb.
+var tearDownDevice = teardownDevice
 
 func teardownDevice(dev contract.Device) error {
 	if dev.UDID == "" {
