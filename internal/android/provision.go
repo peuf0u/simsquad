@@ -43,9 +43,12 @@ var dottedAPIRx = regexp.MustCompile(`^android-\d+\.\d+`)
 
 // ProvisionInput is the matrix request handed to Provision.
 type ProvisionInput struct {
-	Name            string
-	Specs           []contract.AndroidSpec
-	APKPath         string
+	Name    string
+	Specs   []contract.AndroidSpec
+	APKPath string
+	// APKSetPath is set instead of APKPath for a bundle build: the APK set
+	// bundletool installs, base plus feature modules.
+	APKSetPath      string
 	BundleID        string
 	ExistingDevices []contract.Device
 	PreserveData    bool
@@ -97,12 +100,13 @@ func Provision(in ProvisionInput) ProvisionResult {
 
 	if len(emuSpecs) > 0 {
 		emuDevices, emuPorts := provisionEmulators(emulatorContext{
-			Name:     in.Name,
-			Specs:    emuSpecs,
-			APKPath:  in.APKPath,
-			BundleID: in.BundleID,
-			Window:   in.Window,
-			Logger:   in.Logger,
+			Name:       in.Name,
+			Specs:      emuSpecs,
+			APKPath:    in.APKPath,
+			APKSetPath: in.APKSetPath,
+			BundleID:   in.BundleID,
+			Window:     in.Window,
+			Logger:     in.Logger,
 		})
 		res.Devices = append(res.Devices, emuDevices...)
 		for k, v := range emuPorts {
@@ -115,11 +119,12 @@ func Provision(in ProvisionInput) ProvisionResult {
 			total += s.Count
 		}
 		physDevices := provisionPhysical(physicalContext{
-			Name:     in.Name,
-			Count:    total,
-			APKPath:  in.APKPath,
-			BundleID: in.BundleID,
-			Logger:   in.Logger,
+			Name:       in.Name,
+			Count:      total,
+			APKPath:    in.APKPath,
+			APKSetPath: in.APKSetPath,
+			BundleID:   in.BundleID,
+			Logger:     in.Logger,
 		})
 		res.Devices = append(res.Devices, physDevices...)
 	}
@@ -245,11 +250,11 @@ func reprovisionExistingOne(existing contract.Device, in ProvisionInput) contrac
 		}
 	}
 	if in.PreserveData {
-		if err := installOnly(dev.UDID, in.APKPath); err != nil {
+		if err := installOnly(dev.UDID, in.pkg()); err != nil {
 			dev.ErrorMessage = "reuse-install: " + err.Error()
 			return dev
 		}
-	} else if err := installAndClear(dev.UDID, in.APKPath, in.BundleID); err != nil {
+	} else if err := installAndClear(dev.UDID, in.pkg(), in.BundleID); err != nil {
 		dev.ErrorMessage = "reuse-install: " + err.Error()
 		return dev
 	}
@@ -415,12 +420,13 @@ func preflightAPIWarn(logger *progress.Logger) {
 // ---------------------------------------------------------------------------
 
 type emulatorContext struct {
-	Name     string
-	Specs    []contract.AndroidSpec
-	APKPath  string
-	BundleID string
-	Window   bool
-	Logger   *progress.Logger
+	Name       string
+	Specs      []contract.AndroidSpec
+	APKPath    string
+	APKSetPath string
+	BundleID   string
+	Window     bool
+	Logger     *progress.Logger
 }
 
 type emulatorSlot struct {
@@ -569,7 +575,7 @@ func provisionEmulatorSlot(s emulatorSlot, ctx emulatorContext) contract.Device 
 
 	time.Sleep(emulatorSettleAfterBoot)
 
-	if err := installAndClear(serial, ctx.APKPath, ctx.BundleID); err != nil {
+	if err := installAndClear(serial, appPackage{apk: ctx.APKPath, apkSet: ctx.APKSetPath}, ctx.BundleID); err != nil {
 		dev.ErrorMessage = "install: " + err.Error()
 		return dev
 	}
@@ -738,36 +744,63 @@ func emulatorPort(dev contract.Device) (int, error) {
 	return 0, fmt.Errorf("cannot infer emulator port from %q", dev.UDID)
 }
 
-func installOnly(serial, apk string) error {
+// appPackage is what a build installs: one APK, or for a bundle build the
+// APK set built from the app bundle.
+type appPackage struct {
+	apk, apkSet string
+}
+
+func (in ProvisionInput) pkg() appPackage {
+	return appPackage{apk: in.APKPath, apkSet: in.APKSetPath}
+}
+
+// install installs pkg on serial, replacing an installed copy: `adb install
+// -r -t` for an APK, `bundletool install-apks` for an APK set, which picks
+// the splits the device needs and, for a local-testing set, pushes the
+// on-demand modules where Play Core finds them. --allow-test-only matches
+// adb's -t.
+func install(serial string, pkg appPackage) error {
 	adb, err := ADB()
 	if err != nil {
 		return err
 	}
-	r, _ := util.Run(adb, []string{"-s", serial, "install", "-r", "-t", apk}, util.RunOpts{})
+	if pkg.apkSet == "" {
+		r, _ := util.Run(adb, []string{"-s", serial, "install", "-r", "-t", pkg.apk}, util.RunOpts{})
+		if r.Code != 0 {
+			return fmt.Errorf("adb install: %s", strings.TrimSpace(r.Stderr+r.Stdout))
+		}
+		return nil
+	}
+	bundletool, err := Bundletool()
+	if err != nil {
+		return err
+	}
+	r, _ := util.Run(bundletool, []string{
+		"install-apks", "--apks=" + pkg.apkSet, "--device-id=" + serial, "--adb=" + adb, "--allow-test-only",
+	}, util.RunOpts{})
 	if r.Code != 0 {
-		return fmt.Errorf("adb install -r: %s", strings.TrimSpace(r.Stderr+r.Stdout))
+		return fmt.Errorf("bundletool install-apks: %s", strings.TrimSpace(r.Stderr+r.Stdout))
 	}
 	return nil
 }
 
-func installAndClear(serial, apk, bundle string) error {
+func installOnly(serial string, pkg appPackage) error {
+	return install(serial, pkg)
+}
+
+func installAndClear(serial string, pkg appPackage, bundle string) error {
 	adb, err := ADB()
 	if err != nil {
 		return err
 	}
-	install := func() (util.RunResult, error) {
-		return util.Run(adb, []string{"-s", serial, "install", "-r", "-t", apk}, util.RunOpts{})
-	}
-	r, _ := install()
-	if r.Code != 0 {
+	if err := install(serial, pkg); err != nil {
 		// One retry after uninstall — covers signature-mismatch on reuse.
 		_, _ = util.Run(adb, []string{"-s", serial, "uninstall", bundle}, util.RunOpts{})
-		r, _ = install()
-		if r.Code != 0 {
-			return fmt.Errorf("adb install: %s", strings.TrimSpace(r.Stderr+r.Stdout))
+		if err := install(serial, pkg); err != nil {
+			return err
 		}
 	}
-	r, _ = util.Run(adb, []string{"-s", serial, "shell", "pm", "clear", bundle}, util.RunOpts{})
+	r, _ := util.Run(adb, []string{"-s", serial, "shell", "pm", "clear", bundle}, util.RunOpts{})
 	if r.Code != 0 {
 		return fmt.Errorf("pm clear: %s", strings.TrimSpace(r.Stderr))
 	}
@@ -795,11 +828,12 @@ func ResetApp(serial, bundle string) error {
 // ---------------------------------------------------------------------------
 
 type physicalContext struct {
-	Name     string
-	Count    int
-	APKPath  string
-	BundleID string
-	Logger   *progress.Logger
+	Name       string
+	Count      int
+	APKPath    string
+	APKSetPath string
+	BundleID   string
+	Logger     *progress.Logger
 }
 
 func provisionPhysical(ctx physicalContext) []contract.Device {
@@ -889,7 +923,7 @@ func provisionPhysical(ctx physicalContext) []contract.Device {
 				devices[i] = dev
 				return nil
 			}
-			if err := installAndClear(c.serial, ctx.APKPath, ctx.BundleID); err != nil {
+			if err := installAndClear(c.serial, appPackage{apk: ctx.APKPath, apkSet: ctx.APKSetPath}, ctx.BundleID); err != nil {
 				dev.ErrorMessage = "install: " + err.Error()
 				devices[i] = dev
 				return nil

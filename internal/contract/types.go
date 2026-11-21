@@ -99,15 +99,18 @@ type IosBuild struct {
 }
 
 // AndroidBuild is the Android half of Builds. Either the success fields are
-// populated or Error is — never both. Repo is as on IosBuild.
+// populated or Error is — never both. Repo is as on IosBuild. A successful
+// build sets APKPath (an assemble* task) or APKSetPath (a bundle* task: the
+// .apks bundletool built from the app bundle), never both.
 type AndroidBuild struct {
-	Repo     string        `json:"repo,omitempty"`
-	APKPath  string        `json:"apk_path,omitempty"`
-	BundleID string        `json:"bundle_id,omitempty"`
-	GitSHA   string        `json:"git_sha,omitempty"`
-	Reused   bool          `json:"reused,omitempty"`
-	Specs    []AndroidSpec `json:"specs,omitempty"`
-	Error    string        `json:"error,omitempty"`
+	Repo       string        `json:"repo,omitempty"`
+	APKPath    string        `json:"apk_path,omitempty"`
+	APKSetPath string        `json:"apks_path,omitempty"`
+	BundleID   string        `json:"bundle_id,omitempty"`
+	GitSHA     string        `json:"git_sha,omitempty"`
+	Reused     bool          `json:"reused,omitempty"`
+	Specs      []AndroidSpec `json:"specs,omitempty"`
+	Error      string        `json:"error,omitempty"`
 }
 
 // Builds aggregates per-platform build outputs on a SquadRecord. Each pointer

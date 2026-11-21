@@ -378,6 +378,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 				return nil
 			}
 			androidBuild.APKPath = res.APKPath
+			androidBuild.APKSetPath = res.APKSetPath
 			androidBuild.BundleID = res.BundleID
 			androidBuild.GitSHA = res.GitSHA
 			androidBuild.Reused = res.Reused || androidAction == actionReuse
@@ -398,7 +399,8 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 	)
 	var provGroup errgroup.Group
 	iosProvisioned := hasIos && builds.IOS != nil && builds.IOS.Error == "" && builds.IOS.AppPath != ""
-	androidProvisioned := hasAndroid && builds.Android != nil && builds.Android.Error == "" && builds.Android.APKPath != ""
+	androidProvisioned := hasAndroid && builds.Android != nil && builds.Android.Error == "" &&
+		(builds.Android.APKPath != "" || builds.Android.APKSetPath != "")
 
 	if iosProvisioned {
 		iosIn := ios.ProvisionInput{
@@ -424,6 +426,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 			Name:            squadName,
 			Specs:           androidSpecs,
 			APKPath:         builds.Android.APKPath,
+			APKSetPath:      builds.Android.APKSetPath,
 			BundleID:        builds.Android.BundleID,
 			ExistingDevices: existingAndroid,
 			PreserveData:    opts.preserve,
@@ -627,7 +630,7 @@ func isIosMarker(b *contract.IosBuild) bool {
 }
 
 func isAndroidMarker(b *contract.AndroidBuild) bool {
-	return b != nil && b.APKPath == "" && b.Error == ""
+	return b != nil && b.APKPath == "" && b.APKSetPath == "" && b.Error == ""
 }
 
 // deployResult is what one deploy produced for the platforms it deployed.

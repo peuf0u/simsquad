@@ -459,3 +459,79 @@ func TestReuseFailsSafeWhenTheAVDNameCannotBeRead(t *testing.T) {
 		t.Fatalf("emu avd name ran %d times, want %d", n, avdNameAttempts)
 	}
 }
+
+// withBundletool puts a bundletool on $PATH that logs like the fake adb. Its
+// install fails once while the installfail marker exists.
+func (f fakeSDK) withBundletool(t *testing.T) {
+	t.Helper()
+	bin := t.TempDir()
+	writeFile(t, filepath.Join(bin, "bundletool"), `#!/bin/sh
+d=`+f.dir+`
+echo "bundletool $*" >> $d/log
+if [ -e $d/installfail ]; then rm $d/installfail; echo 'INSTALL_FAILED_UPDATE_INCOMPATIBLE' >&2; exit 1; fi
+`)
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+}
+
+func installAPKSetCall(t *testing.T) string {
+	t.Helper()
+	adb, err := ADB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return "bundletool install-apks --apks=/app.apks --device-id=emulator-5556 --adb=" + adb + " --allow-test-only\n"
+}
+
+// A bundle build installs its APK set with bundletool and clears data after,
+// as the APK path does.
+func TestReuseInstallsTheAPKSetAndClearsData(t *testing.T) {
+	f := newFakeSDK(t, true, "hw.keyboard=no\n")
+	f.withBundletool(t)
+
+	dev := reprovisionExistingOne(reusedEmulator(false), ProvisionInput{
+		APKSetPath: "/app.apks", BundleID: "com.example",
+	})
+	if dev.Status != contract.StatusReady {
+		t.Fatalf("status = %s (%s), want ready", dev.Status, dev.ErrorMessage)
+	}
+	want := installAPKSetCall(t) + "adb shell pm clear com.example\n"
+	if got := f.calls(t); got != want {
+		t.Fatalf("calls =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestReuseInstallsTheAPKSetKeepingDataWithPreserveData(t *testing.T) {
+	f := newFakeSDK(t, true, "hw.keyboard=no\n")
+	f.withBundletool(t)
+
+	dev := reprovisionExistingOne(reusedEmulator(false), ProvisionInput{
+		APKSetPath: "/app.apks", BundleID: "com.example", PreserveData: true,
+	})
+	if dev.Status != contract.StatusReady {
+		t.Fatalf("status = %s (%s), want ready", dev.Status, dev.ErrorMessage)
+	}
+	if got, want := f.calls(t), installAPKSetCall(t); got != want {
+		t.Fatalf("calls =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// A failed APK set install (here a signature mismatch) uninstalls the app
+// and retries once, as the APK path does.
+func TestFreshEmulatorRetriesAFailedAPKSetInstallAfterUninstall(t *testing.T) {
+	f := newFakeSDK(t, false, "hw.keyboard=no\n")
+	f.withBundletool(t)
+	f.touch(t, "installfail")
+
+	dev := provisionEmulatorSlot(
+		emulatorSlot{name: flowAVD, port: 5556},
+		emulatorContext{APKSetPath: "/app.apks", BundleID: "com.example"},
+	)
+	if dev.Status != contract.StatusReady {
+		t.Fatalf("status = %s (%s), want ready", dev.Status, dev.ErrorMessage)
+	}
+	install := installAPKSetCall(t)
+	want := install + "adb uninstall com.example\n" + install + "adb shell pm clear com.example\n"
+	if got := f.calls(t); !strings.HasSuffix(got, want) {
+		t.Fatalf("calls =\n%s\nwant them to end with\n%s", got, want)
+	}
+}

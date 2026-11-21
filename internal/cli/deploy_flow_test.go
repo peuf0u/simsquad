@@ -65,8 +65,11 @@ type fakeDeploy struct {
 	duringIOSBuild     func()
 	androidBuildErr    error
 	duringAndroidBuild func()
-	iosProvisions      []ios.ProvisionInput
-	androidProvisions  []android.ProvisionInput
+	// androidBundle makes the Android build a bundle build: an APK set
+	// instead of an APK.
+	androidBundle     bool
+	iosProvisions     []ios.ProvisionInput
+	androidProvisions []android.ProvisionInput
 	// androidFail makes fresh Android slots come back errored.
 	androidFail     bool
 	deviceTeardowns []contract.Device
@@ -99,6 +102,9 @@ func installFakeDeploy(t *testing.T) *fakeDeploy {
 			}
 			if f.androidBuildErr != nil {
 				return android.BuildResult{}, f.androidBuildErr
+			}
+			if f.androidBundle {
+				return android.BuildResult{APKSetPath: filepath.Join(o.Repo, "app.apks"), BundleID: "com.example.app"}, nil
 			}
 			return android.BuildResult{APKPath: filepath.Join(o.Repo, "app.apk"), BundleID: "com.example.app"}, nil
 		},
@@ -1120,5 +1126,32 @@ func TestDeployWindowReachesBothProvisions(t *testing.T) {
 				t.Fatalf("Window ios %v android %v, want %v", f.iosProvisions[0].Window, f.androidProvisions[0].Window, window)
 			}
 		})
+	}
+}
+
+// A bundle build's APK set reaches provisioning and the record, and a
+// finished bundle build is not mistaken for a claim marker.
+func TestDeployProvisionsABundleBuildsAPKSet(t *testing.T) {
+	newDeployRepo(t, deployToml)
+	f := installFakeDeploy(t)
+	f.androidBundle = true
+
+	_, code, err := deployCLI(t, "--name", "s", "--platform", "android")
+	if err != nil || code != 0 {
+		t.Fatalf("deploy: code %d err %v", code, err)
+	}
+	if len(f.androidProvisions) != 1 {
+		t.Fatalf("android provisions = %d, want 1", len(f.androidProvisions))
+	}
+	in := f.androidProvisions[0]
+	if !strings.HasSuffix(in.APKSetPath, "app.apks") || in.APKPath != "" {
+		t.Fatalf("provision input APK %q, APK set %q; want only the APK set", in.APKPath, in.APKSetPath)
+	}
+	b := loadTestRecord(t, "s").Builds.Android
+	if b == nil || b.APKSetPath != in.APKSetPath || b.APKPath != "" {
+		t.Fatalf("builds.android = %+v, want apks_path %s", b, in.APKSetPath)
+	}
+	if isAndroidMarker(b) {
+		t.Fatal("a finished bundle build reads as a claim marker")
 	}
 }
