@@ -374,6 +374,39 @@ CLI flag  >  env var  >  simsquad.local.toml  >  simsquad.toml  >  built-in defa
 Environment variables: `SIMSQUAD_IOS_REPO`, `SIMSQUAD_ANDROID_REPO`,
 `SIMSQUAD_CACHE_DIR` (cache root; defaults to `~/.cache/simsquad`).
 
+### Android: APK or app bundle
+
+`[project].android_gradle_task` decides how the app is installed. Its
+project path names the module whose output simsquad picks up
+(`:mobile:assembleDebug` → the newest APK under `mobile/build/outputs/apk`;
+a task without one, like `assembleDebug`, means `app`).
+
+- **`assemble*`** (the default `:app:assembleDebug`) builds one APK,
+  installed with `adb install`.
+- **`bundle*`** (`:app:bundleDevDebug`) builds an app bundle. simsquad turns
+  it into an APK set once per deploy (`bundletool build-apks
+  --local-testing`) and installs that on every device with `bundletool
+  install-apks`. Use it for an app with dynamic feature modules: an
+  assemble build installs only the base APK, so feature screens fail to
+  open, and deploy warns about it. `--local-testing` lets on-demand
+  modules install without Google Play.
+
+A bundle task needs [bundletool](https://developer.android.com/tools/bundletool),
+which simsquad doesn't install: `brew install bundletool` (it runs on the
+Java that Gradle already needs). bundletool signs the APK set with the
+default debug keystore, `~/.android/debug.keystore` (alias
+`androiddebugkey`, password `android`). Gradle signs debug builds with
+that same keystore unless the project sets its own debug `signingConfig`.
+If it does, the bundle-installed app carries a different signature than
+a Gradle-installed one: installing one over the other fails on the
+signature, which a deploy without `--preserve-data` gets past by
+uninstalling and retrying once (the app's data goes with it), and anything tied to the project's debug certificate (a Google
+sign-in or Maps API key registered for its SHA-1) won't accept the
+bundle-installed app. Register the default keystore's SHA-1 too where that
+matters. When `~/.android/debug.keystore` doesn't exist (Gradle creates
+it only for a project on the default debug signing), the deploy fails
+and prints the `keytool` command that creates it.
+
 ## Project layouts
 
 simsquad has one root for everything it shares: the **config dir**, the
@@ -430,6 +463,8 @@ keep `derived/`.
 - **Never `2>&1`.** It merges stderr progress into the stdout JSON contract.
   Redirect stdout only (`simsquad deploy … > squad.json`), or use
   `--out squad.json`.
+- **Android build output is looked for under `<module>/build/`.** A
+  custom `buildDir` or `projectDir` in the Gradle settings isn't followed.
 - **Physical Android devices** are claimed by adb serial; simsquad never
   deletes a physical device, only uninstalls the app on teardown.
 

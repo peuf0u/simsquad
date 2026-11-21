@@ -21,9 +21,11 @@
 #   ios_repo     = "~/code/myapp-ios"
 #   android_repo = "~/code/myapp-android"
 
-# xcodebuild scheme (default "App") and Gradle assemble task
-# (default ":app:assembleDebug"). Override per-invocation with
-# --ios-scheme / --gradle-task.
+# xcodebuild scheme (default "App") and Gradle task (default
+# ":app:assembleDebug"). Override per-invocation with
+# --ios-scheme / --gradle-task. A bundle* task (":app:bundleDevDebug")
+# installs dynamic feature modules too and needs bundletool
+# (brew install bundletool); see the README.
 ios_scheme          = "MyApp"
 android_gradle_task = ":app:assembleDevDebug"
 

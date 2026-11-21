@@ -118,7 +118,7 @@ func RunEquipWizard(opts Options) (Result, error) {
 		return writeState(configDir, state, true)
 	}
 
-	if err := runProjectForm(&state); err != nil {
+	if err := runProjectForm(&state, configDir); err != nil {
 		return Result{}, err
 	}
 	if err := runIOSMatrix(&state); err != nil {
@@ -250,7 +250,7 @@ func defaults(cwd string) wizardState {
 		iosRepo:     iosRepo,
 		androidRepo: androidRepo,
 		iosScheme:   iosScheme,
-		gradleTask:  ":app:assembleDebug",
+		gradleTask:  defaultGradleTask(cwd, androidRepo),
 	}
 }
 
@@ -272,7 +272,7 @@ func promptPhysicalAndroidSpec() (contract.AndroidSpec, error) {
 	}, nil
 }
 
-func runProjectForm(state *wizardState) error {
+func runProjectForm(state *wizardState, configDir string) error {
 	return huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().
@@ -288,6 +288,7 @@ func runProjectForm(state *wizardState) error {
 				Value(&state.iosScheme),
 			huh.NewInput().
 				Title("Gradle task").
+				DescriptionFunc(func() string { return gradleTaskHint(configDir, state.androidRepo) }, &state.androidRepo).
 				Value(&state.gradleTask),
 		),
 	).WithInput(os.Stdin).WithOutput(os.Stderr).Run()

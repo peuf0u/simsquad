@@ -111,7 +111,7 @@ func newDeployCmd() *cobra.Command {
 	cmd.Flags().StringVar(&iosRepo, "ios-repo", "", "absolute path to the iOS project (overrides config/env)")
 	cmd.Flags().StringVar(&androidRepo, "android-repo", "", "absolute path to the Android project (overrides config/env)")
 	cmd.Flags().StringVar(&iosScheme, "ios-scheme", "", "xcodebuild scheme (overrides config; default 'App')")
-	cmd.Flags().StringVar(&gradleTask, "gradle-task", "", "Gradle assemble task (overrides config; default ':app:assembleDebug')")
+	cmd.Flags().StringVar(&gradleTask, "gradle-task", "", "Gradle task (overrides config; default ':app:assembleDebug'); a bundle* task installs dynamic feature modules via bundletool")
 	cmd.Flags().StringVar(&name, "name", "", "squad name (required)")
 	cmd.Flags().BoolVar(&forceBuild, "force-build", false, "always invoke xcodebuild/gradle even if outputs exist")
 	cmd.Flags().BoolVar(&noBuild, "no-build", false, "require an existing build artifact; never invoke xcodebuild/gradle")

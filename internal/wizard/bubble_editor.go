@@ -347,7 +347,8 @@ func (m editorModel) startAction(action editorAction) (tea.Model, tea.Cmd) {
 			{label: "iOS repo", value: m.state.iosRepo},
 			{label: "Android repo", value: m.state.androidRepo},
 			{label: "iOS scheme", value: m.state.iosScheme},
-			{label: "Gradle task", value: m.state.gradleTask},
+			{label: "Gradle task", value: m.state.gradleTask,
+				choices: gradleTaskChoices(m.configDir, m.state.androidRepo, m.state.gradleTask)},
 		}
 	case actionEditContext:
 		m.mode = editorFields

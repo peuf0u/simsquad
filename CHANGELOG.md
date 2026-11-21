@@ -105,6 +105,27 @@ All notable changes are recorded here. The format follows
 
 ### Fixed
 
+- **Apps with dynamic feature modules install whole with a `bundle*`
+  Gradle task.** The task now decides how the Android app is packaged.
+  With `android_gradle_task = ":app:bundleDevDebug"` (any `bundle*` task),
+  deploy takes the newest `.aab`, reads its application id with
+  `bundletool dump manifest`, builds one APK set per deploy
+  (`bundletool build-apks --local-testing`, signed with
+  `~/.android/debug.keystore`) and installs it on every device with
+  `bundletool install-apks`, so `pm path` lists the base APK plus a split
+  per feature module. Data is cleared unless `--preserve-data`, and a
+  failed install is retried once after an uninstall, as for an APK. The
+  set's path is recorded as `builds.android.apks_path` (additive,
+  omitempty) in place of `apk_path`. bundletool isn't a Homebrew
+  dependency: a `bundle*` task without it, or without a debug keystore,
+  fails the Android build with the fix (exit `1`). An `assemble*` task
+  works as before, and now warns on stderr, without changing the device
+  status or exit code, when a module applies `com.android.dynamic-feature`:
+  only the base APK is installed, so the app fails to open feature
+  screens. The build output is now looked for under the task's module
+  (`:mobile:assembleDebug` → `mobile/build/outputs/apk`) rather than
+  always `app/`. `equip` proposes the bundle task for a repo with dynamic
+  feature modules.
 - **Dismissed squads no longer leave an AVD folder behind.** Android
   teardown (`dismiss`, `sweep`, a failed `deploy`) now waits up to 15s for
   the emulator to exit before deleting its AVD; an emulator still shutting
