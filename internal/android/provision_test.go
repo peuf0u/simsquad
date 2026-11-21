@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+
+	"github.com/peuf0u/simsquad/internal/contract"
 )
 
 // Headless boots keep today's arguments exactly; a windowed boot drops
@@ -97,5 +99,43 @@ func TestAVDConfigPath(t *testing.T) {
 	want := filepath.Join(home, "simsquad-x-android-0.avd", "config.ini")
 	if got != want {
 		t.Fatalf("avdConfigPath = %s, want %s", got, want)
+	}
+}
+
+// A reused emulator is restarted only to gain a window: --window never
+// leaves a reachable headless emulator as it is, and a deploy without it
+// never touches a running one (issue #33).
+func TestReuseBootDecision(t *testing.T) {
+	t.Parallel()
+
+	headless := contract.Device{UDID: "emulator-5556"}
+	windowed := contract.Device{UDID: "emulator-5556", Window: true}
+	physical := contract.Device{UDID: "R58M", Physical: true}
+	cases := []struct {
+		name      string
+		dev       contract.Device
+		reachable bool
+		window    bool
+		want      reuseBoot
+	}{
+		{"window, running headless", headless, true, true, reuseRestartWindowed},
+		{"window, running windowed", windowed, true, true, reuseKeep},
+		{"window, unreachable", headless, false, true, reuseBootWindowed},
+		{"window, unreachable, recorded windowed", windowed, false, true, reuseBootWindowed},
+		{"no window, running windowed", windowed, true, false, reuseKeep},
+		{"no window, running headless", headless, true, false, reuseKeep},
+		{"no window, unreachable", headless, false, false, reuseBootHeadless},
+		{"no window, unreachable, recorded windowed", windowed, false, false, reuseBootHeadless},
+		{"physical, window", physical, true, true, reuseKeep},
+		{"physical, unreachable", physical, false, true, reusePhysicalUnreachable},
+		{"physical, unreachable, no window", physical, false, false, reusePhysicalUnreachable},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := reuseBootDecision(c.dev, c.reachable, c.window); got != c.want {
+				t.Fatalf("reuseBootDecision = %v, want %v", got, c.want)
+			}
+		})
 	}
 }

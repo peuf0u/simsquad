@@ -77,6 +77,10 @@ type Device struct {
 	SystemImage   string `json:"system_image,omitempty"`
 	Physical      bool   `json:"physical,omitempty"`
 	EmulatorPID   int    `json:"emulator_pid,omitempty"`
+	// Window records that the emulator was booted with a window (deploy
+	// --window). Reuse restarts a headless emulator to gain one, but never
+	// restarts a windowed one to drop it.
+	Window bool `json:"window,omitempty"`
 }
 
 // IosBuild is the iOS half of Builds. Either the success fields are populated

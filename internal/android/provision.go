@@ -23,13 +23,14 @@ const (
 	// Python reference and the empirical worst case on a cold M-series Mac.
 	androidBootTimeout      = 180 * time.Second
 	androidBootPollInterval = 3 * time.Second
-
-	// emulatorSettleAfterBoot is the grace window between "boot poll passes"
-	// and "ready to install" — the system_server fully settling after
-	// sys.boot_completed flips. install starts immediately after, but adb
-	// install occasionally races against pm if we move zero-wait.
-	emulatorSettleAfterBoot = 2 * time.Second
 )
+
+// emulatorSettleAfterBoot is the grace window between "boot poll passes"
+// and "ready to install" — the system_server fully settling after
+// sys.boot_completed flips. install starts immediately after, but adb
+// install occasionally races against pm if we move zero-wait. A variable so
+// tests with a fake SDK skip the wait.
+var emulatorSettleAfterBoot = 2 * time.Second
 
 // dottedAPIRx matches API levels with a `.N` suffix — `android-36.1`,
 // `android-34.0`. Older cmdline-tools reject these images ("Package path is
@@ -47,7 +48,10 @@ type ProvisionInput struct {
 	BundleID        string
 	ExistingDevices []contract.Device
 	PreserveData    bool
-	Logger          *progress.Logger
+	// Window boots emulators with a window and the hardware keyboard on
+	// (deploy --window), restarting a reused headless one to get it.
+	Window bool
+	Logger *progress.Logger
 }
 
 // ProvisionResult bundles per-slot devices with the port reservations made
@@ -96,6 +100,7 @@ func Provision(in ProvisionInput) ProvisionResult {
 			Specs:    emuSpecs,
 			APKPath:  in.APKPath,
 			BundleID: in.BundleID,
+			Window:   in.Window,
 			Logger:   in.Logger,
 		})
 		res.Devices = append(res.Devices, emuDevices...)
@@ -134,6 +139,55 @@ func reprovisionExisting(in ProvisionInput) []contract.Device {
 	return devices
 }
 
+// reuseBoot is what reuse does with an existing device before installing.
+type reuseBoot int
+
+const (
+	reuseKeep                reuseBoot = iota // reachable: install on it as it runs
+	reuseBootHeadless                         // unreachable emulator: boot it headless
+	reuseBootWindowed                         // unreachable emulator: boot it with a window
+	reuseRestartWindowed                      // running headless, --window: restart it windowed
+	reusePhysicalUnreachable                  // a physical device simsquad can't boot
+)
+
+func (b reuseBoot) String() string {
+	switch b {
+	case reuseKeep:
+		return "keep"
+	case reuseBootHeadless:
+		return "boot-headless"
+	case reuseBootWindowed:
+		return "boot-windowed"
+	case reuseRestartWindowed:
+		return "restart-windowed"
+	case reusePhysicalUnreachable:
+		return "physical-unreachable"
+	}
+	return "reuseBoot(" + strconv.Itoa(int(b)) + ")"
+}
+
+// reuseBootDecision picks how reuse treats dev. The window switch is one
+// way on purpose (issue #33): --window restarts a running headless emulator
+// so the dev squad gains a window, while a deploy without it leaves a
+// running windowed emulator alone. An emulator that has to be booted anyway
+// gets the mode this deploy asked for.
+func reuseBootDecision(dev contract.Device, reachable, window bool) reuseBoot {
+	switch {
+	case dev.Physical && !reachable:
+		return reusePhysicalUnreachable
+	case dev.Physical:
+		return reuseKeep
+	case reachable && window && !dev.Window:
+		return reuseRestartWindowed
+	case reachable:
+		return reuseKeep
+	case window:
+		return reuseBootWindowed
+	default:
+		return reuseBootHeadless
+	}
+}
+
 func reprovisionExistingOne(existing contract.Device, in ProvisionInput) contract.Device {
 	dev := existing
 	dev.BundleID = in.BundleID
@@ -143,35 +197,29 @@ func reprovisionExistingOne(existing contract.Device, in ProvisionInput) contrac
 		dev.ErrorMessage = "reuse: no udid in reuse"
 		return dev
 	}
-	if !adbShellTrue(dev.UDID) {
-		if dev.Physical {
-			dev.ErrorMessage = "reuse-boot: physical device is not reachable"
-			return dev
-		}
-		port, err := emulatorPort(dev)
-		if err != nil {
+	switch reuseBootDecision(dev, adbShellTrue(dev.UDID), in.Window) {
+	case reusePhysicalUnreachable:
+		dev.ErrorMessage = "reuse-boot: physical device is not reachable"
+		return dev
+	case reuseBootHeadless:
+		if err := bootReused(&dev, false, in.Logger); err != nil {
 			dev.ErrorMessage = "reuse-boot: " + err.Error()
 			return dev
 		}
-		avd := dev.AVDName
-		if avd == "" {
-			avd = dev.Name
-		}
-		if !avdExists(avd) {
-			dev.ErrorMessage = "reuse-boot: AVD " + avd + " does not exist"
-			return dev
-		}
-		cmd, err := emulatorStart(avd, port, false, false)
-		if err != nil {
+	case reuseBootWindowed:
+		if err := bootReused(&dev, true, in.Logger); err != nil {
 			dev.ErrorMessage = "reuse-boot: " + err.Error()
 			return dev
 		}
-		if err := waitForBoot(dev.UDID); err != nil {
-			killEmulatorProcess(cmd)
-			dev.ErrorMessage = "reuse-boot: " + err.Error()
+	case reuseRestartWindowed:
+		if err := stopEmulator(dev); err != nil {
+			dev.ErrorMessage = "reuse-restart: " + err.Error()
 			return dev
 		}
-		dev.EmulatorPID = cmd.Process.Pid
+		if err := bootReused(&dev, true, in.Logger); err != nil {
+			dev.ErrorMessage = "reuse-restart: " + err.Error()
+			return dev
+		}
 	}
 	if in.PreserveData {
 		if err := installOnly(dev.UDID, in.APKPath); err != nil {
@@ -184,6 +232,68 @@ func reprovisionExistingOne(existing contract.Device, in ProvisionInput) contrac
 	}
 	dev.Status = contract.StatusReady
 	return dev
+}
+
+// bootReused boots an existing emulator's AVD on its recorded port, without
+// wiping it, in the requested mode, and records the new process and mode on
+// dev. A windowed boot turns the hardware keyboard on first. On a boot
+// timeout the captured process is killed (landmine 5) so no qemu is left
+// running.
+func bootReused(dev *contract.Device, window bool, logger *progress.Logger) error {
+	port, err := emulatorPort(*dev)
+	if err != nil {
+		return err
+	}
+	avd := dev.AVDName
+	if avd == "" {
+		avd = dev.Name
+	}
+	if !avdExists(avd) {
+		return fmt.Errorf("AVD %s does not exist", avd)
+	}
+	if window {
+		turnOnHWKeyboard(avd, logger)
+	}
+	cmd, err := emulatorStart(avd, port, window, false)
+	if err != nil {
+		return err
+	}
+	if err := waitForBoot(dev.UDID); err != nil {
+		killEmulatorProcess(cmd)
+		return err
+	}
+	time.Sleep(emulatorSettleAfterBoot)
+	dev.EmulatorPID = cmd.Process.Pid
+	dev.Window = window
+	return nil
+}
+
+// stopEmulator asks a running emulator to exit and waits until it has, so
+// the windowed boot that follows can take its port.
+func stopEmulator(dev contract.Device) error {
+	adb, err := ADB()
+	if err != nil {
+		return err
+	}
+	_ = killEmulatorADB(dev.UDID)
+	if !WaitGone(EmulatorGoneProbe(dev, adb), EmulatorExitTimeout, EmulatorExitPoll) {
+		return fmt.Errorf("emulator %s did not exit within %s", dev.UDID, EmulatorExitTimeout)
+	}
+	return nil
+}
+
+// turnOnHWKeyboard sets hw.keyboard=yes on avd before a windowed boot. A
+// failure only costs typing from the Mac keyboard, so it warns and the boot
+// goes on.
+func turnOnHWKeyboard(avd string, logger *progress.Logger) {
+	path, err := avdConfigPath(avd)
+	if err == nil {
+		err = enableHWKeyboard(path)
+	}
+	if err != nil && logger != nil {
+		logger.Warn("android-provision: hw-keyboard",
+			progress.F("name", avd), progress.F("error", err.Error()))
+	}
 }
 
 // preflightAPIWarn surfaces Landmine #4: when every installed system image has
@@ -227,6 +337,7 @@ type emulatorContext struct {
 	Specs    []contract.AndroidSpec
 	APKPath  string
 	BundleID string
+	Window   bool
 	Logger   *progress.Logger
 }
 
@@ -328,6 +439,9 @@ func provisionEmulatorSlot(s emulatorSlot, ctx emulatorContext) contract.Device 
 		dev.ErrorMessage = "avd-create: " + err.Error()
 		return dev
 	}
+	if ctx.Window {
+		turnOnHWKeyboard(s.name, ctx.Logger)
+	}
 
 	var lastErr error
 	bootAttempts := []struct {
@@ -335,7 +449,7 @@ func provisionEmulatorSlot(s emulatorSlot, ctx emulatorContext) contract.Device 
 		wipe bool
 	}{{1, false}, {2, true}}
 	for _, a := range bootAttempts {
-		cmd, err := emulatorStart(s.name, s.port, false, a.wipe)
+		cmd, err := emulatorStart(s.name, s.port, ctx.Window, a.wipe)
 		if err != nil {
 			lastErr = err
 			if ctx.Logger != nil {
@@ -362,6 +476,7 @@ func provisionEmulatorSlot(s emulatorSlot, ctx emulatorContext) contract.Device 
 		}
 		// Booted. Record the PID so dismiss can SIGTERM if needed later.
 		dev.EmulatorPID = cmd.Process.Pid
+		dev.Window = ctx.Window
 		lastErr = nil
 		break
 	}
