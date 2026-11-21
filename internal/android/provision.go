@@ -29,9 +29,33 @@ const (
 // emulatorSettleAfterBoot is the grace window between "boot poll passes"
 // and "ready to install" — the system_server fully settling after
 // sys.boot_completed flips. install starts immediately after, but adb
-// install occasionally races against pm if we move zero-wait. A variable so
-// tests with a fake SDK skip the wait.
+// install occasionally races against pm if we move zero-wait.
+//
+// The emulator a boot started must stay alive through the whole window
+// (startedEmulatorSettles): one that can't lock its AVD, because another
+// instance of it holds it, exits a moment after start, while the boot poll
+// passes at once against that other instance. A single check right after
+// the poll can come before that exit. A variable so fake-SDK tests set a
+// short window.
 var emulatorSettleAfterBoot = 2 * time.Second
+
+const settleAlivePoll = 100 * time.Millisecond
+
+// startedEmulatorSettles waits out emulatorSettleAfterBoot and reports
+// whether pid stayed avd's emulator on port throughout; it returns false as
+// soon as it isn't.
+func startedEmulatorSettles(pid int, avd string, port int) bool {
+	deadline := time.Now().Add(emulatorSettleAfterBoot)
+	for {
+		if !squadEmulatorPIDAlive(pid, avd, port) {
+			return false
+		}
+		if !time.Now().Before(deadline) {
+			return true
+		}
+		time.Sleep(min(settleAlivePoll, time.Until(deadline)))
+	}
+}
 
 // dottedAPIRx matches API levels with a `.N` suffix — `android-36.1`,
 // `android-34.0`. Older cmdline-tools reject these images ("Package path is
@@ -287,14 +311,14 @@ func bootReused(dev *contract.Device, window bool, logger *progress.Logger) erro
 		killEmulatorProcess(cmd)
 		return err
 	}
-	// An emulator that can't lock its AVD exits at once, and the boot poll
-	// then passes against whatever instance still answers on the port.
-	// Recording that boot would store a dead PID and a mode that isn't so.
-	if !squadEmulatorPIDAlive(cmd.Process.Pid, avd, port) {
+	// An emulator that can't lock its AVD exits a moment after start, and
+	// the boot poll then passes against whatever instance still answers on
+	// the port. Recording that boot would store a dead PID and a mode that
+	// isn't so. The settle doubles as the window it must stay alive in.
+	if !startedEmulatorSettles(cmd.Process.Pid, avd, port) {
 		killEmulatorProcess(cmd)
 		return fmt.Errorf("the emulator started for %s exited during boot; another instance of it may still be running", avd)
 	}
-	time.Sleep(emulatorSettleAfterBoot)
 	dev.EmulatorPID = cmd.Process.Pid
 	dev.Window = window
 	return nil
@@ -660,8 +684,7 @@ func provisionEmulatorSlot(s emulatorSlot, ctx emulatorContext) contract.Device 
 		return dev
 	}
 
-	time.Sleep(emulatorSettleAfterBoot)
-
+	// verifyStartedEmulator already waited out the settle.
 	if err := installAndClear(serial, appPackage{apk: ctx.APKPath, apkSet: ctx.APKSetPath}, ctx.BundleID); err != nil {
 		dev.ErrorMessage = "install: " + err.Error()
 		return dev
@@ -672,8 +695,9 @@ func provisionEmulatorSlot(s emulatorSlot, ctx emulatorContext) contract.Device 
 }
 
 // verifyStartedEmulator checks that the emulator answering on serial after
-// a fresh boot is the one cmd started: cmd is still alive as avd's emulator
-// on port, and the emulator on serial doesn't run another AVD. A name query
+// a fresh boot is the one cmd started: cmd stays alive as avd's emulator on
+// port through the settle (startedEmulatorSettles), and the emulator on
+// serial doesn't run another AVD. A name query
 // that fails (the console can miss one under a wide parallel matrix) is no
 // reason to reject a boot whose process is provably ours on our port. The
 // caller kills cmd on an error; it never touches the emulator that answered.
@@ -682,7 +706,7 @@ func verifyStartedEmulator(cmd *exec.Cmd, serial, avd string, port int) error {
 	if nameErr == nil && running != avd {
 		return fmt.Errorf("port %d is held by another emulator (%s), not %s", port, running, avd)
 	}
-	if !squadEmulatorPIDAlive(cmd.Process.Pid, avd, port) {
+	if !startedEmulatorSettles(cmd.Process.Pid, avd, port) {
 		if nameErr != nil {
 			return fmt.Errorf("the emulator started for %s exited during boot, and the AVD name of the emulator on port %d could not be read (%s)",
 				avd, port, nameErr.Error())

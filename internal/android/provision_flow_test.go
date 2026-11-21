@@ -31,8 +31,13 @@ const flowAVD = "simsquad-x-android-0"
 //   - noname: `adb emu avd name` fails although the emulator runs; every
 //     query appends a line to namecalls.
 //   - noname1: as noname, for the first query only (the marker goes with it).
-//   - noboot: a started emulator never comes up and wait-for-device fails.
-//   - exitearly: a started emulator exits at once (its AVD is locked).
+//   - noboot: a started emulator never comes up and wait-for-device fails,
+//     once that emulator has started (it writes bootstarted after logging),
+//     so the kill that follows never comes before its log line.
+//   - exitearly: a started emulator can't lock its AVD (another instance
+//     holds it): it writes exited, then exits fakeExitDelay later, as a
+//     real one exits a moment after start. wait-for-device answers once
+//     exited is there, so the boot poll passes while it still runs.
 //   - nokill: `adb emu kill` is logged but the emulator keeps running, as
 //     one still booting may not honour it.
 //   - ignoreterm: an emulator started while it exists ignores SIGTERM.
@@ -43,6 +48,15 @@ type fakeSDK struct {
 }
 
 const fakeEmulatorEnv = "SIMSQUAD_FAKE_EMULATOR_DIR"
+
+// fakeExitDelay is how long an exitearly fake emulator outlives the boot
+// poll; fakeSettle, the settle window the fake SDK sets, is well above it,
+// so the started emulator has always exited inside the window and the
+// outcome doesn't hang on the scheduler.
+const (
+	fakeExitDelay = 200 * time.Millisecond
+	fakeSettle    = 1500 * time.Millisecond
+)
 
 // TestMain lets the test binary stand in for the emulator: linked to
 // <sdk>/emulator/emulator and started with the fake's state dir in the
@@ -73,10 +87,13 @@ func runFakeEmulator(dir string) {
 	}
 	if exists("exitearly") {
 		_ = os.WriteFile(filepath.Join(dir, "exited"), nil, 0o644)
+		time.Sleep(fakeExitDelay)
 		return
 	}
 	noboot := exists("noboot")
-	if !noboot {
+	if noboot {
+		_ = os.WriteFile(filepath.Join(dir, "bootstarted"), nil, 0o644)
+	} else {
 		_ = os.WriteFile(filepath.Join(dir, "up"), nil, 0o644)
 	}
 	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); {
@@ -96,7 +113,7 @@ func newFakeSDK(t *testing.T, running bool, config string) fakeSDK {
 	t.Setenv("PATH", t.TempDir()+":/bin:/usr/bin")
 	oldSettle, oldRetry := emulatorSettleAfterBoot, avdNameRetryDelay
 	t.Cleanup(func() { emulatorSettleAfterBoot, avdNameRetryDelay = oldSettle, oldRetry })
-	emulatorSettleAfterBoot, avdNameRetryDelay = 0, 0
+	emulatorSettleAfterBoot, avdNameRetryDelay = fakeSettle, 0
 
 	dir := t.TempDir()
 	t.Setenv(fakeEmulatorEnv, dir)
@@ -133,11 +150,14 @@ case "$*" in
     name=`+flowAVD+`; [ -e $d/avdname ] && name=$(cat $d/avdname)
     printf '%s\r\nOK\r\n' "$name" ;;
   wait-for-device)
-    [ -e $d/noboot ] && exit 1
+    if [ -e $d/noboot ]; then
+      n=0; while [ ! -e $d/bootstarted ] && [ $n -lt 200 ]; do sleep 0.05; n=$((n+1)); done
+      rm -f $d/bootstarted; exit 1
+    fi
     if [ -e $d/exitearly ]; then
-      # Answer only once the started emulator has exited, as the old
-      # instance that still holds the AVD would.
-      n=0; while [ ! -e $d/exited ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done; sleep 0.3
+      # Answer once the started emulator has failed to lock its AVD,
+      # while it is still exiting, as the instance holding the AVD would.
+      n=0; while [ ! -e $d/exited ] && [ $n -lt 100 ]; do sleep 0.05; n=$((n+1)); done
     fi
     n=0; while [ ! -e $d/up ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done; [ -e $d/up ] ;;
   "shell getprop sys.boot_completed") [ -e $d/up ] && echo 1 ;;
