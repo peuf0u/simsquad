@@ -43,6 +43,14 @@ All notable changes are recorded here. The format follows
   `1`. The `simsquad-test`
   skill deploys only the run's `platforms`. Skill contract 4; rerun
   `simsquad skill install` to update the installed skills.
+- **`run.json` records where the app notes are.** `run new` writes
+  `app_notes`, the absolute path of `qa/README.md` in the config dir, into
+  `run.json` and its stdout (additive, omitted when the file doesn't
+  exist). The `simsquad-test` worker reads the app notes from there, or
+  notes that there are none, instead of guessing which repo holds them.
+- **README "Project layouts"** says where the config, skills, `qa/` and
+  run folders live in a single repo, an umbrella workspace repo and split
+  repos with a home repo.
 
 ### Changed
 
@@ -54,6 +62,16 @@ All notable changes are recorded here. The format follows
   bypasses the check. A `run.json` written before `platforms` existed
   counts as using every platform. The `simsquad-test` skill says so in
   step 4.
+- **One root for skills, runs and app notes: the config dir.** `skill
+  install` and `skill status` now act on the folder holding
+  `simsquad.toml` (as `run new` does), not the git toplevel, so a config in
+  a monorepo subfolder gets its skills beside it; so do the skills `equip`
+  offers to install. Without config, `skill install` exits `1` with "run
+  `simsquad equip` first", and `skill status` reports not installed with
+  that hint (exit `0`). `equip` (when it creates the config) and `skill
+  install` warn once on stderr when the config dir isn't inside a git work
+  tree. The `simsquad-test` skill lists other unfinished runs from the run
+  folder's parent, whatever folder the agent is in.
 
 ### Fixed
 

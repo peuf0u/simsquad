@@ -247,8 +247,9 @@ mobilecli's on-device agent over the network, which Codex's default
 "danger-full-access"` in `~/.codex/config.toml`); the skill starts its
 workers with `codex exec --sandbox danger-full-access`.
 
-## Known gaps
+## Project layouts
 
-- Projects whose iOS and Android apps live in separate repos have no
-  documented home for the config, skills and app notes
-  ([#22](https://github.com/peuf0u/simsquad/issues/22)).
+The config dir (the folder holding `simsquad.toml`) is the one root for the
+skills, the app notes (`qa/`) and the run folders. For where it goes when
+the iOS and Android apps live in one repo, an umbrella folder or separate
+repos, see [Project layouts](../README.md#project-layouts) in the README.

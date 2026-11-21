@@ -165,7 +165,12 @@ feature on a squad).
 | `skill install` | Write both skills into the app repo; emit `{dir, version, contract, files}` | `--dir`, `--force` |
 | `skill status` | Check the installed skills and `mobilecli` fit this binary | `--dir` |
 
-Run it from the app repo (the enclosing git work tree is the root):
+Run it from the app repo. The skills go beside the config: in the **config
+dir**, the nearest folder up from where you run it that holds
+`simsquad.toml` (or `simsquad.local.toml`), the same folder `run new` puts
+its runs under (see [Project layouts](#project-layouts)). Without config,
+install refuses: run `simsquad equip` first. A config dir outside a git
+work tree gets a warning on stderr, since nothing there is shared:
 
 ```sh
 simsquad skill install > skill-install.json
@@ -222,7 +227,8 @@ simsquad skill status > skill-status.json
 
 - Same skill contract as the binary: `in_sync: true`, exit `0`.
 - Older skills, or none installed: exit `0` with a `warning` telling you to
-  re-run `simsquad skill install`.
+  re-run `simsquad skill install`. No config: exit `0`, not installed, with
+  a `warning` to run `simsquad equip` first.
 - Newer skills: exit `1`, so a skill never calls commands this simsquad
   doesn't have. Upgrade simsquad.
 - `mobilecli` is looked up on `PATH` and its version compared with the
@@ -249,7 +255,7 @@ Gherkin feature file and sets up a test run:
 
 ```sh
 simsquad run new qa/features/login.feature > run-new.json
-# {"run_id", "run_dir", "squad_name", "fresh", "platforms", "deadline_seconds", "worker_model"}
+# {"run_id", "run_dir", "squad_name", "fresh", "platforms", "deadline_seconds", "worker_model", "app_notes"?}
 ```
 
 - Background steps are prepended to every scenario, Scenario Outlines expand
@@ -265,9 +271,13 @@ simsquad run new qa/features/login.feature > run-new.json
   is written.
 - Deadline per worker: `120 + Σ(60 + 30 × steps)` over the scenarios of the
   busiest platform, `+ 600` when it has an exploration.
-- Creates `.simsquad/runs/<run-id>/` with `feature.feature` (a copy) and
-  `run.json` (title, source, squad, platforms, deadline, worker model and
-  the expanded scenarios).
+- Creates `.simsquad/runs/<run-id>/` in the config dir with
+  `feature.feature` (a copy) and `run.json` (title, source, squad,
+  platforms, deadline, worker model, `app_notes` and the expanded
+  scenarios).
+- `app_notes` is the absolute path of `qa/README.md` in the config dir, so
+  workers read the app notes without guessing which repo holds them. It is
+  omitted, in `run.json` and on stdout, when that file doesn't exist.
 
 ### `run worker` — run a headless worker
 
@@ -356,6 +366,39 @@ CLI flag  >  env var  >  simsquad.local.toml  >  simsquad.toml  >  built-in defa
 
 Environment variables: `SIMSQUAD_IOS_REPO`, `SIMSQUAD_ANDROID_REPO`,
 `SIMSQUAD_CACHE_DIR` (cache root; defaults to `~/.cache/simsquad`).
+
+## Project layouts
+
+simsquad has one root for everything it shares: the **config dir**, the
+folder holding `simsquad.toml`. `skill install` writes the skills there,
+`run new` puts run folders under its `.simsquad/runs/`, and workers read
+the app notes from its `qa/README.md`. Commit the config dir so colleagues
+get the config, skills, app notes and saved feature files when they clone;
+`equip` and `skill install` warn when it isn't inside a git work tree.
+
+| | Single repo | Umbrella workspace repo | Split repos (home repo) |
+|---|---|---|---|
+| Config (`simsquad.toml`) | the repo root, or the app's subfolder (`mobile/`) | the umbrella folder | the home repo |
+| Skills (`.agents/`, `.claude/`, `.codex/`) | beside the config | the umbrella folder | the home repo |
+| App notes and feature files (`qa/`) | beside the config | the umbrella folder | the home repo |
+| Run folders (`.simsquad/runs/`, gitignored) | beside the config | the umbrella folder | the home repo |
+| App repo paths | `ios_repo = "."` (or a relative path) in `simsquad.toml` | relative paths (`ios`, `android`) in `simsquad.toml` | `"."` for the home repo in `simsquad.toml`; the other repo's path in `simsquad.local.toml` |
+
+- **Single repo.** iOS and Android (or one of them) live in one repo.
+  Everything sits in the config dir: the repo root, or the subfolder that
+  holds the mobile apps in a monorepo. Run simsquad from that folder or
+  below it.
+- **Umbrella workspace repo.** The apps live in separate repos checked out
+  side by side in one folder (`myapp/ios/`, `myapp/android/`). Make the
+  umbrella folder a small workspace repo of its own (`git init` there) and
+  list the app repo folders in its `.gitignore`, so it tracks only the
+  config, skills and `qa/`. Run simsquad from the umbrella folder.
+- **Split repos with no shared parent.** The apps live in separate repos
+  checked out wherever each developer likes. Pick one app repo as the
+  **home repo** and run `simsquad equip` there: the config, skills and `qa/`
+  live in it, and each developer points at their checkout of the other
+  repo with an absolute path in `simsquad.local.toml`. Run simsquad from
+  the home repo.
 
 ## State
 
