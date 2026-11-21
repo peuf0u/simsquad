@@ -407,3 +407,56 @@ func TestRunNewRequiresExactlyOneArg(t *testing.T) {
 		t.Fatal("usage errors are plain errors, not ExitError")
 	}
 }
+
+// runNewRaw runs `simsquad run new <args>` and returns its raw stdout.
+func runNewRaw(t *testing.T, args ...string) string {
+	t.Helper()
+	root := NewRootCmd()
+	out := &bytes.Buffer{}
+	root.SetOut(out)
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs(append([]string{"run", "new"}, args...))
+	if err := root.Execute(); err != nil {
+		t.Fatalf("run new %v: %v", args, err)
+	}
+	return out.String()
+}
+
+// TestRunNewAppNotes: the app notes path is handed to the workers through
+// run.json (and echoed on stdout) so they never guess which repo holds
+// qa/README.md; it is the config dir's, run from anywhere below it.
+func TestRunNewAppNotes(t *testing.T) {
+	t.Run("present", func(t *testing.T) {
+		repo := newEquippedRepo(t, "MyApp", equipIOSOnly)
+		writeTestFile(t, filepath.Join(repo, "qa", "README.md"), "# App notes\n")
+		writeTestFile(t, filepath.Join(repo, "qa", "features", "login.feature"), loginFeature)
+		t.Chdir(filepath.Join(repo, "qa", "features"))
+
+		got := mustRunNew(t, "login.feature")
+
+		want := filepath.Join(repo, "qa", "README.md")
+		if got.AppNotes != want {
+			t.Errorf("stdout app_notes = %q, want %q", got.AppNotes, want)
+		}
+		if rec := readRunRecord(t, got.RunDir); rec.AppNotes != want {
+			t.Errorf("run.json app_notes = %q, want %q", rec.AppNotes, want)
+		}
+	})
+	t.Run("absent", func(t *testing.T) {
+		repo := newEquippedRepo(t, "MyApp", equipIOSOnly)
+		writeTestFile(t, filepath.Join(repo, "login.feature"), loginFeature)
+
+		raw := runNewRaw(t, "login.feature")
+
+		if strings.Contains(raw, "app_notes") {
+			t.Errorf("stdout has app_notes without qa/README.md:\n%s", raw)
+		}
+		var got contract.RunNewOutput
+		if err := json.Unmarshal([]byte(raw), &got); err != nil {
+			t.Fatal(err)
+		}
+		if rec := readFile(t, filepath.Join(got.RunDir, "run.json")); strings.Contains(rec, "app_notes") {
+			t.Errorf("run.json has app_notes without qa/README.md:\n%s", rec)
+		}
+	})
+}

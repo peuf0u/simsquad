@@ -33,6 +33,7 @@ func newRunNewCmd() *cobra.Command {
 				Platforms:       rec.Platforms,
 				DeadlineSeconds: rec.DeadlineSeconds,
 				WorkerModel:     rec.WorkerModel,
+				AppNotes:        rec.AppNotes,
 			})
 		},
 	}

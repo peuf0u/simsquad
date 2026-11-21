@@ -36,8 +36,11 @@ a valid partial result.
    `name`, `steps` and `platforms`) and, when present, `exploration` (its
    `charter`, and its `platforms`). Skip every scenario whose `platforms`
    leaves out your device's platform.
-2. `qa/README.md` in the app repo: the **app notes**, with the app's
-   navigation tricks, test accounts and known quirks.
+2. The file at `run.json`'s `app_notes` (an absolute path to the
+   project's `qa/README.md`): the **app notes**, with the app's navigation
+   tricks, test accounts and known quirks. When `run.json` has no
+   `app_notes`, the project has no app notes: say so in `log.md` and go on
+   without them.
 3. Your device row's `context`: the test context (persona, API stage,
    credentials). Use these values to log in and reach the feature.
 

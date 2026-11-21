@@ -21,6 +21,7 @@ import (
 	"github.com/peuf0u/simsquad/internal/config"
 	"github.com/peuf0u/simsquad/internal/contract"
 	"github.com/peuf0u/simsquad/internal/feature"
+	"github.com/peuf0u/simsquad/internal/skills"
 	"github.com/peuf0u/simsquad/internal/util"
 )
 
@@ -78,6 +79,7 @@ func New(opts Options) (contract.RunRecord, string, error) {
 		Source:       feat.Source,
 		Fresh:        opts.Fresh,
 		WorkerModel:  cfg.AgentWorkerModel(),
+		AppNotes:     appNotes(configDir),
 		Scenarios:    []contract.RunScenario{},
 	}
 	for _, s := range feat.Scenarios {
@@ -128,6 +130,16 @@ func New(opts Options) (contract.RunRecord, string, error) {
 		return contract.RunRecord{}, "", err
 	}
 	return rec, runDir, nil
+}
+
+// appNotes is the absolute path of the config dir's app notes, or "" when
+// the file doesn't exist. configDir is absolute (FindConfigDir).
+func appNotes(configDir string) string {
+	p := filepath.Join(configDir, filepath.FromSlash(skills.AppNotesFile))
+	if fi, err := os.Stat(p); err != nil || fi.IsDir() {
+		return ""
+	}
+	return p
 }
 
 func equippedPlatforms(cfg *config.Config) []string {

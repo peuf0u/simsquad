@@ -433,3 +433,24 @@ func TestTestSkillNeverDeploysWithAWindow(t *testing.T) {
 		}
 	}
 }
+
+// Dry run 002: in an umbrella layout a worker looked for qa/README.md in
+// the iOS repo and found no app notes. run.json carries their absolute path
+// (issue #22), so the worker reads it from there instead of inferring it.
+func TestWorkerReadsAppNotesFromRunJSON(t *testing.T) {
+	_, worker := installedTestSkill(t)
+	m := regexp.MustCompile(`(?s)## Read first\n(.*?)\n## `).FindStringSubmatch(worker)
+	if m == nil {
+		t.Fatal("worker prompt has no `## Read first` section")
+	}
+	m[1] = strings.Join(strings.Fields(m[1]), " ")
+	if !strings.Contains(m[1], "`app_notes`") {
+		t.Error("Read first does not take the app notes from run.json's `app_notes`")
+	}
+	if !strings.Contains(m[1], "no `app_notes`") {
+		t.Error("Read first does not say what to do when run.json has no `app_notes`")
+	}
+	if strings.Contains(m[1], "in the app repo") {
+		t.Error("Read first still has the worker infer the app notes location")
+	}
+}

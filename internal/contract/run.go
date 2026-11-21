@@ -22,6 +22,8 @@ type RunNewOutput struct {
 	Platforms       []string `json:"platforms"`
 	DeadlineSeconds int      `json:"deadline_seconds"`
 	WorkerModel     string   `json:"worker_model"`
+	// AppNotes is RunRecord.AppNotes, echoed for the orchestrator.
+	AppNotes string `json:"app_notes,omitempty"`
 }
 
 // RunRecord is run.json: everything `run new` decided about a test run, so
@@ -41,6 +43,10 @@ type RunRecord struct {
 	Platforms       []string `json:"platforms"`
 	DeadlineSeconds int      `json:"deadline_seconds"`
 	WorkerModel     string   `json:"worker_model"`
+	// AppNotes is the absolute path of the app notes (qa/README.md at the
+	// config dir), so workers read them without guessing which repo holds
+	// them; omitted when the file doesn't exist.
+	AppNotes string `json:"app_notes,omitempty"`
 	// Scenarios are the scripted scenarios in file order, with Background
 	// steps prepended and Scenario Outlines expanded one per Examples row.
 	Scenarios []RunScenario `json:"scenarios"`
