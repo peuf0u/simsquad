@@ -148,9 +148,9 @@ All notable changes are recorded here. The format follows
   installed the build on whatever answered on the port, and teardown
   killed it.
 - **Reuse stops the squad's own emulator before rebooting it when it is
-  alive but not answering adb** (for example still booting after an
-  interrupted deploy), instead of starting a second instance that can't
-  lock the AVD. When it ignores `adb emu kill`, deploy sends SIGTERM, then
+  alive but not answering adb** (an emulator a completed deploy recorded
+  that is wedged, offline or rebooting inside the guest), instead of
+  starting a second instance that can't lock the AVD. When it ignores `adb emu kill`, deploy sends SIGTERM, then
   SIGKILL, to its recorded PID, only while that process's arguments name
   the squad's AVD and port (`-avd <avd> -port <port>`), so a reused PID,
   another emulator or a qemu VM is never signalled, and fails the device

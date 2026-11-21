@@ -251,8 +251,9 @@ func reprovisionExistingOne(existing contract.Device, in ProvisionInput) contrac
 		return dev
 	case reuseBootHeadless, reuseBootWindowed:
 		// adb not answering doesn't mean the squad's emulator has exited:
-		// it may still be booting after an interrupted deploy. A second
-		// instance can't start on its locked AVD, so stop the live one.
+		// the one a completed deploy recorded can be alive but wedged,
+		// offline or rebooting inside the guest. A second instance can't
+		// start on its locked AVD, so stop the live one.
 		if dev.EmulatorPID > 0 && SquadEmulatorAlive(dev) {
 			if err := stopEmulator(dev); err != nil {
 				dev.ErrorMessage = "reuse-boot: " + err.Error()
@@ -400,8 +401,9 @@ func stopEmulator(dev contract.Device) error {
 	if WaitGone(gone, stopExitTimeout, EmulatorExitPoll) {
 		return nil
 	}
-	// An emulator still booting (after an interrupted deploy, say) may not
-	// honour `emu kill`, and its qemu keeps the AVD locked.
+	// A recorded emulator that is alive but not answering adb (wedged,
+	// offline, rebooting inside the guest) may not honour `emu kill`, and
+	// its qemu keeps the AVD locked.
 	if dev.EmulatorPID > 0 {
 		if SignalSquadEmulator(dev, gone) {
 			return nil
