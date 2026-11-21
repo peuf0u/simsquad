@@ -127,19 +127,27 @@ All notable changes are recorded here. The format follows
 - **Apps with dynamic feature modules install whole with a `bundle*`
   Gradle task.** The task now decides how the Android app is packaged.
   With `android_gradle_task = ":app:bundleDevDebug"` (any `bundle*` task),
-  deploy takes the newest `.aab`, reads its application id with
+  deploy takes the newest `.aab` in the task's variant folder
+  (`bundle/devDebug`), reads its application id with
   `bundletool dump manifest`, builds one APK set per deploy
   (`bundletool build-apks --local-testing`, signed with
   `~/.android/debug.keystore`) and installs it on every device with
   `bundletool install-apks`, so the feature modules' code is on the
   device. (`pm path` may show no split per feature: bundletool merges
   install-time modules not marked `dist:removable` into the base APK, as
-  it did for the Národní muzeum app.) Data is cleared unless `--preserve-data`, and a
-  failed install is retried once after an uninstall, as for an APK. The
-  set's path is recorded as `builds.android.apks_path` (additive,
+  it did for the Národní muzeum app.) Data is cleared unless
+  `--preserve-data`, before the install rather than after it, since
+  `pm clear` would also delete the on-demand modules' splits that
+  `install-apks` leaves in external storage; a failed install is retried
+  once after an uninstall, as for an APK. `reset` on a bundle squad
+  installs the APK set again after clearing, to put those splits back.
+  The set is written to a file of its own and renamed into place, so a
+  concurrent deploy from the same repo never installs a half-written one.
+  The set's path is recorded as `builds.android.apks_path` (additive,
   omitempty) in place of `apk_path`. bundletool isn't a Homebrew
-  dependency: a `bundle*` task without it, or without a debug keystore,
-  fails the Android build with the fix (exit `1`). An `assemble*` task
+  dependency: a `bundle*` task without it (checked before Gradle runs),
+  or without a debug keystore (checked after, since a default-signed
+  debug build creates one), fails the Android build with the fix (exit `1`). An `assemble*` task
   works as before, and now warns on stderr, without changing the device
   status or exit code, when a module applies `com.android.dynamic-feature`:
   only the base APK is installed, so the app fails to open feature
