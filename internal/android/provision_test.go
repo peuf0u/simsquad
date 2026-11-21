@@ -1,6 +1,8 @@
 package android
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 )
@@ -34,5 +36,66 @@ func TestEmulatorArgs(t *testing.T) {
 				t.Fatalf("emulatorArgs = %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+// enableHWKeyboard turns the hardware keyboard on in an AVD's config.ini so
+// the Mac keyboard types into a windowed emulator, keeping every other line
+// and its order.
+func TestEnableHWKeyboard(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name, in, want string
+	}{
+		{"replaces no", "avd.ini.encoding=UTF-8\nhw.keyboard=no\nhw.lcd.density=420\n",
+			"avd.ini.encoding=UTF-8\nhw.keyboard=yes\nhw.lcd.density=420\n"},
+		{"keeps yes", "hw.keyboard=yes\nhw.ramSize=2048\n", "hw.keyboard=yes\nhw.ramSize=2048\n"},
+		{"appends when missing", "hw.lcd.density=420\nhw.ramSize=2048\n",
+			"hw.lcd.density=420\nhw.ramSize=2048\nhw.keyboard=yes\n"},
+		{"appends after a last line without newline", "hw.ramSize=2048",
+			"hw.ramSize=2048\nhw.keyboard=yes\n"},
+		{"leaves similar keys alone", "hw.keyboard.lid=no\nhw.keyboard = no\n",
+			"hw.keyboard.lid=no\nhw.keyboard=yes\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "config.ini")
+			if err := os.WriteFile(path, []byte(c.in), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := enableHWKeyboard(path); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != c.want {
+				t.Fatalf("config.ini =\n%q\nwant\n%q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestEnableHWKeyboardMissingConfig(t *testing.T) {
+	t.Parallel()
+
+	if err := enableHWKeyboard(filepath.Join(t.TempDir(), "config.ini")); err == nil {
+		t.Fatal("err = nil for a missing config.ini, want an error")
+	}
+}
+
+func TestAVDConfigPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ANDROID_AVD_HOME", home)
+	got, err := avdConfigPath("simsquad-x-android-0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(home, "simsquad-x-android-0.avd", "config.ini")
+	if got != want {
+		t.Fatalf("avdConfigPath = %s, want %s", got, want)
 	}
 }
