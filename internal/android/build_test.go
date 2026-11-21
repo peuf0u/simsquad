@@ -40,6 +40,25 @@ func TestTaskModeAndOutputDir(t *testing.T) {
 	}
 }
 
+// A bundle task takes its bundle from its variant's folder only; an APK task
+// still walks its whole apk folder.
+func TestArtifactDir(t *testing.T) {
+	cases := map[string]string{
+		":app:bundleDevDebug":     "app/build/outputs/bundle/devDebug",
+		"bundleRelease":           "app/build/outputs/bundle/release",
+		":a:b:bundleDevDebug":     "a/b/build/outputs/bundle/devDebug",
+		":app:bundle":             "app/build/outputs/bundle",
+		":app:assembleDevDebug":   "app/build/outputs/apk",
+		":mobile:assembleRelease": "mobile/build/outputs/apk",
+		"assembleDebug":           "app/build/outputs/apk",
+	}
+	for task, want := range cases {
+		if got := artifactDir(task); got != want {
+			t.Errorf("artifactDir(%q) = %q, want %q", task, got, want)
+		}
+	}
+}
+
 // fakeAAPT2 installs an SDK whose aapt2 reports pkg for any APK.
 func fakeAAPT2(t *testing.T, pkg string) {
 	t.Helper()
