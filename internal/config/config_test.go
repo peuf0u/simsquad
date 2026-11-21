@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/peuf0u/simsquad/internal/contract"
 )
 
 func loadTOML(t *testing.T, body string) *Config {
@@ -42,5 +44,112 @@ func TestContext(t *testing.T) {
 				t.Fatalf("Context() = %v, %v; want %v, %v", got, legacy, c.want, c.wantLegacy)
 			}
 		})
+	}
+}
+
+func loadLayers(t *testing.T, project, local string) *Config {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ProjectFile), []byte(project), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if local != "" {
+		if err := os.WriteFile(filepath.Join(dir, LocalFile), []byte(local), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
+
+const sharedSets = `
+[[ios.sims]]
+device = "iPhone 17"
+runtime = "iOS 26.4"
+count = 1
+
+[[device_sets.tablet.ios.sims]]
+device = "iPad Pro 13-inch (M5)"
+runtime = "iOS 26.4"
+count = 2
+
+[[device_sets.tablet.android.sims]]
+device = "pixel_tablet"
+image = "system-images;android-34;google_apis;arm64-v8a"
+count = 1
+
+[[device_sets.old.ios.sims]]
+device = "iPhone 15"
+runtime = "iOS 17.5"
+count = 1
+`
+
+func TestDeviceSetResolvesBothPlatforms(t *testing.T) {
+	t.Parallel()
+	cfg := loadLayers(t, sharedSets, "")
+	set, ok := cfg.DeviceSet("tablet")
+	if !ok {
+		t.Fatal("DeviceSet(tablet) not found")
+	}
+	wantIOS := []contract.IosSpec{{Device: "iPad Pro 13-inch (M5)", Runtime: "iOS 26.4", Count: 2}}
+	wantAndroid := []contract.AndroidSpec{{Device: "pixel_tablet", Image: "system-images;android-34;google_apis;arm64-v8a", Count: 1, Target: contract.TargetEmulator}}
+	if set.Name != "tablet" || !reflect.DeepEqual(set.IOS, wantIOS) || !reflect.DeepEqual(set.Android, wantAndroid) {
+		t.Fatalf("DeviceSet(tablet) = %+v, want ios %+v android %+v", set, wantIOS, wantAndroid)
+	}
+	// The default matrix is not touched by a set.
+	if got := cfg.IOSSpecs(); len(got) != 1 || got[0].Device != "iPhone 17" {
+		t.Fatalf("IOSSpecs() = %+v, want the default matrix only", got)
+	}
+	if got := cfg.DeviceSetNames(); !reflect.DeepEqual(got, []string{"old", "tablet"}) {
+		t.Fatalf("DeviceSetNames() = %v, want [old tablet]", got)
+	}
+}
+
+func TestDeviceSetUnknown(t *testing.T) {
+	t.Parallel()
+	cfg := loadLayers(t, sharedSets, "")
+	if set, ok := cfg.DeviceSet("phone"); ok {
+		t.Fatalf("DeviceSet(phone) = %+v, want not found", set)
+	}
+	if names := loadLayers(t, "[project]\n", "").DeviceSetNames(); len(names) != 0 {
+		t.Fatalf("DeviceSetNames() without sets = %v, want none", names)
+	}
+}
+
+// A local set replaces the shared set of the same name wholesale: its iOS
+// rows don't merge with the shared set's Android rows.
+func TestDeviceSetLocalReplacesShared(t *testing.T) {
+	t.Parallel()
+	local := `
+[[device_sets.tablet.ios.sims]]
+device = "iPad Air 11-inch (M3)"
+runtime = "iOS 26.4"
+count = 1
+
+[[device_sets.mine.android.sims]]
+target = "physical"
+count = 1
+`
+	cfg := loadLayers(t, sharedSets, local)
+	set, ok := cfg.DeviceSet("tablet")
+	if !ok {
+		t.Fatal("DeviceSet(tablet) not found")
+	}
+	wantIOS := []contract.IosSpec{{Device: "iPad Air 11-inch (M3)", Runtime: "iOS 26.4", Count: 1}}
+	if !reflect.DeepEqual(set.IOS, wantIOS) || len(set.Android) != 0 {
+		t.Fatalf("DeviceSet(tablet) = %+v, want only the local iOS row", set)
+	}
+	if !cfg.DeviceSetIsLocal("tablet") || !cfg.DeviceSetIsLocal("mine") || cfg.DeviceSetIsLocal("old") {
+		t.Fatal("DeviceSetIsLocal: want tablet and mine local, old shared")
+	}
+	shared, ok := cfg.SharedDeviceSet("tablet")
+	if !ok || len(shared.Android) != 1 || len(shared.IOS) != 1 || shared.IOS[0].Count != 2 {
+		t.Fatalf("SharedDeviceSet(tablet) = %+v, %v; want the simsquad.toml version", shared, ok)
+	}
+	if got := cfg.DeviceSetNames(); !reflect.DeepEqual(got, []string{"mine", "old", "tablet"}) {
+		t.Fatalf("DeviceSetNames() = %v", got)
 	}
 }
