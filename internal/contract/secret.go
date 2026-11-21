@@ -53,9 +53,6 @@ func MaskContext(ctx map[string]string, explicit []string) map[string]string {
 	return out
 }
 
-// IsSecret reports whether the squad's context key is a secret.
-func (s SquadRecord) IsSecret(key string) bool { return IsSecret(key, s.SecretKeys) }
-
 // MaskedContext is the squad's context as every output shows it.
 func (s SquadRecord) MaskedContext() map[string]string {
 	return MaskContext(s.Context, s.SecretKeys)

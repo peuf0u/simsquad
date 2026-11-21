@@ -101,11 +101,11 @@ func TestSquadRecordContextMutators(t *testing.T) {
 	// Setting a secret again as plain context keeps it a secret: only
 	// removing the key un-marks it.
 	rec.SetContext("pin", "5678", false)
-	if !rec.IsSecret("pin") || rec.Context["pin"] != "5678" {
-		t.Fatalf("pin = %q secret %v, want 5678 still secret", rec.Context["pin"], rec.IsSecret("pin"))
+	if !IsSecret("pin", rec.SecretKeys) || rec.Context["pin"] != "5678" {
+		t.Fatalf("pin = %q secret %v, want 5678 still secret", rec.Context["pin"], IsSecret("pin", rec.SecretKeys))
 	}
 	rec.UnsetContext("pin")
-	if _, ok := rec.Context["pin"]; ok || rec.IsSecret("pin") {
+	if _, ok := rec.Context["pin"]; ok || IsSecret("pin", rec.SecretKeys) {
 		t.Fatalf("after UnsetContext: context %v secret keys %v", rec.Context, rec.SecretKeys)
 	}
 	rec.ClearContext()

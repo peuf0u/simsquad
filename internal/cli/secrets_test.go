@@ -88,7 +88,7 @@ func TestSetContextKeepsRealSecretValues(t *testing.T) {
 		t.Fatalf("set-context: exit %d", code)
 	}
 	rec := loadTestRecord(t, "sq")
-	if rec.Context["pin"] != "4711" || rec.Context["password"] != "hunter2" || !rec.IsSecret("pin") {
+	if rec.Context["pin"] != "4711" || rec.Context["password"] != "hunter2" || !contract.IsSecret("pin", rec.SecretKeys) {
 		t.Fatalf("record context = %v secret keys %v, want real values and pin still secret", rec.Context, rec.SecretKeys)
 	}
 }
@@ -283,7 +283,7 @@ func TestSetContextUnsetAndClearWorkOnSecrets(t *testing.T) {
 	if _, code := runRoot(t, "set-context", "--name", "sq", "--set", "pin=1"); code != 0 {
 		t.Fatalf("--set: exit %d", code)
 	}
-	if rec := loadTestRecord(t, "sq"); rec.IsSecret("pin") {
+	if rec := loadTestRecord(t, "sq"); contract.IsSecret("pin", rec.SecretKeys) {
 		t.Fatal("pin still secret after unset and plain set")
 	}
 	if _, code := runRoot(t, "set-context", "--name", "sq", "--set-secret", "otp=9", "--clear"); code != 0 {
