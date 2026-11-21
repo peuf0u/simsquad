@@ -392,7 +392,9 @@ a task without one, like `assembleDebug`, means `app`).
   install-apks`. Use it for an app with dynamic feature modules: an
   assemble build installs only the base APK, so feature screens fail to
   open, and deploy warns about it. `--local-testing` lets on-demand
-  modules install without Google Play.
+  modules install without Google Play. bundletool merges install-time
+  modules not marked `dist:removable` into the base APK, so `pm path` can
+  list only the base and its config splits while the features are there.
 
 A bundle task needs [bundletool](https://developer.android.com/tools/bundletool),
 which simsquad doesn't install: `brew install bundletool` (it runs on the

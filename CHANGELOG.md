@@ -112,8 +112,10 @@ All notable changes are recorded here. The format follows
   `bundletool dump manifest`, builds one APK set per deploy
   (`bundletool build-apks --local-testing`, signed with
   `~/.android/debug.keystore`) and installs it on every device with
-  `bundletool install-apks`, so `pm path` lists the base APK plus a split
-  per feature module. Data is cleared unless `--preserve-data`, and a
+  `bundletool install-apks`, so the feature modules' code is on the
+  device. (`pm path` may show no split per feature: bundletool merges
+  install-time modules not marked `dist:removable` into the base APK, as
+  it did for the Národní muzeum app.) Data is cleared unless `--preserve-data`, and a
   failed install is retried once after an uninstall, as for an APK. The
   set's path is recorded as `builds.android.apks_path` (additive,
   omitempty) in place of `apk_path`. bundletool isn't a Homebrew
