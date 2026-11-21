@@ -8,6 +8,25 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- **Named device sets: `deploy --device-set NAME`.** The equipment can hold
+  named device matrices beside the default one, as
+  `[[device_sets.<name>.ios.sims]]` / `[[device_sets.<name>.android.sims]]`
+  rows shaped like the default matrix (devices only; build settings stay
+  in `[project]`). A set in `simsquad.local.toml` replaces the shared set of
+  the same name wholesale. `deploy --device-set NAME` takes that set for
+  both platforms, and `--platform` filters it; combining it with
+  `--ios-spec` / `--android-spec`, or naming an unknown set, exits `1`. The
+  squad records the set's name as `device_set` on its record and on
+  `deploy` / `status` output (additive, omitempty; not on `devices` rows),
+  so a later `deploy --name X` with no matrix flags re-reads that set from
+  the config and reuses the squad when its devices match. A squad with no
+  recorded set uses the default matrix as before, spec flags record nothing,
+  and a recorded set the config no longer defines exits `1` naming it. In
+  `equip`, the editor's **Device sets** group creates, renames, deletes and
+  edits sets with the default matrix's pickers;
+  `equip --add-ios-spec/--add-android-spec … --device-set NAME` appends to a
+  set (creating it in `simsquad.toml`); `equip --show` lists the sets as
+  `device_sets`; and saving keeps every set in the file it came from.
 - **`deploy --window` shows the devices, for a squad used by hand.**
   Android emulators it boots start with a window (`-gpu auto` instead of
   headless `swiftshader_indirect`) and with `hw.keyboard=yes` written into

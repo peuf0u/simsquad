@@ -113,14 +113,14 @@ and verdicts: [docs/agent-testing.md](docs/agent-testing.md).
 
 | Command | Action | Key flags |
 |---|---|---|
-| `deploy` | Build + install; reuse the squad if it exists (same name+matrix), else provision fresh; emit the descriptor | `--name` (req), `--platform ios\|android`, `--ios-repo`/`--android-repo`, `--ios-spec`/`--android-spec`, `--context KEY=VALUE`, `--no-build`, `--force-build`, `--preserve-data`, `--window`, `--clear-context` |
+| `deploy` | Build + install; reuse the squad if it exists (same name+matrix), else provision fresh; emit the descriptor | `--name` (req), `--platform ios\|android`, `--device-set NAME`, `--ios-repo`/`--android-repo`, `--ios-spec`/`--android-spec`, `--context KEY=VALUE`, `--no-build`, `--force-build`, `--preserve-data`, `--window`, `--clear-context` |
 | `status` | Squad registry (no arg) or one full record (`--name`) | `--name` |
 | `devices` | Uniform device list — one squad (`--name`) or all (no arg) | `--name`, `--ready`, `--platform=ios\|android` |
 | `set-context` | Mutate a squad's context | `--name` (req), `--set KEY=VALUE`, `--unset KEY`, `--clear` |
 | `reset` | Return apps to a clean state (terminate + wipe data) without re-provisioning | `--name` (req), `--device` (repeatable) |
 | `dismiss` | Tear down a squad (shutdown + delete its sims/AVDs) | `--name` (req) |
 | `sweep` | Dismiss squads whose repo path is gone (removed worktrees), then prune orphan `simsquad-*` sims/AVDs left by crashed deploys | — |
-| `equip` | Interactive wizard: write `simsquad.toml` / `.local.toml` | `--show`, `--force`, `--add-ios-spec`, `--add-android-spec` |
+| `equip` | Interactive wizard: write `simsquad.toml` / `.local.toml` | `--show`, `--force`, `--add-ios-spec`, `--add-android-spec`, `--device-set NAME` |
 
 Spec formats (repeatable):
 
@@ -138,6 +138,18 @@ used.
 platforms; the squad's other platform keeps its devices untouched. Reuse is
 decided per platform, so a later bare deploy adds the missing platform. It
 can't be combined with spec flags.
+
+`deploy --device-set NAME` deploys a named device set instead of the default
+matrix: `[device_sets.NAME]` in the config (see
+[Configuration](#configuration)), for both platforms, the way spec flags
+replace the matrix; `--platform` filters it. The squad records the set's
+name (`device_set` in `deploy` / `status` output), so a later
+`deploy --name X` with no matrix flags deploys that set again, re-read from
+the config, and reuses the squad when its devices still match. A squad with
+no recorded set keeps using the default matrix. Combining `--device-set`
+with a spec flag, an unknown set, or a recorded set the config no longer
+defines exits `1`. A different `--device-set` on an existing squad follows
+the usual per-platform reuse rule. Spec flags record no set.
 
 `deploy --window` shows the devices, for a squad used by hand (the
 `simsquad` skill's dev squad always passes it; test squads never do).
@@ -376,7 +388,31 @@ containing either:
 Run `simsquad equip` for an interactive setup wizard, or copy
 [`simsquad.toml.example`](simsquad.toml.example) and edit. See that file for the
 full annotated schema (`[project]`, `[context]`, `[agent]`, `[[ios.sims]]`,
-`[[android.sims]]`).
+`[[android.sims]]`, `[device_sets.<name>]`).
+
+**Device sets.** Besides the default matrix, the equipment can hold named
+device matrices, deployed with `deploy --device-set NAME`:
+
+```toml
+[[device_sets.tablet.ios.sims]]
+device  = "iPad Pro 13-inch (M5)"
+runtime = "iOS 26.4"
+count   = 1
+
+[[device_sets.tablet.android.sims]]
+device = "pixel_tablet"
+image  = "system-images;android-34;google_apis;arm64-v8a"
+count  = 1
+```
+
+Rows are shaped like `[[ios.sims]]` / `[[android.sims]]`. A set is only a
+device matrix: the repos, scheme and Gradle task stay in `[project]`. A set
+in `simsquad.local.toml` replaces the `simsquad.toml` set of the same name
+wholesale (its rows don't merge). In `simsquad equip`, the editor's **Device
+sets** group creates, renames, deletes and edits sets with the same pickers
+as the default matrix; `equip --add-ios-spec … --device-set NAME` appends to
+a set (creating it in `simsquad.toml`), and `equip --show` lists the sets.
+equip keeps each set in the file it came from.
 
 **Precedence**, highest to lowest:
 

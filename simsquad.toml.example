@@ -113,3 +113,30 @@ target = "emulator"
 # image  = "physical"
 # count  = 1
 # target = "physical"
+
+# ---------------------------------------------------------------------------
+# [device_sets.<name>] — named device matrices beside the default one.
+# ---------------------------------------------------------------------------
+# Each set holds [[device_sets.<name>.ios.sims]] / [[device_sets.<name>.android.sims]]
+# rows shaped exactly like the rows above. A set is only a device matrix: the
+# repos, scheme and Gradle task stay in [project].
+#
+#   simsquad deploy --name=foo --device-set tablet    # this set, both platforms
+#   simsquad deploy --name=foo                        # the set foo recorded
+#
+# --device-set replaces the default matrix for both platforms (like spec
+# flags, with which it can't be combined); --platform filters it. The squad
+# records the set's name, so a later deploy without matrix flags re-reads the
+# set from this file. A set of the same name in simsquad.local.toml replaces
+# this one wholesale. `simsquad equip` edits sets under "Device sets…", and
+# `equip --add-ios-spec '…' --device-set tablet` appends to one.
+#
+# [[device_sets.tablet.ios.sims]]
+# device  = "iPad Pro 13-inch (M5)"
+# runtime = "iOS 26.4"
+# count   = 1
+#
+# [[device_sets.tablet.android.sims]]
+# device = "pixel_tablet"
+# image  = "system-images;android-34;google_apis;arm64-v8a"
+# count  = 1

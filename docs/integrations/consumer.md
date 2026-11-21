@@ -101,6 +101,7 @@ your runner uses) — it never talks back to simsquad.
 {
   "name": "qa-run-1717000000",
   "created_at": "2026-05-27T14:00:00Z",
+  "device_set": "tablet",   // only when deployed with --device-set
   "builds": { "ios": { "app_path": "…", "bundle_id": "…", "specs": [ … ] } },
   "devices": [ /* full Device records — see status output */ ],
   "context": { "user": "alice", "api": "staging" },
