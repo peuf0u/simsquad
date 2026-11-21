@@ -7,7 +7,8 @@
 //	Android emulator    → adb emu kill, wait for it to exit (bounded),
 //	                      then avdmanager delete avd
 //	Android physical    → adb uninstall <bundle>      (never delete device)
-//	orphan              → any simsquad-* sim/AVD not in the registry
+//	orphan              → any simsquad-* sim/AVD not in the registry, and
+//	                      any simsquad-*.avd folder left without its .ini
 //	removed repo        → a squad whose recorded repo path no longer exists
 //	                      (typically a deleted git worktree)
 //
@@ -22,7 +23,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/peuf0u/simsquad/internal/android"
@@ -162,7 +165,9 @@ type PruneResult struct {
 
 // PruneOrphans deletes any host sim or AVD whose name matches
 // `simsquad-[a-z0-9-]+-(ios|android)-\d+` but isn't tracked by the registry —
-// debris from an interrupted deploy or a crashed simsquad binary.
+// debris from an interrupted deploy or a crashed simsquad binary. On Android
+// it also removes such untracked `<name>.avd` folders in the AVD home that
+// avdmanager can't see because their .ini is gone.
 //
 // Errors talking to simctl or avdmanager are tolerated: missing tools mean
 // "nothing to prune on that platform", which is the right behaviour on a
@@ -262,6 +267,9 @@ func trackedDeviceNames() (map[string]struct{}, error) {
 			if d.Name != "" {
 				tracked[d.Name] = struct{}{}
 			}
+			if d.AVDName != "" {
+				tracked[d.AVDName] = struct{}{}
+			}
 		}
 	}
 	return tracked, nil
@@ -305,6 +313,21 @@ func pruneIOS(tracked map[string]struct{}, logger *progress.Logger) []string {
 }
 
 func pruneAndroid(tracked map[string]struct{}, logger *progress.Logger) []string {
+	removed := pruneAndroidAVDs(tracked, logger)
+	home, err := android.AVDHome()
+	if err != nil {
+		return removed
+	}
+	for _, name := range pruneStrayAVDDirs(home, tracked, logger) {
+		if !slices.Contains(removed, name) {
+			removed = append(removed, name)
+		}
+	}
+	return removed
+}
+
+// pruneAndroidAVDs deletes untracked simsquad AVDs that avdmanager lists.
+func pruneAndroidAVDs(tracked map[string]struct{}, logger *progress.Logger) []string {
 	avd, err := android.AVDManager()
 	if err != nil {
 		return nil
@@ -326,6 +349,42 @@ func pruneAndroid(tracked map[string]struct{}, logger *progress.Logger) []string
 		removed = append(removed, name)
 		if logger != nil {
 			logger.Info("prune: android", progress.F("name", name))
+		}
+	}
+	return removed
+}
+
+// pruneStrayAVDDirs removes `<name>.avd` folders in home that have no
+// `<name>.ini` next to them, where name is an untracked simsquad Android
+// name. avdmanager lists AVDs by their .ini, so such a folder (e.g. one an
+// exiting emulator recreated after teardown deleted the AVD, issue #39) is
+// invisible to it. A folder with its .ini is left to the avdmanager pass.
+func pruneStrayAVDDirs(home string, tracked map[string]struct{}, logger *progress.Logger) []string {
+	entries, err := os.ReadDir(home)
+	if err != nil {
+		return nil
+	}
+	var removed []string
+	for _, e := range entries {
+		name, ok := strings.CutSuffix(e.Name(), ".avd")
+		if !ok || !e.IsDir() || !orphanRx.MatchString(name) || !strings.Contains(name, "-android-") {
+			continue
+		}
+		if _, ok := tracked[name]; ok {
+			continue
+		}
+		if _, err := os.Lstat(filepath.Join(home, name+".ini")); err == nil {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(home, e.Name())); err != nil {
+			if logger != nil {
+				logger.Warn("prune: android-folder", progress.F("name", name), progress.F("error", err.Error()))
+			}
+			continue
+		}
+		removed = append(removed, name)
+		if logger != nil {
+			logger.Info("prune: android-folder", progress.F("name", name))
 		}
 	}
 	return removed

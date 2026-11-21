@@ -59,6 +59,20 @@ func SDKRoot() (string, error) {
 	return candidate, nil
 }
 
+// AVDHome returns the folder holding the AVDs (`<name>.ini` plus
+// `<name>.avd/`): ANDROID_AVD_HOME when set, otherwise ~/.android/avd. The
+// folder may not exist yet.
+func AVDHome() (string, error) {
+	if dir := os.Getenv("ANDROID_AVD_HOME"); dir != "" {
+		return dir, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".android", "avd"), nil
+}
+
 // whichOrUnder returns the absolute path to binary by first consulting $PATH
 // and then walking the given roots. roots are tolerated when missing.
 func whichOrUnder(binary string, roots ...string) string {
