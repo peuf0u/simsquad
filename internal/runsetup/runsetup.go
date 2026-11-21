@@ -96,6 +96,14 @@ func New(opts Options) (contract.RunRecord, string, error) {
 	if err != nil {
 		return contract.RunRecord{}, "", err
 	}
+	// Run paths are handed to workers, whose Claude Code allow rules must
+	// match the path a file resolves to as well as the one asked for (issue
+	// #35); a shell in a repo reached through a symlink keeps the logical
+	// path. The squad name still comes from configDir, so it doesn't change.
+	physDir, err := filepath.EvalSymlinks(configDir)
+	if err != nil {
+		return contract.RunRecord{}, "", fmt.Errorf("resolve config dir: %w", err)
+	}
 	equipped := equippedPlatforms(cfg)
 	if len(equipped) == 0 {
 		return contract.RunRecord{}, "", errors.New("no devices equipped; add iOS or Android devices with `simsquad equip`")
@@ -108,7 +116,7 @@ func New(opts Options) (contract.RunRecord, string, error) {
 		Fresh:        opts.Fresh,
 		Worker:       worker,
 		WorkerModel:  workerModel(opts.Model, cfg.AgentWorkerModel(), defaultModel),
-		AppNotes:     appNotes(configDir),
+		AppNotes:     appNotes(physDir),
 		Scenarios:    []contract.RunScenario{},
 	}
 	for _, s := range feat.Scenarios {
@@ -137,7 +145,7 @@ func New(opts Options) (contract.RunRecord, string, error) {
 		squad = "qa-" + filepath.Base(configDir)
 	}
 	squad = util.SanitiseName(squad)
-	runsRoot := filepath.Join(configDir, RunsDir)
+	runsRoot := filepath.Join(physDir, RunsDir)
 	if opts.Fresh {
 		squad += "-" + randomHex(3)
 	} else if err := refuseUnfinished(runsRoot, squad, rec.Platforms); err != nil {
@@ -175,7 +183,7 @@ func workerModel(flag, toml, def string) string {
 }
 
 // appNotes is the absolute path of the config dir's app notes, or "" when
-// the file doesn't exist. configDir is absolute (FindConfigDir).
+// the file doesn't exist. configDir is absolute.
 func appNotes(configDir string) string {
 	p := filepath.Join(configDir, filepath.FromSlash(skills.AppNotesFile))
 	if fi, err := os.Stat(p); err != nil || fi.IsDir() {

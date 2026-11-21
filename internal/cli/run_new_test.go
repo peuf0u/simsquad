@@ -487,6 +487,33 @@ func TestRunNewRequiresExactlyOneArg(t *testing.T) {
 }
 
 // runNewRaw runs `simsquad run new <args>` and returns its raw stdout.
+// TestRunNewResolvesSymlinksInRunPaths (issue #35): a shell in a repo reached
+// through a symlink keeps the logical path in $PWD, and os.Getwd returns it.
+// Claude Code's allow rules must match the path a file resolves to as well,
+// so a worker's Edit rule built from a logical run_dir is refused. run_dir
+// and app_notes are therefore physical paths.
+func TestRunNewResolvesSymlinksInRunPaths(t *testing.T) {
+	repo := newEquippedRepo(t, "MyApp", equipIOSOnly)
+	writeTestFile(t, filepath.Join(repo, "qa", "README.md"), "# App notes\n")
+	writeTestFile(t, filepath.Join(repo, "login.feature"), loginFeature)
+	link := filepath.Join(t.TempDir(), "MyApp")
+	if err := os.Symlink(repo, link); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(link)
+	t.Setenv("PWD", link) // as a shell that cd'd through the link leaves it
+
+	got := mustRunNew(t, "login.feature")
+
+	wantDir := filepath.Join(repo, ".simsquad", "runs", got.RunID)
+	if got.RunDir != wantDir {
+		t.Errorf("run_dir = %q, want the resolved %q", got.RunDir, wantDir)
+	}
+	if want := filepath.Join(repo, "qa", "README.md"); got.AppNotes != want {
+		t.Errorf("app_notes = %q, want the resolved %q", got.AppNotes, want)
+	}
+}
+
 func runNewRaw(t *testing.T, args ...string) string {
 	t.Helper()
 	root := NewRootCmd()

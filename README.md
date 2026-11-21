@@ -285,6 +285,9 @@ simsquad run new qa/features/login.feature > run-new.json
 - `app_notes` is the absolute path of `qa/README.md` in the config dir, so
   workers read the app notes without guessing which repo holds them. It is
   omitted, in `run.json` and on stdout, when that file doesn't exist.
+- `run_dir` and `app_notes` have every symlink resolved, even when you
+  reached the repo through one: a Claude Code worker's permission rules
+  must match the path a file really lives at.
 
 ### `run worker` — run a headless worker
 

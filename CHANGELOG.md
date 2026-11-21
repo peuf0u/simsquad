@@ -144,7 +144,9 @@ All notable changes are recorded here. The format follows
   `worker.md`, and a worker started anywhere but the folder holding
   `.simsquad/runs/` couldn't write `result.json`, so the run ended as infra.
   The Codex command is unchanged. Re-run `simsquad skill install` to pick
-  it up.
+  it up. `run new` now resolves symlinks in `run_dir` and `app_notes`, so
+  the rules also match for a repo reached through a symlink; the squad
+  name still comes from the path you're in.
 
 ## [0.5.0] - 2026-10-14
 
