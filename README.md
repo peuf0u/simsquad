@@ -183,13 +183,12 @@ AVD. A new emulator gets a port `adb devices` doesn't list, and deploy
 installs on it only while the emulator it started is still running on that
 port and the emulator answering there doesn't run another AVD.
 
-A squad emulator still booting after an interrupted deploy may ignore `adb
-emu kill`, and on teardown may not answer the name query either. simsquad
-then sends SIGTERM, then SIGKILL, to its recorded PID (teardown deletes the
-AVD only after), and only while that process's arguments still name the
-squad's AVD and port (`-avd <avd> -port <port>`): after a reboot the PID
-can belong to another emulator or a colima, lima or UTM qemu VM, which
-simsquad never signals.
+A recorded squad emulator can ignore `adb emu kill`, and on teardown can
+stop answering the name query. simsquad then sends SIGTERM, then SIGKILL,
+to the PID its record holds (teardown deletes the AVD only after), and only
+while that process's arguments still name the squad's AVD and port (`-avd
+<avd> -port <port>`): after a reboot the PID can belong to another emulator
+or a colima, lima or UTM qemu VM, which simsquad never signals.
 
 `deploy` exit codes: `0` = all devices ready · `2` = mixed (some ready, some
 errored) · `1` = none ready / bad args / build failed. Only the deployed

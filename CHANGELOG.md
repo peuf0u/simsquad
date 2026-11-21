@@ -243,9 +243,9 @@ All notable changes are recorded here. The format follows
   teardown (`dismiss`, `sweep`, a failed `deploy`) now waits up to 15s for
   the emulator to exit before deleting its AVD; an emulator still shutting
   down could recreate `simsquad-*.avd/` holding only `emulator-user.ini`.
-  When the squad's emulator hasn't exited by then, or doesn't answer the
-  AVD name query (still booting after an interrupted deploy, say),
-  teardown sends SIGTERM, then SIGKILL, to its recorded PID while that
+  When a recorded squad emulator hasn't exited by then, or stops
+  answering the AVD name query, teardown sends SIGTERM, then SIGKILL, to
+  the PID its record holds while that
   process's arguments name the squad's AVD and port, and deletes the AVD
   after, instead of leaving the emulator running without it.
   `simsquad sweep` also removes such a folder when it has no `.ini` and no
