@@ -810,7 +810,7 @@ func (m *editorModel) applyInput() error {
 		if err != nil {
 			return err
 		}
-		m.state.testContext = ctx
+		m.state.setContext(ctx)
 	case actionEditSecrets:
 		secrets, err := applyKeyValueFields(m.fields, m.state.secrets, m.state.testContext, "secret", "context")
 		if err != nil {

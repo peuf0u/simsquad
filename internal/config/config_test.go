@@ -193,3 +193,31 @@ func TestCommittedSecretsWarningNamesKeysNotValues(t *testing.T) {
 		}
 	}
 }
+
+// ContextLayers splits [context] by file, reading [env] from both files
+// only when Context does (no [context] in either).
+func TestContextLayers(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, project, local string
+		shared, own          map[string]string
+	}{
+		{"both", "[context]\nuser = \"alice\"\napi = \"staging\"\n", "[context]\napi = \"local\"\npassword = \"hunter2\"\n",
+			map[string]string{"user": "alice", "api": "staging"}, map[string]string{"api": "local", "password": "hunter2"}},
+		{"local only", "[project]\n", "[context]\npassword = \"hunter2\"\n",
+			nil, map[string]string{"password": "hunter2"}},
+		{"legacy env", "[env]\nuser = \"alice\"\n", "[env]\npassword = \"hunter2\"\n",
+			map[string]string{"user": "alice"}, map[string]string{"password": "hunter2"}},
+		{"context wins over env", "[env]\nuser = \"alice\"\n", "[context]\npassword = \"hunter2\"\n",
+			nil, map[string]string{"password": "hunter2"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			shared, own := loadLayers(t, c.project, c.local).ContextLayers()
+			if !reflect.DeepEqual(shared, c.shared) || !reflect.DeepEqual(own, c.own) {
+				t.Fatalf("ContextLayers() = %v, %v; want %v, %v", shared, own, c.shared, c.own)
+			}
+		})
+	}
+}

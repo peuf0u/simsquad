@@ -213,6 +213,19 @@ func (c *Config) Context() (ctx map[string]string, legacy bool) {
 	return out, legacy
 }
 
+// ContextLayers returns each file's own [context] table: shared from
+// simsquad.toml, local from simsquad.local.toml, nil where a file has none.
+// Like Context, it reads [env] instead only when neither file has [context].
+// equip writes each key back to the file it came from, so a password in the
+// local [context] never lands in the committed file.
+func (c *Config) ContextLayers() (shared, local map[string]string) {
+	key := "context"
+	if _, ok := c.Get("context").(map[string]any); !ok {
+		key = "env"
+	}
+	return stringTable(c.project[key]), stringTable(c.local[key])
+}
+
 // LegacyEnvWarning is the stderr line printed when simsquad.toml still uses
 // [env].
 const LegacyEnvWarning = "simsquad: [env] in simsquad.toml is deprecated; rename it to [context]"

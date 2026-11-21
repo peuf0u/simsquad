@@ -61,6 +61,12 @@ type wizardState struct {
 	iosScheme   string
 	gradleTask  string
 	testContext map[string]string
+	// localContext marks the testContext keys simsquad.local.toml sets, and
+	// sharedContext is simsquad.toml's own [context]. Saving writes each key
+	// back to its file (a local password must not reach the committed file)
+	// and keeps the shared value a local key overrides.
+	localContext  map[string]bool
+	sharedContext map[string]string
 	// secrets is [secrets] merged across both files. Saving writes it to
 	// simsquad.local.toml only, so equip moves committed secrets out of git.
 	secrets     map[string]string
@@ -179,6 +185,14 @@ func loadState(configDir string, hasConfig bool) (wizardState, error) {
 		for k, v := range ctx {
 			state.testContext[k] = v
 		}
+	}
+	shared, local := cfg.ContextLayers()
+	state.sharedContext = shared
+	for k := range local {
+		if state.localContext == nil {
+			state.localContext = make(map[string]bool, len(local))
+		}
+		state.localContext[k] = true
 	}
 	// Both files are re-rendered on save, so a secret not loaded here
 	// would be dropped.
@@ -582,17 +596,8 @@ func renderProjectTOML(state wizardState) (string, error) {
 	b.WriteString("[project]\n")
 	b.WriteString("ios_scheme = " + tomlQuote(state.iosScheme) + "\n")
 	b.WriteString("android_gradle_task = " + tomlQuote(state.gradleTask) + "\n")
-	if len(state.testContext) > 0 {
-		b.WriteString("\n[context]\n")
-		keys := make([]string, 0, len(state.testContext))
-		for k := range state.testContext {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			b.WriteString(tomlKey(k) + " = " + tomlQuote(state.testContext[k]) + "\n")
-		}
-	}
+	shared, _ := splitContext(state)
+	renderStringTable(&b, "context", shared)
 	agent, err := renderAgentTable(state.projectAgent)
 	if err != nil {
 		return "", err
@@ -628,17 +633,9 @@ func renderLocalTOML(state wizardState) (string, error) {
 	b.WriteString("[project]\n")
 	b.WriteString("ios_repo = " + tomlQuote(state.iosRepo) + "\n")
 	b.WriteString("android_repo = " + tomlQuote(state.androidRepo) + "\n")
-	if len(state.secrets) > 0 {
-		b.WriteString("\n[secrets]\n")
-		keys := make([]string, 0, len(state.secrets))
-		for k := range state.secrets {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			b.WriteString(tomlKey(k) + " = " + tomlQuote(state.secrets[k]) + "\n")
-		}
-	}
+	_, local := splitContext(state)
+	renderStringTable(&b, "context", local)
+	renderStringTable(&b, "secrets", state.secrets)
 	agent, err := renderAgentTable(state.localAgent)
 	if err != nil {
 		return "", err
@@ -646,6 +643,66 @@ func renderLocalTOML(state wizardState) (string, error) {
 	b.WriteString(agent)
 	renderLocalDeviceSets(&b, state.deviceSets)
 	return b.String(), nil
+}
+
+// splitContext divides testContext by the file each key belongs in: a key
+// simsquad.local.toml set goes back there, with the simsquad.toml value it
+// overrides (if any) kept in the shared file; every other key, including
+// one added in the editor, is shared.
+func splitContext(state wizardState) (shared, local map[string]string) {
+	shared = map[string]string{}
+	local = map[string]string{}
+	for k, v := range state.testContext {
+		if !state.localContext[k] {
+			shared[k] = v
+			continue
+		}
+		local[k] = v
+		if sv, ok := state.sharedContext[k]; ok {
+			shared[k] = sv
+		}
+	}
+	return shared, local
+}
+
+// renderStringTable writes a [name] table of string values with sorted keys,
+// preceded by a blank line; nothing for an empty table.
+func renderStringTable(b *strings.Builder, name string, table map[string]string) {
+	if len(table) == 0 {
+		return
+	}
+	b.WriteString("\n[" + name + "]\n")
+	keys := make([]string, 0, len(table))
+	for k := range table {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		b.WriteString(tomlKey(k) + " = " + tomlQuote(table[k]) + "\n")
+	}
+}
+
+// setContext replaces testContext with an edit of it. A local key the edit
+// removes takes its override out of simsquad.local.toml only: the shared
+// value it covered is what deploy reads again (as a deleted local device
+// set reverts to the shared one), so it comes back here too.
+func (s *wizardState) setContext(ctx map[string]string) {
+	// A fresh map: editor states share their maps, and only this one moves on.
+	local := make(map[string]bool, len(s.localContext))
+	for k := range s.localContext {
+		if _, kept := ctx[k]; kept {
+			local[k] = true
+			continue
+		}
+		if sv, ok := s.sharedContext[k]; ok {
+			if ctx == nil {
+				ctx = map[string]string{}
+			}
+			ctx[k] = sv
+		}
+	}
+	s.localContext = local
+	s.testContext = ctx
 }
 
 func ensureGitignoreEntry(path, entry string) error {
