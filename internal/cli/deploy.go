@@ -32,6 +32,7 @@ func newDeployCmd() *cobra.Command {
 		noBuild     bool
 		preserve    bool
 		window      bool
+		deviceSet   string
 		iosSpecs    []string
 		androidSpec []string
 		ctxEntries  []string
@@ -58,6 +59,12 @@ func newDeployCmd() *cobra.Command {
 			"equipped platform. A platform left out is untouched: no build, boot or\n" +
 			"install, and its devices stay as they are. It can't be combined with\n" +
 			"spec flags.\n\n" +
+			"--device-set NAME deploys the named set from [device_sets.NAME] in\n" +
+			"simsquad.toml (a set in simsquad.local.toml replaces it) instead of\n" +
+			"the default matrix, for both platforms; --platform filters it. The\n" +
+			"squad records the set's name, so a later deploy without matrix flags\n" +
+			"deploys that set again, read from the config as it is then. It can't\n" +
+			"be combined with spec flags.\n\n" +
 			"--window shows the devices, for a squad you use by hand. Android\n" +
 			"emulators boot with a window and the hardware keyboard on\n" +
 			"(hw.keyboard=yes), so the Mac keyboard types into the app; a running\n" +
@@ -76,7 +83,7 @@ func newDeployCmd() *cobra.Command {
 			"Passing *any* spec flag (iOS or Android) replaces the TOML matrix\n" +
 			"entirely. Omitting a platform's flag in that case skips that platform\n" +
 			"for this run. With no spec flags, both [[ios.sims]] and [[android.sims]]\n" +
-			"from simsquad.toml are used.\n\n" +
+			"from simsquad.toml are used, or the device set the squad records.\n\n" +
 			"Redirect stdout for the JSON contract (never `2>&1`, which would mix\n" +
 			"progress events into the squad descriptor):\n" +
 			"  simsquad deploy --name=foo --ios-spec 'iPhone 17:iOS 26.4:1' > squad.json",
@@ -99,6 +106,7 @@ func newDeployCmd() *cobra.Command {
 				noBuild:     noBuild,
 				preserve:    preserve,
 				window:      window,
+				deviceSet:   deviceSet,
 				iosSpecs:    iosSpecs,
 				androidSpec: androidSpec,
 				ctxEntries:  ctxEntries,
@@ -119,6 +127,7 @@ func newDeployCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&window, "window", false, "show the devices: emulators get a window and the Mac keyboard, iOS opens Simulator.app (for a hands-on dev squad)")
 	cmd.Flags().StringArrayVar(&iosSpecs, "ios-spec", nil, "iOS slot spec, repeatable: 'DEVICE:RUNTIME:COUNT'")
 	cmd.Flags().StringArrayVar(&androidSpec, "android-spec", nil, "Android slot spec, repeatable: 'DEVICE:IMAGE:COUNT[:TARGET]'")
+	cmd.Flags().StringVar(&deviceSet, "device-set", "", "deploy this named device set ([device_sets.NAME] in simsquad.toml) instead of the default matrix; the squad remembers it")
 	cmd.Flags().StringArrayVar(&platforms, "platform", nil, "deploy only this equipped platform, repeatable: 'ios' or 'android' (default: every equipped platform)")
 	cmd.Flags().StringArrayVar(&ctxEntries, "context", nil, "squad context entry, repeatable: 'KEY=VALUE' (any --context replaces TOML [context] entirely)")
 	cmd.Flags().BoolVar(&clearCtx, "clear-context", false, "on reuse: wipe the squad's existing context before applying --context / TOML")
@@ -143,6 +152,7 @@ type deployOpts struct {
 	noBuild     bool
 	preserve    bool
 	window      bool
+	deviceSet   string
 	iosSpecs    []string
 	androidSpec []string
 	ctxEntries  []string
@@ -192,6 +202,9 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 	// for this run" — both platforms ignore TOML. Omitting a platform's flag
 	// in that case means "skip this platform" rather than "fall back to TOML".
 	cliSpecMode := len(opts.iosSpecs) > 0 || len(opts.androidSpec) > 0
+	if opts.deviceSet != "" && cliSpecMode {
+		return errors.New("deploy: --device-set can't be combined with --ios-spec/--android-spec; a device set is the whole matrix")
+	}
 
 	iosSpecs, err := resolveIosSpecs(cfg, opts.iosSpecs, cliSpecMode)
 	if err != nil {
@@ -200,6 +213,17 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 	androidSpecs, err := resolveAndroidSpecs(cfg, opts.androidSpec, cliSpecMode)
 	if err != nil {
 		return err
+	}
+	deviceSet := opts.deviceSet
+	if !cliSpecMode {
+		set, err := resolveDeviceSet(cfg, canonName(opts.name), opts.deviceSet)
+		if err != nil {
+			return err
+		}
+		if set != nil {
+			deviceSet = set.Name
+			iosSpecs, androidSpecs = set.IOS, set.Android
+		}
 	}
 	iosRepo := resolveIosRepo(cfg, opts.iosRepo)
 	androidRepo := resolveAndroidRepo(cfg, opts.androidRepo)
@@ -211,14 +235,17 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 			return errors.New("deploy: --platform can't be combined with --ios-spec/--android-spec; --platform picks from the equipped matrix in simsquad.toml")
 		}
 		wantIos, wantAndroid, err := selectPlatforms(opts.platforms,
-			platformEquipment{repo: iosRepo, specs: len(iosSpecs)},
-			platformEquipment{repo: androidRepo, specs: len(androidSpecs)})
+			platformEquipment{repo: iosRepo, specs: len(iosSpecs), set: deviceSet},
+			platformEquipment{repo: androidRepo, specs: len(androidSpecs), set: deviceSet})
 		if err != nil {
 			return err
 		}
 		hasIos, hasAndroid = wantIos, wantAndroid
 	}
 	if !hasIos && !hasAndroid {
+		if deviceSet != "" {
+			return fmt.Errorf("deploy: device set %q has no devices for a platform with a repo configured", deviceSet)
+		}
 		return errors.New("deploy: no platform configured. Set ios.sims or android.sims in simsquad.toml or pass --ios-spec/--android-spec")
 	}
 
@@ -248,6 +275,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 	}
 
 	co := claimOpts{
+		deviceSet:    deviceSet,
 		iosSpecs:     deployedIosSpecs,
 		androidSpecs: deployedAndroidSpecs,
 		clearCtx:     opts.clearCtx,
@@ -508,6 +536,9 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 // how this deploy treats it. The matrices are the deployed platforms' only
 // (nil for a platform left out).
 type claimOpts struct {
+	// deviceSet is the named set this deploy deploys, recorded on the squad;
+	// "" (default matrix or spec flags) leaves the recorded name as it is.
+	deviceSet    string
 	iosSpecs     []contract.IosSpec
 	androidSpecs []contract.AndroidSpec
 	clearCtx     bool
@@ -565,6 +596,9 @@ func claimSquad(name string, o claimOpts) (squadClaim, error) {
 				existing.Context = nil
 			}
 			existing.Context = applyContextSource(existing.Context, o.tomlCtx, o.ctxOverrides)
+			if o.deviceSet != "" {
+				existing.DeviceSet = o.deviceSet
+			}
 			o.markClaim(existing)
 			if err := state.SaveRecord(existing); err != nil {
 				return fmt.Errorf("deploy: save context: %w", err)
@@ -574,6 +608,7 @@ func claimSquad(name string, o claimOpts) (squadClaim, error) {
 		rec := &contract.SquadRecord{
 			Name:      name,
 			CreatedAt: util.NowISO(),
+			DeviceSet: o.deviceSet,
 			Devices:   []contract.Device{},
 			Context:   applyContextSource(nil, o.tomlCtx, o.ctxOverrides),
 			Ports:     map[string]int{},
@@ -853,10 +888,12 @@ func splitByPlatform(devs []contract.Device) (iosDevs, androidDevs []contract.De
 }
 
 // platformEquipment is what deploy resolved for one platform: the repo to
-// build and how many matrix rows simsquad.toml lists for it.
+// build and how many matrix rows simsquad.toml lists for it, in the named
+// device set when set is not "".
 type platformEquipment struct {
 	repo  string
 	specs int
+	set   string
 }
 
 // selectPlatforms turns repeated --platform values into the platforms this
@@ -874,6 +911,9 @@ func selectPlatforms(values []string, iosEq, androidEq platformEquipment) (wantI
 			eq, label, wantAndroid = androidEq, "Android", true
 		default:
 			return false, false, fmt.Errorf("deploy: --platform %q: must be ios or android", v)
+		}
+		if eq.specs == 0 && eq.set != "" {
+			return false, false, fmt.Errorf("deploy: --platform %s: device set %q has no %s devices", v, eq.set, label)
 		}
 		if eq.specs == 0 {
 			return false, false, fmt.Errorf("deploy: --platform %s: this repo has no %s equipment; add %s devices with `simsquad equip`", v, label, label)
@@ -1017,6 +1057,39 @@ func reflectString3IntMaps(a, b map[[3]string]int) bool {
 		}
 	}
 	return true
+}
+
+// resolveDeviceSet returns the named device set this deploy takes its matrix
+// from, or nil for the default matrix. An explicit --device-set wins;
+// without one, the set the squad recorded is re-resolved from the current
+// config, so editing the set changes what a bare redeploy deploys. Callers
+// skip this in spec-flag mode.
+func resolveDeviceSet(cfg *config.Config, squad, explicit string) (*config.DeviceSet, error) {
+	name := explicit
+	if name == "" {
+		rec, err := state.LoadRecord(squad)
+		if err != nil {
+			return nil, fmt.Errorf("deploy: load squad %s: %w", squad, err)
+		}
+		if rec == nil || rec.DeviceSet == "" {
+			return nil, nil
+		}
+		name = rec.DeviceSet
+		set, ok := cfg.DeviceSet(name)
+		if !ok {
+			return nil, fmt.Errorf("deploy: squad %q was deployed from device set %q, which the config no longer defines; pass `--device-set` to deploy another set or `dismiss` the squad", squad, name)
+		}
+		return &set, nil
+	}
+	set, ok := cfg.DeviceSet(name)
+	if !ok {
+		known := "none are defined"
+		if names := cfg.DeviceSetNames(); len(names) > 0 {
+			known = "defined: " + strings.Join(names, ", ")
+		}
+		return nil, fmt.Errorf("deploy: --device-set %q: no such device set in simsquad.toml or simsquad.local.toml (%s)", name, known)
+	}
+	return &set, nil
 }
 
 // resolveIosRepo picks the iOS repo path with precedence: CLI flag > env var >
