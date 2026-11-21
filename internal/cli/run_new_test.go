@@ -298,6 +298,22 @@ func TestRunNewRefusesSecondRunUntilReported(t *testing.T) {
 	}
 }
 
+func TestRunNewAllowsUnfinishedRunOnOtherPlatform(t *testing.T) {
+	repo := newEquippedRepo(t, "app", equipBoth)
+	writeTestFile(t, filepath.Join(repo, "ios.feature"), "@ios\nFeature: I\n  Scenario: one\n    Given something\n")
+	writeTestFile(t, filepath.Join(repo, "android.feature"), "@android\nFeature: A\n  Scenario: one\n    Given something\n")
+
+	first := mustRunNew(t, "ios.feature")
+	second := mustRunNew(t, "android.feature")
+	if second.SquadName != first.SquadName {
+		t.Fatalf("squads = %q, %q, want the same squad", first.SquadName, second.SquadName)
+	}
+	_, err := runRunNew(t, "ios.feature")
+	if err == nil || !strings.Contains(err.Error(), first.RunID+" on ios ") {
+		t.Fatalf("err = %v, want refusal naming %s on ios", err, first.RunID)
+	}
+}
+
 func TestRunNewFreshUsesUniqueSquadAndSkipsConcurrencyCheck(t *testing.T) {
 	repo := newEquippedRepo(t, "app", equipBoth)
 	writeTestFile(t, filepath.Join(repo, "x.feature"), "Feature: X\n  Scenario: one\n    Given something\n")

@@ -1,9 +1,9 @@
 // Package runsetup turns a feature file and a repo's equipment into a test
 // run: it picks the squad and platforms, refuses what can't run (unequipped
-// platforms, a squad busy with an unfinished run), computes the per-worker
-// deadline so the agent never does that arithmetic, and creates the run
-// folder `.simsquad/runs/<run-id>/` with run.json and a copy of the feature
-// file. It is the logic behind `simsquad run new`.
+// platforms, a squad whose platform an unfinished run still uses), computes
+// the per-worker deadline so the agent never does that arithmetic, and
+// creates the run folder `.simsquad/runs/<run-id>/` with run.json and a copy
+// of the feature file. It is the logic behind `simsquad run new`.
 package runsetup
 
 import (
@@ -109,7 +109,7 @@ func New(opts Options) (contract.RunRecord, string, error) {
 	runsRoot := filepath.Join(configDir, RunsDir)
 	if opts.Fresh {
 		squad += "-" + randomHex(3)
-	} else if err := refuseUnfinished(runsRoot, squad); err != nil {
+	} else if err := refuseUnfinished(runsRoot, squad, rec.Platforms); err != nil {
 		return contract.RunRecord{}, "", err
 	}
 	rec.SquadName = squad
@@ -198,8 +198,11 @@ func deadline(rec contract.RunRecord) int {
 }
 
 // refuseUnfinished rejects a run on a squad that an earlier run in this repo
-// still uses: the two would reset each other's app state.
-func refuseUnfinished(runsRoot, squad string) error {
+// still uses on one of the same platforms: the two would reset each other's
+// app state. Runs on disjoint platforms touch different devices, so they may
+// overlap. A run.json written before `platforms` existed has none recorded;
+// it is treated as using every platform, the refusal it always got.
+func refuseUnfinished(runsRoot, squad string, platforms []string) error {
 	entries, err := os.ReadDir(runsRoot)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -219,7 +222,19 @@ func refuseUnfinished(runsRoot, squad string) error {
 		if _, err := os.Stat(filepath.Join(dir, contract.RunReportFile)); err == nil {
 			continue
 		}
-		return fmt.Errorf("squad %s is in use by unfinished run %s (no %s yet); finish it with `simsquad run report %s`, or pass --fresh", squad, other.RunID, contract.RunReportFile, dir)
+		shared := platforms
+		if len(other.Platforms) > 0 {
+			shared = nil
+			for _, p := range platforms {
+				if slices.Contains(other.Platforms, p) {
+					shared = append(shared, p)
+				}
+			}
+		}
+		if len(shared) == 0 {
+			continue
+		}
+		return fmt.Errorf("squad %s is in use by unfinished run %s on %s (no %s yet); finish it with `simsquad run report %s`, or pass --fresh", squad, other.RunID, strings.Join(shared, ", "), contract.RunReportFile, dir)
 	}
 	return nil
 }
