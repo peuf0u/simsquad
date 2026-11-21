@@ -240,6 +240,13 @@ func Build(opts BuildOptions) (BuildResult, error) {
 			return BuildResult{}, err
 		}
 		res.APKPath, res.BundleID = artifact, bid
+		// No install signal tells a missing feature split apart (the app
+		// installs and starts), so this warns and leaves the device ready.
+		if mods := DynamicFeatureModules(opts.Repo); len(mods) > 0 && opts.Logger != nil {
+			opts.Logger.Warn("android-build: only the base APK is installed; the dynamic feature modules are left out",
+				progress.F("modules", strings.Join(mods, ",")),
+				progress.F("fix", "set android_gradle_task to "+BundleTaskFor(task)))
+		}
 		return res, nil
 	}
 
