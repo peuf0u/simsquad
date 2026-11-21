@@ -37,6 +37,7 @@ func newDeployCmd() *cobra.Command {
 		clearCtx    bool
 		envEntries  []string // deprecated --env
 		clearEnv    bool     // deprecated --clear-env
+		platforms   []string
 	)
 
 	cmd := &cobra.Command{
@@ -81,6 +82,7 @@ func newDeployCmd() *cobra.Command {
 				androidSpec: androidSpec,
 				ctxEntries:  ctxEntries,
 				clearCtx:    clearCtx,
+				platforms:   platforms,
 			})
 		},
 	}
@@ -95,6 +97,7 @@ func newDeployCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&preserve, "preserve-data", false, "on reuse: install without wiping app data")
 	cmd.Flags().StringArrayVar(&iosSpecs, "ios-spec", nil, "iOS slot spec, repeatable: 'DEVICE:RUNTIME:COUNT'")
 	cmd.Flags().StringArrayVar(&androidSpec, "android-spec", nil, "Android slot spec, repeatable: 'DEVICE:IMAGE:COUNT[:TARGET]'")
+	cmd.Flags().StringArrayVar(&platforms, "platform", nil, "deploy only this equipped platform, repeatable: 'ios' or 'android' (default: every equipped platform)")
 	cmd.Flags().StringArrayVar(&ctxEntries, "context", nil, "squad context entry, repeatable: 'KEY=VALUE' (any --context replaces TOML [context] entirely)")
 	cmd.Flags().BoolVar(&clearCtx, "clear-context", false, "on reuse: wipe the squad's existing context before applying --context / TOML")
 	// Pre-0.5.0 names, kept for one release.
@@ -121,6 +124,32 @@ type deployOpts struct {
 	androidSpec []string
 	ctxEntries  []string
 	clearCtx    bool
+	platforms   []string
+}
+
+// deployOps is every call deploy makes into Xcode, Gradle, simctl, avdmanager
+// or adb. Production uses the real packages; the in-process CLI tests swap in
+// fakes so the reuse, merge and exit-code rules run without a simulator.
+type deployOps struct {
+	iosDestination       func(deviceType, runtime, tag string) (string, bool, error)
+	deleteIosDestination func(udid string) error
+	iosBuild             func(ios.BuildOptions) (ios.BuildResult, error)
+	androidBuild         func(android.BuildOptions) (android.BuildResult, error)
+	iosProvision         func(ios.ProvisionInput) []contract.Device
+	androidProvision     func(android.ProvisionInput) android.ProvisionResult
+	teardownSquad        func(name string, logger *progress.Logger) error
+	teardownDevices      func(devs []contract.Device, logger *progress.Logger)
+}
+
+var deployVia = deployOps{
+	iosDestination:       ios.EnsureDestinationUDID,
+	deleteIosDestination: ios.DeleteDestinationSim,
+	iosBuild:             ios.Build,
+	androidBuild:         android.Build,
+	iosProvision:         ios.Provision,
+	androidProvision:     android.Provision,
+	teardownSquad:        teardown.Squad,
+	teardownDevices:      teardown.Devices,
 }
 
 // runDeploy is the deploy command entry point: build, provision, persist,
@@ -156,6 +185,18 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 
 	hasIos := iosRepo != "" && len(iosSpecs) > 0
 	hasAndroid := androidRepo != "" && len(androidSpecs) > 0
+	if len(opts.platforms) > 0 {
+		if cliSpecMode {
+			return errors.New("deploy: --platform can't be combined with --ios-spec/--android-spec; --platform picks from the equipped matrix in simsquad.toml")
+		}
+		wantIos, wantAndroid, err := selectPlatforms(opts.platforms,
+			platformEquipment{repo: iosRepo, specs: len(iosSpecs)},
+			platformEquipment{repo: androidRepo, specs: len(androidSpecs)})
+		if err != nil {
+			return err
+		}
+		hasIos, hasAndroid = wantIos, wantAndroid
+	}
 	if !hasIos && !hasAndroid {
 		return errors.New("deploy: no platform configured. Set ios.sims or android.sims in simsquad.toml or pass --ios-spec/--android-spec")
 	}
@@ -222,7 +263,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 			// it instead of forcing a manual dismiss in the build-debug retry
 			// loop. rec stays nil so the create branch below rebuilds it.
 			logger.Info("deploy: reset-empty", progress.F("name", existing.Name))
-			if terr := teardown.Squad(existing.Name, logger); terr != nil {
+			if terr := deployVia.teardownSquad(existing.Name, logger); terr != nil {
 				logger.Warn("deploy: reset-empty", progress.F("error", terr.Error()))
 			}
 		}
@@ -273,7 +314,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		}
 		if iosDestUDID == "" {
 			spec := iosSpecs[0]
-			udid, created, derr := ios.EnsureDestinationUDID(spec.Device, spec.Runtime, squadName)
+			udid, created, derr := deployVia.iosDestination(spec.Device, spec.Runtime, squadName)
 			if derr != nil {
 				logger.Warn("ios-build: destination-error", progress.F("error", derr.Error()))
 			} else {
@@ -284,7 +325,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 	}
 	defer func() {
 		if iosDestCreated && iosDestUDID != "" {
-			_ = ios.DeleteDestinationSim(iosDestUDID)
+			_ = deployVia.deleteIosDestination(iosDestUDID)
 		}
 	}()
 
@@ -304,7 +345,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		repo := iosRepo
 		buildGroup.Go(func() error {
 			done := logger.Step("ios-build", progress.F("repo", repo), progress.F("scheme", scheme))
-			res, berr := ios.Build(ios.BuildOptions{
+			res, berr := deployVia.iosBuild(ios.BuildOptions{
 				Repo:            repo,
 				DestinationUDID: iosDestUDID,
 				Force:           opts.forceBuild,
@@ -335,7 +376,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		repo := androidRepo
 		buildGroup.Go(func() error {
 			done := logger.Step("android-build", progress.F("repo", repo), progress.F("task", task))
-			res, berr := android.Build(android.BuildOptions{
+			res, berr := deployVia.androidBuild(android.BuildOptions{
 				Repo:       repo,
 				Force:      opts.forceBuild,
 				NoBuild:    opts.noBuild,
@@ -381,7 +422,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		}
 		provGroup.Go(func() error {
 			done := logger.Step("ios-provision", progress.F("slots", iosSlotCount(iosSpecs)))
-			iosDevices = ios.Provision(iosIn)
+			iosDevices = deployVia.iosProvision(iosIn)
 			done(nil)
 			return nil
 		})
@@ -399,7 +440,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		}
 		provGroup.Go(func() error {
 			done := logger.Step("android-provision", progress.F("slots", androidSlotCount(androidSpecs)))
-			res := android.Provision(andIn)
+			res := deployVia.androidProvision(andIn)
 			androidDevices = res.Devices
 			androidPorts = res.Ports
 			done(nil)
@@ -430,7 +471,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		// Build/provision produced nothing usable and we created this squad
 		// this run — don't leave a stale empty record to block or confuse the
 		// next deploy. (Done with the logger still open so it narrates.)
-		if terr := teardown.Squad(rec.Name, logger); terr != nil {
+		if terr := deployVia.teardownSquad(rec.Name, logger); terr != nil {
 			logger.Warn("deploy: cleanup-empty", progress.F("error", terr.Error()))
 		}
 	} else if err := state.TouchSquad(rec.Name); err != nil {
@@ -450,6 +491,40 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		return &ExitError{Code: code}
 	}
 	return nil
+}
+
+// platformEquipment is what deploy resolved for one platform: the repo to
+// build and how many matrix rows simsquad.toml lists for it.
+type platformEquipment struct {
+	repo  string
+	specs int
+}
+
+// selectPlatforms turns repeated --platform values into the platforms this
+// deploy builds and boots. A platform the repo isn't equipped for is refused
+// rather than skipped, mirroring `run new`, so a missing device or repo is an
+// explicit setup step instead of a silently empty deploy.
+func selectPlatforms(values []string, iosEq, androidEq platformEquipment) (wantIos, wantAndroid bool, err error) {
+	for _, v := range values {
+		var eq platformEquipment
+		var label string
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case string(contract.PlatformIOS):
+			eq, label, wantIos = iosEq, "iOS", true
+		case string(contract.PlatformAndroid):
+			eq, label, wantAndroid = androidEq, "Android", true
+		default:
+			return false, false, fmt.Errorf("deploy: --platform %q: must be ios or android", v)
+		}
+		if eq.specs == 0 {
+			return false, false, fmt.Errorf("deploy: --platform %s: this repo has no %s equipment; add %s devices with `simsquad equip`", v, label, label)
+		}
+		if eq.repo == "" {
+			return false, false, fmt.Errorf("deploy: --platform %s: no %s repo configured; set project.%s_repo in simsquad.toml, SIMSQUAD_%s_REPO or --%s-repo",
+				v, label, strings.ToLower(label), strings.ToUpper(label), strings.ToLower(label))
+		}
+	}
+	return wantIos, wantAndroid, nil
 }
 
 // exitCodeFromDevices encodes the squad-readiness summary as a Unix exit code:

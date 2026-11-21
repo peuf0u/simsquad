@@ -62,12 +62,7 @@ func Squad(name string, logger *progress.Logger) error {
 		return nil
 	}
 
-	for _, dev := range rec.Devices {
-		if err := teardownDevice(dev); err != nil && logger != nil {
-			logger.Warn("teardown: device-error",
-				progress.F("udid", dev.UDID), progress.F("error", err.Error()))
-		}
-	}
+	Devices(rec.Devices, logger)
 
 	if err := state.RemoveRecord(name); err != nil && logger != nil {
 		logger.Warn("teardown: remove-record",
@@ -80,6 +75,20 @@ func Squad(name string, logger *progress.Logger) error {
 		logger.Success("teardown: removed", progress.F("name", name))
 	}
 	return nil
+}
+
+// Devices shuts down and deletes the given devices (uninstalls the app on
+// physical ones) without touching any record or the registry. Deploy uses it
+// to reset one platform of a squad while the other platform's devices stay.
+// Per-device failures are logged, not returned: the device is gone from the
+// caller's point of view either way.
+func Devices(devs []contract.Device, logger *progress.Logger) {
+	for _, dev := range devs {
+		if err := teardownDevice(dev); err != nil && logger != nil {
+			logger.Warn("teardown: device-error",
+				progress.F("udid", dev.UDID), progress.F("error", err.Error()))
+		}
+	}
 }
 
 func teardownDevice(dev contract.Device) error {
