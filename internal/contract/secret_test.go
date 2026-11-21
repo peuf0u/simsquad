@@ -115,14 +115,20 @@ func TestSquadRecordContextMutators(t *testing.T) {
 	rec.UnsetContext("missing") // no-op on an empty record
 }
 
+// SecretValues feeds worker.log redaction. A value secret only by its
+// key's name is left out under 4 characters (TOKEN_TTL=5 would turn every 5
+// in the log into <secret>); an explicit secret is always in.
 func TestSquadRecordSecretValues(t *testing.T) {
 	t.Parallel()
 	rec := SquadRecord{
-		Context:    map[string]string{"user": "alice", "pin": "1234", "api_token": "t0k", "empty_secret": ""},
-		SecretKeys: []string{"pin"},
+		Context: map[string]string{
+			"user": "alice", "pin": "1234", "otp": "7", "api_token": "t0k",
+			"TOKEN_TTL": "5", "password": "hunter2", "empty_secret": "", "Secret_Word": "žlut",
+		},
+		SecretKeys: []string{"otp", "pin"},
 	}
 	got := rec.SecretValues()
-	want := []string{"1234", "t0k"}
+	want := []string{"hunter2", "žlut", "1234", "7"} // longest first, in bytes
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("SecretValues = %v, want %v", got, want)
 	}

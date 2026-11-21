@@ -217,3 +217,58 @@ func TestRunWorkerRedactsTheSquadsSecrets(t *testing.T) {
 		t.Fatalf("worker.log lost its other text:\n%s", log)
 	}
 }
+
+// devices --reveal prints a secret JSON-escaped; a worker log that repeats
+// that output must not show it either.
+func TestRunWorkerRedactsRevealOutput(t *testing.T) {
+	t.Setenv("SIMSQUAD_CACHE_DIR", t.TempDir())
+	seedSecretSquad(t, "sq")
+	if _, code := runRoot(t, "set-context", "--name", "sq", "--set-secret", `quoted=pa"ss\1`); code != 0 {
+		t.Fatalf("set-context: exit %d", code)
+	}
+	reveal, code := runRoot(t, "devices", "--name", "sq", "--reveal")
+	if code != 0 || !strings.Contains(reveal, `pa\"ss\\1`) {
+		t.Fatalf("devices --reveal: exit %d\n%s", code, reveal)
+	}
+	run := t.TempDir()
+	writeTestFile(t, filepath.Join(run, "run.json"), `{"run_id": "r", "squad_name": "sq"}`)
+	revealFile := filepath.Join(t.TempDir(), "reveal.txt")
+	writeTestFile(t, revealFile, reveal)
+	dir := filepath.Join(run, "workers", "udid-1")
+	if _, _, err := runWorker(t, "--dir", dir, "--timeout", "10", "--", "cat", revealFile); err != nil {
+		t.Fatalf("run worker: %v", err)
+	}
+	log := readFile(t, filepath.Join(dir, "worker.log"))
+	for _, leak := range []string{`pa\"ss\\1`, "4711", "hunter2"} {
+		if strings.Contains(log, leak) {
+			t.Fatalf("worker.log shows %s:\n%s", leak, log)
+		}
+	}
+	if !strings.Contains(log, `"quoted": "<secret>"`) {
+		t.Fatalf("worker.log lacks the masked key:\n%s", log)
+	}
+}
+
+// A short value secret only by its key's name stays in worker.log, so
+// TOKEN_TTL=5 doesn't turn "5-hour limit reached" into something the
+// usage-limit check misses.
+func TestRunWorkerKeepsShortNameRuleValues(t *testing.T) {
+	t.Setenv("SIMSQUAD_CACHE_DIR", t.TempDir())
+	seedSecretSquad(t, "sq")
+	if _, code := runRoot(t, "set-context", "--name", "sq", "--set", "TOKEN_TTL=5"); code != 0 {
+		t.Fatalf("set-context: exit %d", code)
+	}
+	run := t.TempDir()
+	writeTestFile(t, filepath.Join(run, "run.json"), `{"run_id": "r", "squad_name": "sq"}`)
+	dir := filepath.Join(run, "workers", "udid-1")
+	stdout, _, err := runWorker(t, "--dir", dir, "--timeout", "10", "--", "sh", "-c", "echo 'pin 4711'; echo '5-hour limit reached ∙ resets 3pm'; exit 1")
+	if err != nil {
+		t.Fatalf("run worker: %v", err)
+	}
+	if got := decodeWorkerStatus(t, stdout); got != "error: usage limit" {
+		t.Fatalf("status = %q, want error: usage limit", got)
+	}
+	if log := readFile(t, filepath.Join(dir, "worker.log")); strings.Contains(log, "4711") {
+		t.Fatalf("worker.log shows the explicit secret:\n%s", log)
+	}
+}

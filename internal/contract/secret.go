@@ -4,6 +4,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // SecretMask is the value a secret context key shows in everything simsquad
@@ -73,13 +74,27 @@ func (s SquadRecord) RevealedDeviceView(d Device) DeviceView {
 	return NewDeviceView(d, s.CreatedAt, s.Context)
 }
 
-// SecretValues returns the non-empty values of the squad's secrets, longest
-// first, so a redactor replacing them in order never leaves part of a longer
-// secret that contains a shorter one.
+// minNameRuleRedact is the shortest value redacted from worker.log when
+// only its key's name marks it secret. Such keys are often settings, not
+// credentials (TOKEN_TTL=5, SECRET_MENU=true): redacting every "5" would
+// wreck the log and hide a "5-hour limit reached" from the usage-limit
+// check. Explicit secrets are redacted whatever their length, and outputs
+// mask every secret regardless.
+const minNameRuleRedact = 4
+
+// SecretValues returns the values to redact from a worker's log: every
+// non-empty explicit secret, and each value secret only by its key's name
+// that is at least minNameRuleRedact characters long. Longest first, so a
+// redactor replacing them in order never leaves part of a longer secret
+// that contains a shorter one.
 func (s SquadRecord) SecretValues() []string {
 	var out []string
 	for k, v := range s.Context {
-		if v != "" && s.IsSecret(k) && !slices.Contains(out, v) {
+		if v == "" || slices.Contains(out, v) {
+			continue
+		}
+		explicit := slices.Contains(s.SecretKeys, k)
+		if explicit || (SecretByName(k) && utf8.RuneCountInString(v) >= minNameRuleRedact) {
 			out = append(out, v)
 		}
 	}

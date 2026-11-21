@@ -60,7 +60,10 @@ type Worker struct {
 	// contract.SecretMask in worker.log as the log is written: a Codex
 	// worker's output repeats the commands it ran and their output, a
 	// revealed secret included. With none, the output goes straight to
-	// the file.
+	// the file. `run worker` passes contract.SquadRecord.SecretValues: every
+	// explicit secret, but a value secret only by its key's name only when
+	// it has at least 4 characters (TOKEN_TTL=5 must not mask every "5").
+	// Each value is matched raw and JSON-escaped.
 	Redact []string
 }
 

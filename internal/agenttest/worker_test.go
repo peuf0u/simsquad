@@ -344,3 +344,54 @@ func TestLineRedactor(t *testing.T) {
 		t.Fatalf("redacted = %q, want %q", out.String(), want)
 	}
 }
+
+// A secret that a write splits right after a newline it contains, or that
+// straddles the cut of an over-long unfinished line, is still caught whole.
+func TestLineRedactorSplitSecrets(t *testing.T) {
+	long := strings.Repeat("x", maxPartialLine-3)
+	cases := map[string]struct {
+		secret string
+		chunks []string
+	}{
+		"newline inside":   {"ab\ncd", []string{"pre ab\n", "cd post\n"}},
+		"partial-line cut": {"hunter2", []string{long + "hun", "ter2 end"}},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			var out strings.Builder
+			r := newLineRedactor(&out, []string{c.secret})
+			for _, chunk := range c.chunks {
+				if _, err := r.Write([]byte(chunk)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := r.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			got := out.String()
+			if strings.Contains(got, c.secret) || !strings.Contains(got, "<secret>") {
+				t.Fatalf("redacted output still holds the secret or lacks the mask (len %d): %q", len(got), got[max(0, len(got)-40):])
+			}
+			want := strings.ReplaceAll(strings.Join(c.chunks, ""), c.secret, "<secret>")
+			if got != want {
+				t.Fatalf("redacted output differs from the whole text redacted at once")
+			}
+		})
+	}
+}
+
+// simsquad prints a secret JSON-escaped (devices --reveal), and a worker
+// log repeats it so: the escaped form is redacted too.
+func TestLineRedactorJSONEscapedForm(t *testing.T) {
+	var out strings.Builder
+	r := newLineRedactor(&out, []string{`pa"ss\1<x>`})
+	if _, err := r.Write([]byte(`"password": "pa\"ss\\1<x>"` + "\n" + `html "pa\"ss\\1\u003cx\u003e"` + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if want := "\"password\": \"<secret>\"\nhtml \"<secret>\"\n"; out.String() != want {
+		t.Fatalf("redacted = %q, want %q", out.String(), want)
+	}
+}
