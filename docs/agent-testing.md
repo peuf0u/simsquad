@@ -233,7 +233,7 @@ lever on how far it gets. Keep it short and concrete:
 - **Getting in:** which accounts or personas to use on which stage and
   which squad context keys hold their credentials, how to log in, one-time
   codes or how to skip them, onboarding screens to dismiss. Keep real
-  secrets in the squad context, not in this file.
+  secrets in `[secrets]` in `simsquad.local.toml`, not in this file.
 - **Navigation:** how to reach the main areas, hidden menus (debug menu,
   long-presses), deep links.
 - **Known quirks:** slow first launch, permission dialogs, flaky screens,
@@ -242,7 +242,14 @@ lever on how far it gets. Keep it short and concrete:
 
 Credentials and stage URLs that change per squad belong in the squad's
 `context` (`simsquad.toml [context]` or `deploy --context`), which every
-worker gets in its device row.
+worker gets in its device row. Passwords and tokens go in `[secrets]`
+(`simsquad.local.toml`, or `deploy --secret`): the device row, the
+orchestrator's files and the report show them as `<secret>`, and the
+worker fetches the value with `simsquad devices --name <squad> --reveal`
+when it logs in, types it with `mobilecli` and keeps it out of `log.md`,
+`result.json` and file names. `run worker` replaces secret values with
+`<secret>` in `worker.log`. A key named like `password`, `secret` or
+`token` is a secret even in `[context]`.
 
 ## Codex
 

@@ -8,6 +8,28 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- **Secret context keys.** A secret is a context key whose value simsquad
+  keeps out of everything it prints or writes into a run: any key of the
+  new `[secrets]` table (usually in `simsquad.local.toml`), set with
+  `deploy --secret KEY=VALUE` or `set-context --set-secret KEY=VALUE`, and
+  any context key whose name contains `password`, `secret` or `token` (any
+  case; there's no opt-out, rename the key instead). `[secrets]` and
+  `[context]` are separate sources: any `--secret` replaces TOML
+  `[secrets]` and leaves `[context]` alone, `--context` leaves `[secrets]`
+  alone, and a key in both exits `1`. `[secrets]` in the committed
+  `simsquad.toml` works but warns on stderr, naming the keys. `--unset`
+  and `--clear` work on secrets like on any key; a secret overwritten with
+  `--set` stays a secret until it is unset. The squad record keeps the
+  real values and lists the marked keys as `secret_keys` (internal, like
+  `ports`). `simsquad devices --name X --reveal` prints the real values;
+  it is refused without `--name` and with `--out`. `equip` loads and saves
+  `[secrets]`, always into `simsquad.local.toml`, and its editor's
+  **Edit secrets** screen shows each value as `••••` except while that
+  field is edited. The `simsquad-test` worker fetches a `<secret>` value
+  with `devices --reveal`, types it with `mobilecli` and keeps it out of
+  `log.md`, `result.json` and file names; `skill install` adds
+  `simsquad devices` to the Claude Code worker permissions and the Codex
+  rules, and the app-notes scaffold points credentials at `[secrets]`.
 - **Named device sets: `deploy --device-set NAME`.** The equipment can hold
   named device matrices beside the default one, as
   `[[device_sets.<name>.ios.sims]]` / `[[device_sets.<name>.android.sims]]`
@@ -83,6 +105,17 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- **Breaking: secret context values print as `"<secret>"`.** `deploy`,
+  `status`, `devices`, `set-context` and `equip --show` (stdout and every
+  `--out` file, so a run's `deploy.json`, `devices.json`, `prompt.md`,
+  `report.json` and `report.md` too) keep a secret's key and replace its
+  value with the literal `"<secret>"`; `context` stays a string map and no
+  field changed. This applies to existing records and configs without any
+  migration: a `password` or `api_token` in plain `[context]` is masked by
+  its name. Consumers that read secret values from `devices` or `deploy`
+  now need `simsquad devices --name X --reveal`. `run report` masks by
+  name again when reading an older `deploy.json`, and `report.md` shows a
+  secret as `` `<secret>` ``. This ships in a minor release.
 - **Reusing an Android emulator checks that it is the squad's own, with or
   without `--window`.** Before installing on or restarting a reachable
   emulator, deploy asks it which AVD it runs (`adb emu avd name`, retried
@@ -197,6 +230,25 @@ All notable changes are recorded here. The format follows
   it up. `run new` now resolves symlinks in `run_dir` and `app_notes`, so
   the rules also match for a repo reached through a symlink; the squad
   name still comes from the path you're in.
+
+### Security
+
+- **Squad records are private.** Records and the registry are written
+  `0600` (an older record turns `0600` on its next save) and a new cache
+  root is created `0700`: the record holds secret values in clear, as the
+  only store of a secret given by flag.
+- **`run worker` redacts the squad's secrets from `worker.log`.** A Codex
+  worker's output repeats every command it ran and that command's output
+  (checked with `codex exec` 0.167: a shell call prints as `exec`, the
+  command line, `succeeded in …:` and its stdout), so a
+  `devices --reveal` would land in the run folder. When the worker folder
+  sits in a run folder, `run worker` reads the squad from `run.json` and
+  replaces each secret value with `<secret>` line by line as it writes the
+  log, so a value split across writes is still caught.
+- **Malformed `--context`, `--secret`, `--set` and `--set-secret` entries
+  no longer echo the entry.** The error names the flag and the entry's
+  position (`--context entry 2 is malformed: expected KEY=VALUE`), or the
+  key for a duplicate; equip's editor does the same.
 
 ## [0.5.0] - 2026-10-14
 

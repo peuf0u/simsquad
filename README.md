@@ -93,6 +93,15 @@ and verdicts: [docs/agent-testing.md](docs/agent-testing.md).
   `bob-staging`, `alice-prod`) to run different personas/environments in
   parallel.
 
+- **Secrets stay out of output.** A context key from `[secrets]` (or
+  `deploy --secret`, `set-context --set-secret`), or any key whose name
+  contains `password`, `secret` or `token`, is a secret: every command
+  prints it as `"<secret>"`, its `--out` file too, and so does the test
+  report. Only `simsquad devices --name X --reveal` prints the real value
+  (refused without `--name` and with `--out`), for the worker that types
+  it into the app. The squad record under `~/.cache/simsquad/` keeps the
+  real value and is readable by you alone (`0600`).
+
 - **Naming discipline = isolation.** simsquad doesn't have lease primitives.
   Pick a unique name per consumer — `agent-{session_id}`, `ci-pr-{num}`,
   `dev-{user}` — and nothing else will touch your squad.
@@ -113,10 +122,10 @@ and verdicts: [docs/agent-testing.md](docs/agent-testing.md).
 
 | Command | Action | Key flags |
 |---|---|---|
-| `deploy` | Build + install; reuse the squad if it exists (same name+matrix), else provision fresh; emit the descriptor | `--name` (req), `--platform ios\|android`, `--device-set NAME`, `--ios-repo`/`--android-repo`, `--ios-spec`/`--android-spec`, `--context KEY=VALUE`, `--no-build`, `--force-build`, `--preserve-data`, `--window`, `--clear-context` |
+| `deploy` | Build + install; reuse the squad if it exists (same name+matrix), else provision fresh; emit the descriptor | `--name` (req), `--platform ios\|android`, `--device-set NAME`, `--ios-repo`/`--android-repo`, `--ios-spec`/`--android-spec`, `--context KEY=VALUE`, `--secret KEY=VALUE`, `--no-build`, `--force-build`, `--preserve-data`, `--window`, `--clear-context` |
 | `status` | Squad registry (no arg) or one full record (`--name`) | `--name` |
-| `devices` | Uniform device list — one squad (`--name`) or all (no arg) | `--name`, `--ready`, `--platform=ios\|android` |
-| `set-context` | Mutate a squad's context | `--name` (req), `--set KEY=VALUE`, `--unset KEY`, `--clear` |
+| `devices` | Uniform device list — one squad (`--name`) or all (no arg) | `--name`, `--ready`, `--platform=ios\|android`, `--reveal` (real secret values; needs `--name`, no `--out`) |
+| `set-context` | Mutate a squad's context | `--name` (req), `--set KEY=VALUE`, `--set-secret KEY=VALUE`, `--unset KEY`, `--clear` |
 | `reset` | Return apps to a clean state (terminate + wipe data) without re-provisioning | `--name` (req), `--device` (repeatable) |
 | `dismiss` | Tear down a squad (shutdown + delete its sims/AVDs) | `--name` (req) |
 | `sweep` | Dismiss squads whose repo path is gone (removed worktrees), then prune orphan `simsquad-*` sims/AVDs left by crashed deploys | — |
@@ -323,7 +332,11 @@ command's output to `<dir>/worker.log`. The outcome:
 
 A worker killed by a signal reports the negative signal number as its
 code (e.g. `-9`). Only these fixed texts are recorded, never lines from
-the log, which can hold credentials from the squad's context.
+the log, which can hold credentials from the squad's context. When `--dir`
+sits in a run folder (`<run>/workers/<id>`), the squad named by
+`<run>/run.json` has its secret values replaced by `<secret>` in
+`worker.log` as it is written: a Codex worker's output repeats the
+commands it ran and their output, `devices --reveal` included.
 
 Running `run worker` again on the same `--dir` is a retry. Before the
 worker starts, the earlier attempt's outputs (everything except
@@ -361,7 +374,8 @@ source of the device rows and context) and each ready device's
   worker status, scenarios and findings, and the counts. Paths are relative
   to the run dir.
 - `report.md`, pasteable into a PR: verdict, source link, context keys and
-  values as they are, the matrix, bugs by severity, per-device results.
+  values (secrets as `<secret>`), the matrix, bugs by severity, per-device
+  results.
 
 A status file overrides even a valid result; a missing or invalid
 `result.json` marks the worker `error` and is recorded with its
@@ -387,8 +401,24 @@ containing either:
 
 Run `simsquad equip` for an interactive setup wizard, or copy
 [`simsquad.toml.example`](simsquad.toml.example) and edit. See that file for the
-full annotated schema (`[project]`, `[context]`, `[agent]`, `[[ios.sims]]`,
-`[[android.sims]]`, `[device_sets.<name>]`).
+full annotated schema (`[project]`, `[context]`, `[secrets]`, `[agent]`,
+`[[ios.sims]]`, `[[android.sims]]`, `[device_sets.<name>]`).
+
+**Secrets.** Test-account passwords and tokens go in `[secrets]` in
+`simsquad.local.toml`:
+
+```toml
+[secrets]
+password = "hunter2"
+```
+
+Its keys join the squad context as secrets, shown as `"<secret>"` in every
+output (see Concepts). `[secrets]` and `[context]` are separate sources:
+`deploy --secret KEY=VALUE` replaces `[secrets]` and leaves `[context]`
+alone, `--context` leaves `[secrets]` alone, and a key in both is an
+error. A context key named like `password`, `secret` or `token` is a secret
+even in `[context]`. `[secrets]` in `simsquad.toml` works, but deploy warns
+that it is committed; `equip` saves secrets to `simsquad.local.toml`.
 
 **Device sets.** Besides the default matrix, the equipment can hold named
 device matrices, deployed with `deploy --device-set NAME`:

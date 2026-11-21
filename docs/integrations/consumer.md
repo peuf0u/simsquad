@@ -145,6 +145,13 @@ your runner uses) — it never talks back to simsquad.
 `bundle_id` is the installed app — everything a per-device test agent needs
 to launch, terminate, or wipe the app without a second lookup.
 
+A secret context key (from `[secrets]`, `deploy --secret` or
+`set-context --set-secret`, or any key whose name contains `password`,
+`secret` or `token`) keeps its key and shows the value `"<secret>"` here and
+in every other output. The agent that types it into the app fetches the
+real value with `simsquad devices --name <squad> --reveal`, which needs
+`--name` and is refused with `--out`.
+
 ### `devices` with no `--name` — whole-fleet view
 
 ```json
