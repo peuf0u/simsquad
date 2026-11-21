@@ -211,6 +211,52 @@ func (c *Config) Context() (ctx map[string]string, legacy bool) {
 // [env].
 const LegacyEnvWarning = "simsquad: [env] in simsquad.toml is deprecated; rename it to [context]"
 
+// Secrets returns the [secrets] table merged across both files (a local key
+// overrides the project's), or nil. Its keys join the squad context as
+// secrets: kept in the squad record, masked in every output. It is a source
+// separate from [context]; deploy rejects a key that is in both.
+func (c *Config) Secrets() map[string]string {
+	return stringTable(c.Get("secrets"))
+}
+
+// CommittedSecretKeys returns the sorted keys of simsquad.toml's own
+// [secrets] table: secrets in the file that is checked into git.
+func (c *Config) CommittedSecretKeys() []string {
+	table := stringTable(c.project["secrets"])
+	if len(table) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(table))
+	for k := range table {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// CommittedSecretsWarning is the stderr line for secrets in simsquad.toml.
+// It names the keys, never their values.
+func CommittedSecretsWarning(keys []string) string {
+	return fmt.Sprintf("simsquad: [secrets] in %s (checked into git) holds %s; move it to %s",
+		ProjectFile, strings.Join(keys, ", "), LocalFile)
+}
+
+// stringTable returns a TOML table's string values; nil for a missing or
+// empty table. Non-string values are skipped.
+func stringTable(v any) map[string]string {
+	raw, _ := v.(map[string]any)
+	out := make(map[string]string, len(raw))
+	for k, v := range raw {
+		if s, ok := v.(string); ok {
+			out[k] = s
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // AgentWorkerModel returns `[agent].worker_model`: the model id workers run
 // on, passed to the worker command as given and never validated.
 func (c *Config) AgentWorkerModel() string { return c.GetString("agent.worker_model") }

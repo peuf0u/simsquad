@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/peuf0u/simsquad/internal/contract"
@@ -151,5 +152,44 @@ count = 1
 	}
 	if got := cfg.DeviceSetNames(); !reflect.DeepEqual(got, []string{"mine", "old", "tablet"}) {
 		t.Fatalf("DeviceSetNames() = %v", got)
+	}
+}
+
+func TestSecretsMergeAcrossLayers(t *testing.T) {
+	t.Parallel()
+	cfg := loadLayers(t,
+		"[context]\nuser = \"alice\"\n\n[secrets]\napi_key = \"shared\"\npin = \"0000\"\n",
+		"[secrets]\npin = \"1234\"\npassword = \"hunter2\"\n")
+	want := map[string]string{"api_key": "shared", "pin": "1234", "password": "hunter2"}
+	if got := cfg.Secrets(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("Secrets() = %v, want %v", got, want)
+	}
+	if got := cfg.CommittedSecretKeys(); !reflect.DeepEqual(got, []string{"api_key", "pin"}) {
+		t.Fatalf("CommittedSecretKeys() = %v, want [api_key pin]", got)
+	}
+	// [secrets] stays out of the plain context.
+	if ctx, _ := cfg.Context(); !reflect.DeepEqual(ctx, map[string]string{"user": "alice"}) {
+		t.Fatalf("Context() = %v, want only user", ctx)
+	}
+}
+
+func TestSecretsAbsent(t *testing.T) {
+	t.Parallel()
+	cfg := loadLayers(t, "[project]\n", "[secrets]\npassword = \"hunter2\"\n")
+	if keys := cfg.CommittedSecretKeys(); keys != nil {
+		t.Fatalf("CommittedSecretKeys() = %v, want none when only the local file has [secrets]", keys)
+	}
+	if got := loadLayers(t, "[project]\n", "").Secrets(); got != nil {
+		t.Fatalf("Secrets() = %v, want nil", got)
+	}
+}
+
+func TestCommittedSecretsWarningNamesKeysNotValues(t *testing.T) {
+	t.Parallel()
+	got := CommittedSecretsWarning([]string{"api_key", "pin"})
+	for _, want := range []string{"api_key", "pin", "simsquad.toml", "simsquad.local.toml"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("warning %q does not mention %q", got, want)
+		}
 	}
 }

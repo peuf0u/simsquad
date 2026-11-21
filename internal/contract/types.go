@@ -136,18 +136,27 @@ type Builds struct {
 // squad was deployed from, empty for the default matrix or spec flags. Only
 // the name is kept: a bare redeploy re-resolves the set from the current
 // config.
+//
+// Context keeps real values, secrets included: the record is the only store
+// of a secret given by flag, and reveal and reuse need it. SecretKeys is the
+// explicit set of secret keys (from [secrets], --secret, --set-secret),
+// sorted and always a subset of Context's keys; keys whose name marks them
+// secret are not listed (see IsSecret). It is internal, like Ports: outputs
+// show secrets masked instead (see MaskedContext).
 type SquadRecord struct {
-	Name      string            `json:"name"`
-	CreatedAt string            `json:"created_at"`
-	DeviceSet string            `json:"device_set,omitempty"`
-	Builds    Builds            `json:"builds"`
-	Devices   []Device          `json:"devices"`
-	Context   map[string]string `json:"context,omitempty"`
-	Ports     map[string]int    `json:"ports,omitempty"`
+	Name       string            `json:"name"`
+	CreatedAt  string            `json:"created_at"`
+	DeviceSet  string            `json:"device_set,omitempty"`
+	Builds     Builds            `json:"builds"`
+	Devices    []Device          `json:"devices"`
+	Context    map[string]string `json:"context,omitempty"`
+	SecretKeys []string          `json:"secret_keys,omitempty"`
+	Ports      map[string]int    `json:"ports,omitempty"`
 }
 
 // Public projects a SquadRecord into the stdout/status JSON shape. It drops
-// the internal Ports map; callers may set Reused on top.
+// the internal Ports map and secret-key set and masks secret context values;
+// callers may set Reused on top.
 func (s SquadRecord) Public() SquadPublic {
 	return SquadPublic{
 		Name:      s.Name,
@@ -155,7 +164,7 @@ func (s SquadRecord) Public() SquadPublic {
 		DeviceSet: s.DeviceSet,
 		Builds:    s.Builds,
 		Devices:   s.Devices,
-		Context:   s.Context,
+		Context:   s.MaskedContext(),
 	}
 }
 
