@@ -90,7 +90,9 @@ func RunWorker(ctx context.Context, w Worker) (string, error) {
 	if err := archiveAttempt(w.Dir); err != nil {
 		return "", err
 	}
-	logf, err := os.OpenFile(filepath.Join(w.Dir, LogFile), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	// Private: redaction can't promise a clean log (it skips short name-rule
+	// values and can't recognise a value the worker's shell quoted).
+	logf, err := os.OpenFile(filepath.Join(w.Dir, LogFile), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return "", fmt.Errorf("open worker log: %w", err)
 	}

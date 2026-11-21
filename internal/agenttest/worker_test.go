@@ -307,6 +307,23 @@ func TestRunWorkerRedactsSecretsInLog(t *testing.T) {
 	}
 }
 
+// worker.log is private to the user: it can hold secret values the
+// redactor skips (short name-rule values) or can't recognise (a value the
+// worker's shell quoted).
+func TestRunWorkerWritesLogPrivate(t *testing.T) {
+	dir := t.TempDir()
+	if got := runShellWorker(t, dir, "echo hello"); got != StatusNoResult {
+		t.Fatalf("status = %q, want %q", got, StatusNoResult)
+	}
+	fi, err := os.Stat(filepath.Join(dir, LogFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("worker.log mode = %o, want 600", perm)
+	}
+}
+
 // A worker that leaves a background process holding its output open still
 // finishes once its own process exits.
 func TestRunWorkerRedactingDoesNotWaitForGrandchildren(t *testing.T) {
