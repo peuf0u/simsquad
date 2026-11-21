@@ -281,8 +281,10 @@ All notable changes are recorded here. The format follows
   `false` (`TOKEN_TTL=5` would mask every `5`, including a `5-hour limit
   reached`, and `SECRET_MENU=true` every `true`); outputs mask it
   regardless. Secrets that overlap in the output (`xyz12` and `12345678`
-  in `xyz12345678`) are masked together as one `<secret>`. `worker.log` is
-  written `0600`, since it can still hold a value the redaction skips.
+  in `xyz12345678`) are masked together as one `<secret>`. What the
+  redaction holds back is bounded: output that repeats a secret back to
+  back without a newline is written out masked once 64 KiB pile up.
+  `worker.log` is written `0600`, since it can still hold a value the redaction skips.
 - **`simsquad.local.toml` is written `0600`** by `equip`, since it holds
   `[secrets]`; an existing `0644` file is tightened.
 - **`equip` keeps each `[context]` key in the file it came from.** Saving

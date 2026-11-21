@@ -518,3 +518,36 @@ func TestLineRedactorSplitInvariant(t *testing.T) {
 		}
 	}
 }
+
+// Review round 5, item 4: touching matches of one secret ("ab" in
+// "ababab…") with no newline form one run that always reaches the cut.
+// Held back whole, it would grow the buffer without limit; past
+// maxPartialLine the run is written out masked instead, and no secret
+// reaches the log.
+func TestLineRedactorBoundsATilingSecretRun(t *testing.T) {
+	var out strings.Builder
+	r := newLineRedactor(&out, []string{"ab"})
+	chunk := strings.Repeat("ab", 2048)
+	for written := 0; written < 4*maxPartialLine; written += len(chunk) {
+		if _, err := r.Write([]byte(chunk)); err != nil {
+			t.Fatal(err)
+		}
+		if len(r.buf) > maxPartialLine+len(chunk) {
+			t.Fatalf("buffer holds %d bytes after %d written, want at most %d",
+				len(r.buf), written+len(chunk), maxPartialLine+len(chunk))
+		}
+	}
+	if _, err := r.Write([]byte("a")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Write([]byte("b end\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.ReplaceAll(out.String(), "<secret>", "")
+	if got != " end\n" || !strings.HasPrefix(out.String(), "<secret>") {
+		t.Fatalf("log less its masks = %q, want only \" end\\n\" left", got)
+	}
+}

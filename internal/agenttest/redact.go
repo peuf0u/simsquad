@@ -29,7 +29,8 @@ const maxPartialLine = 64 << 10
 // back to the run's start, since a match the next write completes could
 // extend it. So every byte before the cut is decided by bytes already
 // there, and the log is the same however the worker's writes split its
-// output. Flush writes the rest.
+// output, except for a run held back past maxPartialLine (see emit). Flush
+// writes the rest.
 //
 // Each secret is also matched in its JSON-escaped form: simsquad prints a
 // secret that way (`devices --reveal` turns `pa"ss` into `pa\"ss`), and a
@@ -128,11 +129,29 @@ func (r *lineRedactor) emit(final bool) error {
 		start, end = i, i+len(s)
 	}
 	if start >= 0 {
-		if !final && end >= cut {
+		switch {
+		case final || end < cut:
+			mask()
+		case start == 0 && len(r.buf) > maxPartialLine:
+			// A chain of touching matches ("ab" in "ababab…" with no
+			// newline) reaches the cut on every write and would be held
+			// back, rescanned and grown without limit. Past maxPartialLine
+			// the run goes out masked up to its end, taking in every whole
+			// match that starts inside it. Only in this degenerate case can
+			// the log depend on how the writes split: a match touching the
+			// run's end that the next write completes gets a mask of its
+			// own, and the rest of a secret that starts inside the run but
+			// isn't whole yet is no longer recognised.
+			for i := cut; i < end; i++ {
+				if s := r.matchAt(i); s != nil {
+					end = max(end, i+len(s))
+				}
+			}
+			mask()
+			cut = end
+		default:
 			// The run reaches the cut: keep it back with the tail.
 			cut = start
-		} else {
-			mask()
 		}
 	}
 	out = append(out, r.buf[last:cut]...)
