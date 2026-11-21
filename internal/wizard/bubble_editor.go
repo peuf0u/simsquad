@@ -38,6 +38,7 @@ const (
 	actionIOSMatrix     editorAction = "ios-matrix"
 	actionAndroidMatrix editorAction = "android-matrix"
 	actionEditContext   editorAction = "edit-context"
+	actionEditSecrets   editorAction = "edit-secrets"
 	actionBack          editorAction = "back"
 	actionAddIOS        editorAction = "add-ios"
 	actionEditIOS       editorAction = "edit-ios"
@@ -79,7 +80,13 @@ type editorField struct {
 	required bool
 	count    bool
 	choices  []editorChoice
+	// secret fields show secretDots instead of their value, except in the
+	// input while the field is being edited.
+	secret bool
 }
+
+// secretDots stands in for a secret's value on screen.
+const secretDots = "••••"
 
 type editorChoice struct {
 	label string
@@ -131,6 +138,7 @@ var editorMenuItems = []menuItem{
 	{group: "Matrix", label: "Android matrix…", action: actionAndroidMatrix},
 	{group: "Matrix", label: "Device sets…", action: actionDeviceSets},
 	{group: "Context", label: "Edit context", action: actionEditContext},
+	{group: "Context", label: "Edit secrets", action: actionEditSecrets},
 }
 
 var iosSubmenuItems = []menuItem{
@@ -449,17 +457,15 @@ func (m editorModel) startAction(action editorAction) (tea.Model, tea.Cmd) {
 		// "Add new" field where the user can type KEY=VALUE to introduce a
 		// fresh entry. Empty existing-value commits a delete; the new-key
 		// field parses on save.
-		keys := make([]string, 0, len(m.state.testContext))
-		for k := range m.state.testContext {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		fields := make([]editorField, 0, len(keys)+1)
-		for _, k := range keys {
-			fields = append(fields, editorField{label: k, value: m.state.testContext[k]})
-		}
-		fields = append(fields, editorField{label: "Add new (KEY=VALUE)", value: ""})
-		m.fields = fields
+		m.fields = keyValueFields(m.state.testContext, false)
+	case actionEditSecrets:
+		// Like the context screen, but every field is masked, the "Add
+		// new" one too: what is typed there holds the value.
+		m.mode = editorFields
+		m.inputTitle = "Edit secrets (saved to simsquad.local.toml; clear a value to remove that key)"
+		m.inputKind = action
+		m.fieldIdx = 0
+		m.fields = keyValueFields(m.state.secrets, true)
 	case actionAddIOS:
 		m.mode = editorFields
 		m.inputTitle = "Add iOS simulator"
@@ -795,40 +801,17 @@ func (m *editorModel) applyInput() error {
 		m.state.iosScheme = strings.TrimSpace(m.fields[2].value)
 		m.state.gradleTask = strings.TrimSpace(m.fields[3].value)
 	case actionEditContext:
-		// All fields except the last are existing-key entries; the last is
-		// the "Add new (KEY=VALUE)" field. Empty values on existing rows
-		// delete the key.
-		if m.state.testContext == nil && len(m.fields) > 1 {
-			m.state.testContext = map[string]string{}
+		ctx, err := applyKeyValueFields(m.fields, m.state.testContext, m.state.secrets, "context", "a secret")
+		if err != nil {
+			return err
 		}
-		newFieldIdx := len(m.fields) - 1
-		for i := 0; i < newFieldIdx; i++ {
-			key := m.fields[i].label
-			val := m.fields[i].value
-			if strings.TrimSpace(val) == "" {
-				delete(m.state.testContext, key)
-			} else {
-				m.state.testContext[key] = val
-			}
+		m.state.testContext = ctx
+	case actionEditSecrets:
+		secrets, err := applyKeyValueFields(m.fields, m.state.secrets, m.state.testContext, "secret", "context")
+		if err != nil {
+			return err
 		}
-		raw := strings.TrimSpace(m.fields[newFieldIdx].value)
-		if raw != "" {
-			idx := strings.Index(raw, "=")
-			if idx <= 0 {
-				return fmt.Errorf("new context entry %q: expected KEY=VALUE", raw)
-			}
-			key := strings.TrimSpace(raw[:idx])
-			if key == "" {
-				return errors.New("new context entry: key must be non-empty")
-			}
-			if m.state.testContext == nil {
-				m.state.testContext = map[string]string{}
-			}
-			m.state.testContext[key] = raw[idx+1:]
-		}
-		if len(m.state.testContext) == 0 {
-			m.state.testContext = nil
-		}
+		m.state.secrets = secrets
 	case actionAddIOS:
 		count, err := positiveInt(m.fields[2].value)
 		if err != nil {
@@ -943,6 +926,8 @@ func actionDoneMessage(action editorAction) string {
 		return "updated project settings"
 	case actionEditContext:
 		return "updated context"
+	case actionEditSecrets:
+		return "updated secrets"
 	case actionAddIOS:
 		return "added iOS simulator"
 	case actionEditIOS:
@@ -968,6 +953,8 @@ func doneLabel(action editorAction) string {
 		return "Back to actions"
 	case actionEditContext:
 		return "Save context"
+	case actionEditSecrets:
+		return "Save secrets"
 	case actionAddIOS:
 		return "Add iOS simulator"
 	case actionEditIOS:
@@ -1508,9 +1495,12 @@ func (m editorModel) fieldRow(field editorField, width int, selected bool) []str
 	label := padRight(labelStyle.Render(field.label), labelWidth)
 
 	var value string
-	if strings.TrimSpace(field.value) == "" {
+	switch {
+	case strings.TrimSpace(field.value) == "":
 		value = editorPlaceholderStyle.Render("not configured")
-	} else {
+	case field.secret:
+		value = editorValueStyle.Render(secretDots)
+	default:
 		value = editorValueStyle.Render(displayPath(field.value))
 	}
 
@@ -1791,6 +1781,63 @@ func renderEditorMessage(message string) string {
 		return editorOKStyle.Render(message)
 	}
 	return editorWarnStyle.Render(message)
+}
+
+// addKeyValueLabel labels the trailing field of the context and secrets
+// screens, where a KEY=VALUE entry adds a key.
+const addKeyValueLabel = "Add new (KEY=VALUE)"
+
+// keyValueFields lays out the context or secrets screen: one field per
+// existing key (alphabetised) plus the trailing "Add new" field. Empty
+// existing values commit a delete; the new-key field parses on save.
+func keyValueFields(values map[string]string, secret bool) []editorField {
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	fields := make([]editorField, 0, len(keys)+1)
+	for _, k := range keys {
+		fields = append(fields, editorField{label: k, value: values[k], secret: secret})
+	}
+	return append(fields, editorField{label: addKeyValueLabel, secret: secret})
+}
+
+// applyKeyValueFields applies a context or secrets screen to a copy of
+// current and returns it (nil when empty). A key in other (the secrets for
+// the context screen and vice versa) is refused: deploy rejects a key in
+// both tables. Errors name the key, never the typed value.
+func applyKeyValueFields(fields []editorField, current, other map[string]string, what, otherWhat string) (map[string]string, error) {
+	out := make(map[string]string, len(current)+1)
+	for k, v := range current {
+		out[k] = v
+	}
+	newIdx := len(fields) - 1
+	for _, f := range fields[:newIdx] {
+		if strings.TrimSpace(f.value) == "" {
+			delete(out, f.label)
+		} else {
+			out[f.label] = f.value
+		}
+	}
+	if raw := strings.TrimSpace(fields[newIdx].value); raw != "" {
+		idx := strings.Index(raw, "=")
+		if idx < 0 {
+			return nil, fmt.Errorf("new %s entry is malformed: expected KEY=VALUE", what)
+		}
+		key := strings.TrimSpace(raw[:idx])
+		if key == "" {
+			return nil, fmt.Errorf("new %s entry is malformed: the key before '=' is empty", what)
+		}
+		if _, ok := other[key]; ok {
+			return nil, fmt.Errorf("%s is already %s; a key is either context or a secret", key, otherWhat)
+		}
+		out[key] = raw[idx+1:]
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
 }
 
 func positiveInt(value string) (int, error) {

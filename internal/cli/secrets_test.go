@@ -354,3 +354,20 @@ func TestDevicesRevealRefusals(t *testing.T) {
 		})
 	}
 }
+
+func TestEquipShowMasksSecrets(t *testing.T) {
+	repo := newAppRepo(t)
+	writeTestFile(t, filepath.Join(repo, "simsquad.toml"), "[project]\nios_scheme = \"App\"\n\n[context]\nuser = \"alice\"\n")
+	writeTestFile(t, filepath.Join(repo, "simsquad.local.toml"), "[secrets]\npin = \"4711\"\npassword = \"hunter2\"\n")
+	path := filepath.Join(t.TempDir(), "equip.json")
+	stdout, err := runEquip(t, nil, "--show", "--out", path)
+	if err != nil {
+		t.Fatalf("equip --show: %v", err)
+	}
+	assertMasked(t, "equip --show stdout", stdout)
+	file, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMasked(t, "equip --show --out file", string(file))
+}

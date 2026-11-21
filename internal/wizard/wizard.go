@@ -61,6 +61,9 @@ type wizardState struct {
 	iosScheme   string
 	gradleTask  string
 	testContext map[string]string
+	// secrets is [secrets] merged across both files. Saving writes it to
+	// simsquad.local.toml only, so equip moves committed secrets out of git.
+	secrets     map[string]string
 	iosSpecs    []contract.IosSpec
 	androidSpec []contract.AndroidSpec
 	// deviceSets are the named device sets, sorted by name.
@@ -177,6 +180,9 @@ func loadState(configDir string, hasConfig bool) (wizardState, error) {
 			state.testContext[k] = v
 		}
 	}
+	// Both files are re-rendered on save, so a secret not loaded here
+	// would be dropped.
+	state.secrets = cfg.Secrets()
 	state.iosSpecs = cfg.IOSSpecs()
 	state.androidSpec = cfg.AndroidSpecs()
 	state.deviceSets = loadDeviceSets(cfg)
@@ -517,8 +523,17 @@ func summarize(configDir string, state wizardState) ConfigSummary {
 		androidSpecs = []contract.AndroidSpec{}
 	}
 	// The summary is printed (equip --show, equip's result), so secrets
-	// show masked like every other output.
-	ctx := contract.MaskContext(state.testContext, nil)
+	// join the context masked, like in every other output.
+	merged := make(map[string]string, len(state.testContext)+len(state.secrets))
+	secretKeys := make([]string, 0, len(state.secrets))
+	for k, v := range state.testContext {
+		merged[k] = v
+	}
+	for k, v := range state.secrets {
+		merged[k] = v
+		secretKeys = append(secretKeys, k)
+	}
+	ctx := contract.MaskContext(merged, secretKeys)
 	return ConfigSummary{
 		ConfigDir:   configDir,
 		ProjectFile: filepath.Join(configDir, config.ProjectFile),
@@ -602,6 +617,17 @@ func renderLocalTOML(state wizardState) (string, error) {
 	b.WriteString("[project]\n")
 	b.WriteString("ios_repo = " + strconv.Quote(state.iosRepo) + "\n")
 	b.WriteString("android_repo = " + strconv.Quote(state.androidRepo) + "\n")
+	if len(state.secrets) > 0 {
+		b.WriteString("\n[secrets]\n")
+		keys := make([]string, 0, len(state.secrets))
+		for k := range state.secrets {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			b.WriteString(tomlKey(k) + " = " + tomlQuote(state.secrets[k]) + "\n")
+		}
+	}
 	agent, err := renderAgentTable(state.localAgent)
 	if err != nil {
 		return "", err
