@@ -95,7 +95,7 @@ output by JSON key. Renaming a field is a breaking change.
 
 | Surface | Where it's defined | Notes |
 |---|---|---|
-| Public stdout (`deploy`, `status --name=<squad>`) | `internal/contract.SquadPublic` | Squad record minus internal `Ports`. |
+| Public stdout (`deploy`, `status --name=<squad>`) | `internal/contract.SquadPublic` | Squad record minus internal `Ports`. `device_set` (omitempty) names the device set the squad was deployed from (`deploy --device-set`); not on `devices` rows. |
 | Per-squad record file | `internal/contract.SquadRecord` | Persisted at `~/.cache/simsquad/<name>.json`. `Name` is the sole identifier. Includes `Ports` (internal). |
 | Registry | `internal/contract.SquadIndex` / `SquadIndexEntry` | `~/.cache/simsquad/squads.json`. Map keyed by squad name. |
 | Consumer device view (`devices`) | `internal/contract.DeviceView` | Uniform `{platform, id, name, model, os_version, bundle_id?, status, ready_at, context?}`. Platform-tagged; same shape iOS + Android. `context` is the squad's context copied onto every row. |

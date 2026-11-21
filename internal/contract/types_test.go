@@ -125,3 +125,29 @@ func TestNewDeviceViewReadyAt(t *testing.T) {
 		}
 	}
 }
+
+// The squad's device set name reaches status and deploy output as
+// device_set, and is left out entirely for a squad that has none.
+func TestSquadRecordPublicProjectsDeviceSet(t *testing.T) {
+	t.Parallel()
+
+	pub := SquadRecord{Name: "s", DeviceSet: "tablet"}.Public()
+	if pub.DeviceSet != "tablet" {
+		t.Fatalf("Public().DeviceSet = %q, want tablet", pub.DeviceSet)
+	}
+	b, err := json.Marshal(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"device_set":"tablet"`) {
+		t.Fatalf("public JSON %s has no device_set", b)
+	}
+	b, _ = json.Marshal(SquadRecord{Name: "s"}.Public())
+	if strings.Contains(string(b), "device_set") {
+		t.Fatalf("public JSON %s carries device_set for a squad without one", b)
+	}
+	b, _ = json.Marshal(NewDeviceView(Device{Platform: PlatformIOS}, "", nil))
+	if strings.Contains(string(b), "device_set") {
+		t.Fatalf("device view %s carries device_set", b)
+	}
+}

@@ -131,9 +131,15 @@ type Builds struct {
 // values; the execution layer (ios/, android/) does not read them. Mutated via
 // `simsquad set-context`. Until 0.5.0 it was called env; records written
 // before that are read through UnmarshalJSON.
+//
+// DeviceSet is the name of the named device set (`[device_sets.<name>]`) the
+// squad was deployed from, empty for the default matrix or spec flags. Only
+// the name is kept: a bare redeploy re-resolves the set from the current
+// config.
 type SquadRecord struct {
 	Name      string            `json:"name"`
 	CreatedAt string            `json:"created_at"`
+	DeviceSet string            `json:"device_set,omitempty"`
 	Builds    Builds            `json:"builds"`
 	Devices   []Device          `json:"devices"`
 	Context   map[string]string `json:"context,omitempty"`
@@ -146,6 +152,7 @@ func (s SquadRecord) Public() SquadPublic {
 	return SquadPublic{
 		Name:      s.Name,
 		CreatedAt: s.CreatedAt,
+		DeviceSet: s.DeviceSet,
 		Builds:    s.Builds,
 		Devices:   s.Devices,
 		Context:   s.Context,
@@ -175,6 +182,7 @@ func (s *SquadRecord) UnmarshalJSON(b []byte) error {
 type SquadPublic struct {
 	Name      string            `json:"name"`
 	CreatedAt string            `json:"created_at"`
+	DeviceSet string            `json:"device_set,omitempty"`
 	Builds    Builds            `json:"builds"`
 	Devices   []Device          `json:"devices"`
 	Context   map[string]string `json:"context,omitempty"`
