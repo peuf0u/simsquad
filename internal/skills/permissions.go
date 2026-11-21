@@ -21,9 +21,11 @@ const ClaudeSettingsFile = ".claude/settings.json"
 
 // ClaudeAllow lists the permission rules Install adds to ClaudeSettingsFile.
 // The Edit rule also covers file writes: Claude Code never matches Write
-// rules against paths. Paths without a leading "/" resolve against the cwd,
-// which is the repo root for workers; "/path" would resolve against the
-// settings file's directory (.claude/) instead.
+// rules against paths. Paths without a leading "/" resolve against the cwd.
+// A committed file can't name the absolute run folder, so the simsquad-test
+// skill's worker command passes its own rules, with Edit by absolute path
+// (issue #35); these cover a worker started in the repo root of a trusted
+// folder.
 var ClaudeAllow = []string{
 	"Bash(mobilecli:*)",
 	"Bash(simsquad reset:*)",

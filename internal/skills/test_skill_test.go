@@ -123,12 +123,68 @@ func TestTestSkillWorkerCommandCarriesItsPermissions(t *testing.T) {
 	}
 	cmd := skill[start : start+end]
 	for _, rule := range skills.ClaudeAllow {
+		// settings.json can only hold a relative Edit rule; the worker gets
+		// its own, absolute one (TestTestSkillWorkerCommandWorksFromAnyCwd).
+		if strings.HasPrefix(rule, "Edit(") {
+			continue
+		}
 		if !strings.Contains(cmd, `"`+rule+`"`) {
 			t.Errorf("Claude worker command does not pass --allowedTools %q", rule)
 		}
 	}
 	if strings.Contains(skill, "$(") {
 		t.Error("skill uses a $(…) command substitution")
+	}
+}
+
+// TestTestSkillWorkerCommandWorksFromAnyCwd: the worker inherits the
+// orchestrator's cwd, so nothing it needs may depend on that cwd. Issue #34:
+// in a hub layout the skill folder (behind the .claude/skills symlink) and
+// the app notes lie outside it, so Claude Code refused the reads and the
+// worker wrote BLOCKED.md. Issue #35: the relative Edit(.simsquad/runs/**)
+// resolved against that cwd, so result.json couldn't be written.
+func TestTestSkillWorkerCommandWorksFromAnyCwd(t *testing.T) {
+	skill, _ := installedTestSkill(t)
+	start := strings.Index(skill, "-- claude -p")
+	if start < 0 {
+		t.Fatal("skill has no `-- claude -p` worker command")
+	}
+	cmd := skill[start : start+strings.Index(skill[start:], "```")]
+
+	// $RUN_DIR starts with "/", so one more makes Claude Code's absolute
+	// form, //<path>; a single "/" would anchor at the cwd instead.
+	if !strings.Contains(cmd, `"Edit(/$RUN_DIR/**)"`) {
+		t.Errorf("worker command does not grant Edit on the run folder by absolute path:\n%s", cmd)
+	}
+	for _, m := range regexp.MustCompile(`Edit\(([^)]*)\)`).FindAllStringSubmatch(cmd, -1) {
+		if m[1] != "/$RUN_DIR/**" {
+			t.Errorf("worker command keeps a cwd-relative rule %s", m[0])
+		}
+	}
+	if !strings.Contains(skill, "`Edit(//") {
+		t.Error("skill does not show what the Edit rule expands to")
+	}
+
+	for _, want := range []string{`--add-dir "$SKILL_DIR"`, `--add-dir "$NOTES_DIR"`} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("worker command does not pass %s", want)
+		}
+	}
+	// Allow rules must match both the path asked for and where it resolves,
+	// so the folder is granted, and worker.md named, by its real path.
+	for _, want := range []string{"realpath", "<SKILL_DIR>/worker.md", "`app_notes`"} {
+		if !strings.Contains(skill, want) {
+			t.Errorf("step 7 does not mention %q", want)
+		}
+	}
+
+	// Codex runs unsandboxed, so its command needs none of this.
+	codex := skill[strings.Index(skill, "-- codex exec"):]
+	codex = codex[:strings.Index(codex, "```")]
+	for _, unwanted := range []string{"--add-dir", "Edit("} {
+		if strings.Contains(codex, unwanted) {
+			t.Errorf("Codex worker command passes %s:\n%s", unwanted, codex)
+		}
 	}
 }
 

@@ -180,8 +180,26 @@ the squad `context`. No rows left: go to step 9.
 
 ## 7. Start the workers
 
-One worker per device, all at once. For each device, with `DEVICE_ID` its
-`id`:
+A worker starts in your working directory, not in its worker folder, so it
+gets every path it reads or writes as an absolute path. First find the two
+folders it reads outside the run folder:
+
+- `SKILL_DIR`: this skill's folder with every symlink resolved, which can
+  lie outside the repo (`.claude/skills/simsquad-test` is usually a link).
+  Run `realpath` on the folder this file was loaded from and keep what it
+  prints. Name `worker.md` by this path too: Claude Code refuses a read
+  through a link that leads out of the folders it was given.
+
+  ```sh
+  realpath <this skill's folder, such as .claude/skills/simsquad-test>
+  ```
+
+- `NOTES_DIR`: the folder holding the app notes, which is `app_notes` from
+  step 4 without its trailing `/README.md`. When step 4 gave no
+  `app_notes`, there is no `NOTES_DIR`.
+
+Then start one worker per device, all at once. For each device, with
+`DEVICE_ID` its `id`:
 
 1. Create its folder:
 
@@ -193,7 +211,7 @@ One worker per device, all at once. For each device, with `DEVICE_ID` its
    `<…>` filled in:
 
    ```text
-   You are a simsquad-test worker. Read <absolute path of worker.md in this skill's folder> and follow it.
+   You are a simsquad-test worker. Read <SKILL_DIR>/worker.md and follow it.
 
    Run folder: <run_dir>
    Worker folder: <run_dir>/workers/<device id>
@@ -209,14 +227,24 @@ One worker per device, all at once. For each device, with `DEVICE_ID` its
    simsquad run worker --dir "$RUN_DIR/workers/$DEVICE_ID" --timeout "$DEADLINE" \
      --out "$RUN_DIR/workers/$DEVICE_ID/worker.json" \
      -- claude -p "Read $RUN_DIR/workers/$DEVICE_ID/prompt.md and follow it." \
+     --add-dir "$SKILL_DIR" --add-dir "$NOTES_DIR" \
      --allowedTools "Bash(mobilecli:*)" "Bash(simsquad reset:*)" "Bash(simsquad run validate:*)" \
-     "Edit(.simsquad/runs/**)" \
+     "Edit(/$RUN_DIR/**)" \
      --model "$WORKER_MODEL"
    ```
 
-   Pass the `--allowedTools` list exactly as shown: a headless worker
-   can't answer a permission prompt, and `claude -p` ignores the project's
+   Pass these permissions exactly as shown: a headless worker can't answer
+   a permission prompt, and `claude -p` ignores the project's
    `.claude/settings.json` in a folder nobody has trusted interactively.
+
+   - `--add-dir` lets the worker read `worker.md` and the app notes
+     wherever they live. Leave out `--add-dir "$NOTES_DIR"` when there is
+     no `NOTES_DIR`.
+   - `"Edit(/$RUN_DIR/**)"` lets it create and change its files under the
+     run folder, from any working directory. Claude Code reads `//` as the
+     filesystem root and a single `/` as the working directory. `$RUN_DIR`
+     already starts with `/`, so write exactly one more before it: the rule
+     becomes `Edit(//Users/…/.simsquad/runs/<run-id>/**)`, never `///…`.
 
    In Codex:
 
