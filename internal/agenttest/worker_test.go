@@ -395,3 +395,83 @@ func TestLineRedactorJSONEscapedForm(t *testing.T) {
 		t.Fatalf("redacted = %q, want %q", out.String(), want)
 	}
 }
+
+// redactWrites feeds chunks to a fresh redactor and returns what it wrote.
+func redactWrites(t *testing.T, secrets []string, chunks ...string) string {
+	t.Helper()
+	var out strings.Builder
+	r := newLineRedactor(&out, secrets)
+	for _, c := range chunks {
+		if _, err := r.Write([]byte(c)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	return out.String()
+}
+
+// A secret holding a shorter secret, split by a write, still goes whole:
+// the held-back tail must not be masked before the longer one completes.
+// Nor is a mask masked again when a secret appears inside "<secret>".
+func TestLineRedactorNestedSecrets(t *testing.T) {
+	cases := []struct {
+		name    string
+		secrets []string
+		chunks  []string
+		want    string
+	}{
+		{"prefix", []string{"hunter2xyz", "hunter2"}, []string{"foo\nlogin hunter2x", "yz\n"}, "foo\nlogin <secret>\n"},
+		{"inside", []string{"Xab12345Y", "ab12345"}, []string{"Xab12345", "Y\n"}, "<secret>\n"},
+		{"mask holds a secret", []string{"secret", "hunter22"}, []string{"client_secret=secret\n", "and hunter22\n"}, "client_<secret>=<secret>\nand <secret>\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := redactWrites(t, c.secrets, c.chunks...); got != c.want {
+				t.Fatalf("redacted = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// Wherever the worker's writes split its output, the log is the same as
+// for one write, and it holds no secret.
+func TestLineRedactorSplitInvariant(t *testing.T) {
+	text := "foo hunter2xyz bar hunter2\nXab12345Y ab12345 abcabx cabx\n" +
+		`"pa\"ss\\1" pa"ss\1 client_secret=secret ab` + "\ncd end\ntail hunter2x"
+	sets := [][]string{
+		{"hunter2xyz", "hunter2"},
+		{"Xab12345Y", "ab12345"},
+		{"abcab", "cabx"},
+		{"secret", `pa"ss\1`},
+		{"ab\ncd", "hunter2"},
+	}
+	for _, secrets := range sets {
+		whole := redactWrites(t, secrets, text)
+		masked := strings.ReplaceAll(whole, "<secret>", "\x00")
+		for _, s := range secrets {
+			for _, form := range append([]string{s}, func() []string {
+				var out []string
+				for _, b := range jsonEscaped(s) {
+					out = append(out, string(b))
+				}
+				return out
+			}()...) {
+				if strings.Contains(masked, form) {
+					t.Errorf("%q: one write leaks %q: %q", secrets, form, whole)
+				}
+			}
+		}
+		for i := 1; i < len(text); i++ {
+			if got := redactWrites(t, secrets, text[:i], text[i:]); got != whole {
+				t.Fatalf("%q split at %d: %q, want %q", secrets, i, got, whole)
+			}
+			for j := i + 1; j < len(text); j++ {
+				if got := redactWrites(t, secrets, text[:i], text[i:j], text[j:]); got != whole {
+					t.Fatalf("%q split at %d,%d: %q, want %q", secrets, i, j, got, whole)
+				}
+			}
+		}
+	}
+}

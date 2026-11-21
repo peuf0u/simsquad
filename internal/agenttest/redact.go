@@ -17,11 +17,14 @@ const maxPartialLine = 64 << 10
 
 // lineRedactor writes to w with every secret value replaced by
 // contract.SecretMask. It holds output back until a line ends (or
-// maxPartialLine piles up), then masks the whole buffer and writes all but
-// its last longest-1 bytes: those could be the start of a secret the next
-// write completes, a secret with a newline in it included. Masking before
-// the cut means a secret is never split by it. Flush masks and writes the
-// rest once the worker is done.
+// maxPartialLine piles up), then writes the buffer up to a cut that keeps
+// its last longest-1 bytes back, raw: they could be the start of a secret
+// the next write completes, a secret with a newline in it included. A
+// secret found whole across the cut moves the cut back to its start. The
+// buffer is scanned left to right, trying the longest secret first at each
+// byte, and every byte before the cut is decided by bytes already there,
+// so the log is the same however the worker's writes split its output.
+// Flush writes the rest.
 //
 // Each secret is also matched in its JSON-escaped form: simsquad prints a
 // secret that way (`devices --reveal` turns `pa"ss` into `pa\"ss`), and a
@@ -77,7 +80,7 @@ func jsonEscaped(s string) [][]byte {
 func (r *lineRedactor) Write(p []byte) (int, error) {
 	r.buf = append(r.buf, p...)
 	if bytes.IndexByte(p, '\n') >= 0 || len(r.buf) > maxPartialLine {
-		if err := r.emit(r.longest - 1); err != nil {
+		if err := r.emit(false); err != nil {
 			return 0, err
 		}
 	}
@@ -85,21 +88,52 @@ func (r *lineRedactor) Write(p []byte) (int, error) {
 }
 
 // Flush writes what is left.
-func (r *lineRedactor) Flush() error { return r.emit(0) }
+func (r *lineRedactor) Flush() error { return r.emit(true) }
 
-// emit masks the whole buffer and writes all but its last keep bytes,
-// which stay buffered.
-func (r *lineRedactor) emit(keep int) error {
-	for _, s := range r.secrets {
-		r.buf = bytes.ReplaceAll(r.buf, s, []byte(contract.SecretMask))
+// emit masks and writes the buffer up to the cut (all of it when final) and
+// keeps the rest, raw.
+func (r *lineRedactor) emit(final bool) error {
+	cut := len(r.buf)
+	if !final {
+		cut -= r.longest - 1
 	}
-	n := len(r.buf) - keep
-	if n <= 0 {
+	if cut <= 0 {
 		return nil
 	}
-	if _, err := r.w.Write(r.buf[:n]); err != nil {
-		return err
+	var out []byte
+	last := 0
+	for i := 0; i < cut; {
+		s := r.matchAt(i)
+		if s == nil {
+			i++
+			continue
+		}
+		if i+len(s) > cut {
+			// Found whole but across the cut: keep it back with the tail.
+			cut = i
+			break
+		}
+		out = append(out, r.buf[last:i]...)
+		out = append(out, contract.SecretMask...)
+		i += len(s)
+		last = i
 	}
-	r.buf = append(r.buf[:0], r.buf[n:]...)
+	out = append(out, r.buf[last:cut]...)
+	if len(out) > 0 {
+		if _, err := r.w.Write(out); err != nil {
+			return err
+		}
+	}
+	r.buf = append(r.buf[:0], r.buf[cut:]...)
+	return nil
+}
+
+// matchAt returns the longest secret found whole at r.buf[i:], or nil.
+func (r *lineRedactor) matchAt(i int) []byte {
+	for _, s := range r.secrets {
+		if bytes.HasPrefix(r.buf[i:], s) {
+			return s
+		}
+	}
 	return nil
 }
