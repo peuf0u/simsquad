@@ -29,6 +29,7 @@ const flowAVD = "simsquad-x-android-0"
 //   - avdname: the AVD the emulator on the port runs (default flowAVD).
 //   - noname: `adb emu avd name` fails although the emulator runs; every
 //     query appends a line to namecalls.
+//   - noname1: as noname, for the first query only (the marker goes with it).
 //   - noboot: a started emulator never comes up and wait-for-device fails.
 //   - exitearly: a started emulator exits at once (its AVD is locked).
 //
@@ -119,6 +120,7 @@ case "$*" in
   "emu avd name")
     echo x >> $d/namecalls
     [ -e $d/up ] || exit 1
+    if [ -e $d/noname1 ]; then rm -f $d/noname1; echo 'error: could not connect to TCP port 5557' >&2; exit 1; fi
     if [ -e $d/noname ]; then echo 'error: could not connect to TCP port 5557' >&2; exit 1; fi
     name=`+flowAVD+`; [ -e $d/avdname ] && name=$(cat $d/avdname)
     printf '%s\r\nOK\r\n' "$name" ;;
@@ -457,6 +459,31 @@ func TestReuseFailsSafeWhenTheAVDNameCannotBeRead(t *testing.T) {
 	}
 	if n := strings.Count(string(b), "\n"); n != avdNameAttempts {
 		t.Fatalf("emu avd name ran %d times, want %d", n, avdNameAttempts)
+	}
+}
+
+// Review #33 round 3: a console that misses one AVD name query under load
+// answers the retry, and reuse goes on as for any reachable emulator of the
+// squad's own.
+func TestReuseProceedsWhenTheAVDNameAnswersOnRetry(t *testing.T) {
+	f := newFakeSDK(t, true, "hw.keyboard=no\n")
+	f.touch(t, "noname1")
+
+	dev := reprovisionExistingOne(reusedEmulator(false), ProvisionInput{
+		APKPath: "/app.apk", BundleID: "com.example", PreserveData: true,
+	})
+	if dev.Status != contract.StatusReady {
+		t.Fatalf("status = %s (%s), want ready", dev.Status, dev.ErrorMessage)
+	}
+	if got, want := f.calls(t), "adb install -r -t /app.apk\n"; got != want {
+		t.Fatalf("calls =\n%s\nwant\n%s", got, want)
+	}
+	b, err := os.ReadFile(filepath.Join(f.dir, "namecalls"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(b), "\n"); n != 2 {
+		t.Fatalf("emu avd name ran %d times, want 2", n)
 	}
 }
 
