@@ -132,6 +132,52 @@ func TestTestSkillWorkerCommandCarriesItsPermissions(t *testing.T) {
 	}
 }
 
+// TestTestSkillAlwaysPassesTheWorkerModel: `run new` resolves a model for
+// every run (issue #32), so the skill names its host CLI to `run new` and
+// passes the resolved model to every worker, never leaving it to the host
+// CLI's machine-local default.
+func TestTestSkillAlwaysPassesTheWorkerModel(t *testing.T) {
+	skill, _ := installedTestSkill(t)
+	cmds := fencedCommands(skill, "simsquad")
+	var runNew, workers []string
+	for _, c := range cmds {
+		switch {
+		case strings.HasPrefix(c, "simsquad run new "):
+			runNew = append(runNew, c)
+		case strings.HasPrefix(c, "simsquad run worker "):
+			workers = append(workers, c)
+		}
+	}
+	if len(runNew) == 0 {
+		t.Fatal("skill has no `simsquad run new` example")
+	}
+	for _, c := range runNew {
+		if !strings.Contains(c, " --worker ") {
+			t.Errorf("run new example does not pass --worker: %s", c)
+		}
+	}
+	m := regexp.MustCompile(`(?s)## 4\. Start the run\n(.*?)\n## `).FindStringSubmatch(skill)
+	if m == nil {
+		t.Fatal("skill has no `## 4. Start the run` step")
+	}
+	for _, want := range []string{"--worker claude", "--worker codex"} {
+		if !strings.Contains(m[1], want) {
+			t.Errorf("step 4 does not mention %q", want)
+		}
+	}
+	if len(workers) < 2 {
+		t.Fatalf("want a Claude and a Codex `run worker` example, got %d", len(workers))
+	}
+	for _, c := range workers {
+		if !strings.Contains(c, `--model "$WORKER_MODEL"`) {
+			t.Errorf("worker command does not pass --model \"$WORKER_MODEL\": %s", c)
+		}
+	}
+	if regexp.MustCompile("(?i)leave out `--model`|worker_model` is empty").MatchString(skill) {
+		t.Error("skill still has a path that leaves out --model")
+	}
+}
+
 // redirectRe matches a shell output redirection (`>`, `>>`, `2>`, `&>`).
 var redirectRe = regexp.MustCompile(`(?:^|\s)[0-9&]?>`)
 

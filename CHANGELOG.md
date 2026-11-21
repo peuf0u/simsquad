@@ -54,6 +54,17 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- **Workers always run on an explicit model.** `run new --worker
+  claude|codex` (default `claude`) names the CLI the workers run on; any
+  other value exits `1`. `run new --model <id>` sets the model for one
+  run. The model is `--model`, else `[agent].worker_model`
+  (`simsquad.local.toml` over `simsquad.toml`), else the worker's default:
+  `sonnet` for `claude`, `gpt-6.1-sol` for `codex`. `worker_model` on
+  `run new`'s stdout and in `run.json` is never empty, and both gain
+  `worker` (additive). The `simsquad-test` skill passes `--worker` (the
+  CLI it runs in) to `run new` and always passes `--model` to the worker;
+  before, an unset `worker_model` left workers on their CLI's
+  machine-local default.
 - **`run new` refuses a squad only when an unfinished run on it shares a
   platform.** An `@ios` run and an `@android` run can now run on one squad
   at the same time; a second run on a platform an unfinished run uses is

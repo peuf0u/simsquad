@@ -48,7 +48,7 @@ func newRunNewCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&fresh, "fresh", false, "use a unique, isolated squad for this run (dismiss it afterwards)")
-	cmd.Flags().StringVar(&worker, "worker", runsetup.DefaultWorker, "CLI the workers run on: claude or codex (picks the default model)")
+	cmd.Flags().StringVar(&worker, "worker", runsetup.DefaultWorker, "worker CLI: claude or codex (picks the default model)")
 	cmd.Flags().StringVar(&model, "model", "", "worker model for this run (overrides [agent].worker_model and the --worker default)")
 	return cmd
 }

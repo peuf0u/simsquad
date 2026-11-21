@@ -243,19 +243,20 @@ stdout and human progress on stderr.
 
 | Command | Action | Key flags |
 |---|---|---|
-| `run new` | Start a test run from a Gherkin feature file; emit the run descriptor | `<feature-file>`, `--fresh` |
+| `run new` | Start a test run from a Gherkin feature file; emit the run descriptor | `<feature-file>`, `--fresh`, `--worker`, `--model` |
 | `run worker` | Run one headless worker under a hard deadline; emit `{status}` | `--dir` (req), `--timeout` seconds (req), `-- <command…>` |
 | `run validate` | Check a worker's `result.json`; emit `{valid, errors}` | `<worker-dir>` |
 | `run report` | Write `report.json` + `report.md`; emit `{verdict, report_json, report_md, counts}`; exit 0/1/2 | `<run-dir>` |
 
 ### `run new` — start a test run
 
-`simsquad run new <feature-file> [--fresh]`, run from the app repo, reads a
-Gherkin feature file and sets up a test run:
+`simsquad run new <feature-file> [--fresh] [--worker claude|codex]
+[--model <id>]`, run from the app repo, reads a Gherkin feature file and
+sets up a test run:
 
 ```sh
 simsquad run new qa/features/login.feature > run-new.json
-# {"run_id", "run_dir", "squad_name", "fresh", "platforms", "deadline_seconds", "worker_model", "app_notes"?}
+# {"run_id", "run_dir", "squad_name", "fresh", "platforms", "deadline_seconds", "worker", "worker_model", "app_notes"?}
 ```
 
 - Background steps are prepended to every scenario, Scenario Outlines expand
@@ -271,10 +272,15 @@ simsquad run new qa/features/login.feature > run-new.json
   is written.
 - Deadline per worker: `120 + Σ(60 + 30 × steps)` over the scenarios of the
   busiest platform, `+ 600` when it has an exploration.
+- Worker model, never empty: `--model`, else `[agent].worker_model`
+  (`simsquad.local.toml` over `simsquad.toml`), else the default for
+  `--worker` (default `claude`): `sonnet` for `claude`, `gpt-6.1-sol` for
+  `codex`. Any other `--worker` exits `1`. The ids are passed on as given,
+  never validated.
 - Creates `.simsquad/runs/<run-id>/` in the config dir with
   `feature.feature` (a copy) and `run.json` (title, source, squad,
-  platforms, deadline, worker model, `app_notes` and the expanded
-  scenarios).
+  platforms, deadline, worker and worker model, `app_notes` and the
+  expanded scenarios).
 - `app_notes` is the absolute path of `qa/README.md` in the config dir, so
   workers read the app notes without guessing which repo holds them. It is
   omitted, in `run.json` and on stdout, when that file doesn't exist.

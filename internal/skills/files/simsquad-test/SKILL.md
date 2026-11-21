@@ -97,13 +97,16 @@ Then decide whether to wait:
 ## 4. Start the run
 
 ```sh
-simsquad run new .simsquad/drafts/<slug>.feature --out .simsquad/run-new.json
+simsquad run new .simsquad/drafts/<slug>.feature --worker claude --out .simsquad/run-new.json
 ```
 
-Add `--fresh` when the user asks for an isolated squad. A saved feature
+`--worker` names the CLI you run in, which the workers run on too: pass
+`--worker claude` in Claude Code and `--worker codex` in Codex. Add
+`--fresh` when the user asks for an isolated squad. A saved feature
 file runs from its `qa/features/` path. The output gives `run_id`,
 `run_dir` (absolute), `squad_name`, `fresh`, `platforms`,
-`deadline_seconds` and `worker_model`; keep them for the next steps. The
+`deadline_seconds` and `worker_model` (never empty: the project's choice
+or the default for `--worker`); keep them for the next steps. The
 run folder holds a copy of the feature file (`feature.feature`). Leave the
 draft where it is: `.simsquad/` is gitignored, and the next draft with the
 same slug overwrites it.
@@ -223,7 +226,7 @@ One worker per device, all at once. For each device, with `DEVICE_ID` its
      -- codex exec --sandbox danger-full-access --model "$WORKER_MODEL" "Read $RUN_DIR/workers/$DEVICE_ID/prompt.md and follow it."
    ```
 
-   When `worker_model` is empty, leave out `--model` and its value.
+   Always pass `--model "$WORKER_MODEL"`, the `worker_model` from step 4.
 
 Start every worker as a background command (in Claude Code, a Bash call
 with `run_in_background`), then wait until all have exited. Each exits by
