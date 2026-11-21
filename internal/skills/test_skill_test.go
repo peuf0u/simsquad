@@ -215,6 +215,17 @@ func TestTestSkillRedeploysWhenEquipmentChanged(t *testing.T) {
 			t.Errorf("deploy step does not mention %q", want)
 		}
 	}
+	// Runs on disjoint platforms can share a squad (issue #30), and dismiss
+	// tears down every device of it, so the skill must check for another
+	// unfinished run first and fall back to --fresh instead of dismissing.
+	for _, want := range []string{"report.json", "squad_name", "--fresh"} {
+		if !strings.Contains(m[1], want) {
+			t.Errorf("deploy step's dismiss branch does not mention %q", want)
+		}
+	}
+	if strings.Contains(m[1], "belongs to this run") {
+		t.Error("deploy step still says the squad belongs to this run")
+	}
 }
 
 // A run deploys only its own platforms (issue #23), so a single-platform run

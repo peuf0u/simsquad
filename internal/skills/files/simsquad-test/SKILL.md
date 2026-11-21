@@ -136,12 +136,28 @@ minutes.
 - Exit `0`: every device on the run's platforms is ready. Exit `2`: some
   are; carry on with them.
 - Exit `1` with an error that the squad is not reusable with the requested
-  matrix: the equipment changed since the squad was deployed. The squad
-  belongs to this run, so dismiss it and deploy again, once:
+  matrix: the equipment changed since the squad was deployed. Dismiss
+  tears down every device of the squad, and a run on the other platform
+  may be using it, so first list the other unfinished runs on it (a run
+  folder whose `run.json` has this `squad_name` and no `report.json`):
+
+  ```sh
+  for d in .simsquad/runs/*/; do
+    [ -e "$d/report.json" ] || [ "$d" -ef "$RUN_DIR" ] && continue
+    if grep -q "\"squad_name\": \"$SQUAD\"" "$d/run.json"; then echo "$d"; fi
+  done
+  ```
+
+  If it prints nothing, the squad is this run's alone: dismiss it and
+  deploy again, once:
 
   ```sh
   simsquad dismiss --name "$SQUAD" --out "$RUN_DIR/dismiss.json"
   ```
+
+  If it prints a run folder, don't dismiss. Go to step 9, and in your
+  reply (step 11) name that run and suggest running the feature again
+  with `run new --fresh`, an isolated squad.
 
 - Any other exit `1`: nothing is ready or the build failed. Go straight to step 9;
   the report records an infra verdict. Diagnosing the failure is the
@@ -231,8 +247,8 @@ simsquad run report "$RUN_DIR" --out "$RUN_DIR/report-summary.json"
 ```
 
 Run it on every path that got past step 4, including a failed deploy: the
-report marks the run finished, and the squad stays locked to this run
-until it exists. Exit `0` passed, `1` failed, `2` infra. The output gives
+report marks the run finished, and until it exists no other run can use
+this run's platforms on the squad. Exit `0` passed, `1` failed, `2` infra. The output gives
 `verdict`, `report_json`, `report_md` and `counts`.
 
 ## 10. Dismiss a fresh squad
