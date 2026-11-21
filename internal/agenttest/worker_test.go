@@ -435,17 +435,43 @@ func TestLineRedactorNestedSecrets(t *testing.T) {
 	}
 }
 
+// Secrets that overlap in the text are masked as one: the union of their
+// matches, one mask per contiguous run, so no part of either is left.
+func TestLineRedactorOverlappingSecrets(t *testing.T) {
+	cases := []struct {
+		name    string
+		secrets []string
+		chunks  []string
+		want    string
+	}{
+		{"shorter first", []string{"xyz12", "12345678"}, []string{"token xyz12345678 end\n"}, "token <secret> end\n"},
+		{"longer first", []string{"abcab", "cabx"}, []string{"abcabx cabx\n"}, "<secret> <secret>\n"},
+		{"adjacent", []string{"abc", "def"}, []string{"x abcdef y\n"}, "x <secret> y\n"},
+		{"chain split by a write", []string{"aab", "bcc", "ccd"}, []string{"1 aabc", "cd 2\n"}, "1 <secret> 2\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := redactWrites(t, c.secrets, c.chunks...); got != c.want {
+				t.Fatalf("redacted = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
 // Wherever the worker's writes split its output, the log is the same as
 // for one write, and it holds no secret.
 func TestLineRedactorSplitInvariant(t *testing.T) {
 	text := "foo hunter2xyz bar hunter2\nXab12345Y ab12345 abcabx cabx\n" +
-		`"pa\"ss\\1" pa"ss\1 client_secret=secret ab` + "\ncd end\ntail hunter2x"
+		`"pa\"ss\\1" pa"ss\1 client_secret=secret ab` + "\ncd end\ntoken xyz12345678 aabccd abcdef\ntail hunter2x"
 	sets := [][]string{
 		{"hunter2xyz", "hunter2"},
 		{"Xab12345Y", "ab12345"},
 		{"abcab", "cabx"},
 		{"secret", `pa"ss\1`},
 		{"ab\ncd", "hunter2"},
+		{"xyz12", "12345678"},
+		{"aab", "bcc", "ccd"},
+		{"abc", "def", "cabx"},
 	}
 	for _, secrets := range sets {
 		whole := redactWrites(t, secrets, text)

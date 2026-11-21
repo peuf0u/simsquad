@@ -16,22 +16,27 @@ import (
 const maxPartialLine = 64 << 10
 
 // lineRedactor writes to w with every secret value replaced by
-// contract.SecretMask. It holds output back until a line ends (or
-// maxPartialLine piles up), then writes the buffer up to a cut that keeps
-// its last longest-1 bytes back, raw: they could be the start of a secret
-// the next write completes, a secret with a newline in it included. A
-// secret found whole across the cut moves the cut back to its start. The
-// buffer is scanned left to right, trying the longest secret first at each
-// byte, and every byte before the cut is decided by bytes already there,
-// so the log is the same however the worker's writes split its output.
-// Flush writes the rest.
+// contract.SecretMask. Secrets that overlap or touch in the output are
+// masked as one: every byte any secret's match covers is hidden, with one
+// mask per contiguous run, so masking one secret never leaves the rest of
+// another readable (secrets "xyz12" and "12345678" in "xyz12345678").
+//
+// It holds output back until a line ends (or maxPartialLine piles up),
+// then writes the buffer up to a cut that keeps its last longest-1 bytes
+// back, raw: they could be the start of a secret the next write completes,
+// a secret with a newline in it included. Every match starting before the
+// cut is then found whole, and a run that reaches the cut moves the cut
+// back to the run's start, since a match the next write completes could
+// extend it. So every byte before the cut is decided by bytes already
+// there, and the log is the same however the worker's writes split its
+// output. Flush writes the rest.
 //
 // Each secret is also matched in its JSON-escaped form: simsquad prints a
 // secret that way (`devices --reveal` turns `pa"ss` into `pa\"ss`), and a
 // worker log repeats that output.
 type lineRedactor struct {
 	w       io.Writer
-	secrets [][]byte // longest first, so a secret containing another goes whole
+	secrets [][]byte // longest first (matchAt)
 	longest int
 	buf     []byte
 }
@@ -101,22 +106,34 @@ func (r *lineRedactor) emit(final bool) error {
 		return nil
 	}
 	var out []byte
-	last := 0
-	for i := 0; i < cut; {
+	last := 0            // end of the buffer already copied or masked into out
+	start, end := -1, -1 // the current run of covered bytes, [start, end)
+	mask := func() {
+		out = append(out, r.buf[last:start]...)
+		out = append(out, contract.SecretMask...)
+		last = end
+	}
+	for i := 0; i < cut; i++ {
 		s := r.matchAt(i)
 		if s == nil {
-			i++
 			continue
 		}
-		if i+len(s) > cut {
-			// Found whole but across the cut: keep it back with the tail.
-			cut = i
-			break
+		if start >= 0 && i <= end {
+			end = max(end, i+len(s))
+			continue
 		}
-		out = append(out, r.buf[last:i]...)
-		out = append(out, contract.SecretMask...)
-		i += len(s)
-		last = i
+		if start >= 0 {
+			mask()
+		}
+		start, end = i, i+len(s)
+	}
+	if start >= 0 {
+		if !final && end >= cut {
+			// The run reaches the cut: keep it back with the tail.
+			cut = start
+		} else {
+			mask()
+		}
 	}
 	out = append(out, r.buf[last:cut]...)
 	if len(out) > 0 {
@@ -128,7 +145,8 @@ func (r *lineRedactor) emit(final bool) error {
 	return nil
 }
 
-// matchAt returns the longest secret found whole at r.buf[i:], or nil.
+// matchAt returns the longest secret found whole at r.buf[i:], or nil. The
+// longest match reaches furthest, which is all a run needs.
 func (r *lineRedactor) matchAt(i int) []byte {
 	for _, s := range r.secrets {
 		if bytes.HasPrefix(r.buf[i:], s) {
