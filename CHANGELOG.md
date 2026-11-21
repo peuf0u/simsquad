@@ -8,6 +8,19 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- **`deploy --window` shows the devices, for a squad used by hand.**
+  Android emulators it boots start with a window (`-gpu auto` instead of
+  headless `swiftshader_indirect`) and with `hw.keyboard=yes` written into
+  the AVD's `config.ini`, so the Mac keyboard types into the app. A running
+  emulator recorded as headless is restarted with a window: `adb emu kill`,
+  then a cold boot without `-wipe-data`, so its app data survives. The mode
+  is recorded on the Android device as `"window": true` (additive,
+  omitempty). The switch is one way: a deploy without `--window` leaves a
+  running windowed emulator alone, and boots new emulators headless with
+  the profile's keyboard setting. On iOS, `--window` opens Simulator.app on
+  each ready device (Simulator.app also shows other booted sims). The
+  `simsquad` skill's dev-squad deploy always passes `--window`;
+  `simsquad-test` never does. There is no config key.
 - **`deploy --platform ios|android` deploys only the chosen platforms.**
   Repeatable; omitted, it means every equipped platform, as before. Each
   chosen platform takes its `simsquad.toml` matrix, and a platform left out

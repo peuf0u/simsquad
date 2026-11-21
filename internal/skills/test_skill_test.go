@@ -422,3 +422,14 @@ func TestWorkerResultExamplePassesValidation(t *testing.T) {
 		t.Errorf("example result.json is invalid: %v", errs)
 	}
 }
+
+// Test squads stay headless: workers type through adb, and a hardware
+// keyboard would hide the on-screen keyboard they see (issue #33).
+func TestTestSkillNeverDeploysWithAWindow(t *testing.T) {
+	skill, worker := installedTestSkill(t)
+	for _, text := range []string{skill, worker} {
+		if strings.Contains(text, "--window") {
+			t.Error("simsquad-test mentions --window; test squads stay headless")
+		}
+	}
+}

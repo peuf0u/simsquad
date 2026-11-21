@@ -109,3 +109,22 @@ func TestEverydaySkillUsesOnlyRealFlags(t *testing.T) {
 		}
 	}
 }
+
+// The dev squad is for hands-on use, so every deploy the everyday skill
+// shows passes --window (issue #33).
+func TestEverydaySkillDeploysWithAWindow(t *testing.T) {
+	skill := installedEverydaySkill(t)
+	deploys := 0
+	for _, line := range skillInvocations(skill) {
+		if !strings.Contains(line, "simsquad deploy ") {
+			continue
+		}
+		deploys++
+		if !strings.Contains(line, " --window") {
+			t.Errorf("dev-squad deploy does not pass --window: %s", line)
+		}
+	}
+	if deploys == 0 {
+		t.Fatal("skill has no `simsquad deploy` example")
+	}
+}

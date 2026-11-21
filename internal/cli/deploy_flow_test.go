@@ -1098,3 +1098,27 @@ func TestDeployCleanupIgnoresAnotherDeploysFailedBuild(t *testing.T) {
 		t.Fatal("squad still registered")
 	}
 }
+
+// --window reaches both platforms' provisioning; without it neither asks for
+// a window (issue #33).
+func TestDeployWindowReachesBothProvisions(t *testing.T) {
+	for _, window := range []bool{false, true} {
+		t.Run(fmt.Sprint("window=", window), func(t *testing.T) {
+			newDeployRepo(t, deployToml)
+			f := installFakeDeploy(t)
+			args := []string{"--name", "s"}
+			if window {
+				args = append(args, "--window")
+			}
+			if _, code, err := deployCLI(t, args...); err != nil || code != 0 {
+				t.Fatalf("deploy: code %d err %v", code, err)
+			}
+			if len(f.iosProvisions) != 1 || len(f.androidProvisions) != 1 {
+				t.Fatalf("provisions ios %d android %d, want one each", len(f.iosProvisions), len(f.androidProvisions))
+			}
+			if f.iosProvisions[0].Window != window || f.androidProvisions[0].Window != window {
+				t.Fatalf("Window ios %v android %v, want %v", f.iosProvisions[0].Window, f.androidProvisions[0].Window, window)
+			}
+		})
+	}
+}

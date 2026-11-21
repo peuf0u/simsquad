@@ -31,6 +31,7 @@ func newDeployCmd() *cobra.Command {
 		forceBuild  bool
 		noBuild     bool
 		preserve    bool
+		window      bool
 		iosSpecs    []string
 		androidSpec []string
 		ctxEntries  []string
@@ -57,6 +58,13 @@ func newDeployCmd() *cobra.Command {
 			"equipped platform. A platform left out is untouched: no build, boot or\n" +
 			"install, and its devices stay as they are. It can't be combined with\n" +
 			"spec flags.\n\n" +
+			"--window shows the devices, for a squad you use by hand. Android\n" +
+			"emulators boot with a window and the hardware keyboard on\n" +
+			"(hw.keyboard=yes), so the Mac keyboard types into the app; a running\n" +
+			"headless emulator is restarted with a window, keeping its data. A\n" +
+			"deploy without --window leaves a running windowed emulator as it is\n" +
+			"and boots new ones headless. On iOS it opens Simulator.app on each\n" +
+			"device; Simulator.app also shows windows for every other booted sim.\n\n" +
 			"Stdout is the whole squad, with devices of platforms left out at their\n" +
 			"stored status. The exit code counts only this deploy's platforms:\n" +
 			"0 = all ready, 2 = mixed, 1 = none ready / build failed / bad args.\n" +
@@ -90,6 +98,7 @@ func newDeployCmd() *cobra.Command {
 				forceBuild:  forceBuild,
 				noBuild:     noBuild,
 				preserve:    preserve,
+				window:      window,
 				iosSpecs:    iosSpecs,
 				androidSpec: androidSpec,
 				ctxEntries:  ctxEntries,
@@ -107,6 +116,7 @@ func newDeployCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&forceBuild, "force-build", false, "always invoke xcodebuild/gradle even if outputs exist")
 	cmd.Flags().BoolVar(&noBuild, "no-build", false, "require an existing build artifact; never invoke xcodebuild/gradle")
 	cmd.Flags().BoolVar(&preserve, "preserve-data", false, "on reuse: install without wiping app data")
+	cmd.Flags().BoolVar(&window, "window", false, "show the devices: emulators get a window and the Mac keyboard, iOS opens Simulator.app (for a hands-on dev squad)")
 	cmd.Flags().StringArrayVar(&iosSpecs, "ios-spec", nil, "iOS slot spec, repeatable: 'DEVICE:RUNTIME:COUNT'")
 	cmd.Flags().StringArrayVar(&androidSpec, "android-spec", nil, "Android slot spec, repeatable: 'DEVICE:IMAGE:COUNT[:TARGET]'")
 	cmd.Flags().StringArrayVar(&platforms, "platform", nil, "deploy only this equipped platform, repeatable: 'ios' or 'android' (default: every equipped platform)")
@@ -132,6 +142,7 @@ type deployOpts struct {
 	forceBuild  bool
 	noBuild     bool
 	preserve    bool
+	window      bool
 	iosSpecs    []string
 	androidSpec []string
 	ctxEntries  []string
@@ -397,6 +408,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 			BundleID:        builds.IOS.BundleID,
 			ExistingDevices: existingIOS,
 			PreserveData:    opts.preserve,
+			Window:          opts.window,
 			Logger:          logger,
 		}
 		provGroup.Go(func() error {
@@ -415,6 +427,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 			BundleID:        builds.Android.BundleID,
 			ExistingDevices: existingAndroid,
 			PreserveData:    opts.preserve,
+			Window:          opts.window,
 			Logger:          logger,
 		}
 		provGroup.Go(func() error {

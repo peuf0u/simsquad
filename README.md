@@ -113,7 +113,7 @@ and verdicts: [docs/agent-testing.md](docs/agent-testing.md).
 
 | Command | Action | Key flags |
 |---|---|---|
-| `deploy` | Build + install; reuse the squad if it exists (same name+matrix), else provision fresh; emit the descriptor | `--name` (req), `--platform ios\|android`, `--ios-repo`/`--android-repo`, `--ios-spec`/`--android-spec`, `--context KEY=VALUE`, `--no-build`, `--force-build`, `--preserve-data`, `--clear-context` |
+| `deploy` | Build + install; reuse the squad if it exists (same name+matrix), else provision fresh; emit the descriptor | `--name` (req), `--platform ios\|android`, `--ios-repo`/`--android-repo`, `--ios-spec`/`--android-spec`, `--context KEY=VALUE`, `--no-build`, `--force-build`, `--preserve-data`, `--window`, `--clear-context` |
 | `status` | Squad registry (no arg) or one full record (`--name`) | `--name` |
 | `devices` | Uniform device list — one squad (`--name`) or all (no arg) | `--name`, `--ready`, `--platform=ios\|android` |
 | `set-context` | Mutate a squad's context | `--name` (req), `--set KEY=VALUE`, `--unset KEY`, `--clear` |
@@ -138,6 +138,15 @@ used.
 platforms; the squad's other platform keeps its devices untouched. Reuse is
 decided per platform, so a later bare deploy adds the missing platform. It
 can't be combined with spec flags.
+
+`deploy --window` shows the devices, for a squad used by hand (the
+`simsquad` skill's dev squad always passes it; test squads never do).
+Android emulators boot with a window and `hw.keyboard=yes`, so the Mac
+keyboard types into the app, and a running headless emulator is restarted
+with a window, keeping its data. A deploy without `--window` leaves a
+running windowed emulator alone and boots new emulators headless. On iOS it
+opens Simulator.app on each device, which also shows windows for every
+other booted sim.
 
 `deploy` exit codes: `0` = all devices ready · `2` = mixed (some ready, some
 errored) · `1` = none ready / bad args / build failed. Only the deployed
