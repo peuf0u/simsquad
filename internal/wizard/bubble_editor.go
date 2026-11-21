@@ -418,6 +418,11 @@ func (m editorModel) startAction(action editorAction) (tea.Model, tea.Cmd) {
 	case actionDeleteSet:
 		m.mode = editorConfirm
 		m.confirmTitle = fmt.Sprintf("Delete device set %s?", m.activeSet)
+		// Deleting a local override reverts to the shared set, so say so
+		// rather than promise a delete that doesn't happen.
+		if i := findDeviceSet(m.state.deviceSets, m.activeSet); i >= 0 && m.state.deviceSets[i].shadow != nil {
+			m.confirmTitle = fmt.Sprintf("Remove the local override of %s? The shared set stays.", m.activeSet)
+		}
 		m.confirmKind = action
 	case actionRemoveIOS:
 		if len((*m.iosTarget())) == 0 {
@@ -995,9 +1000,12 @@ func (m editorModel) updateConfirm(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch m.confirmKind {
 		case actionDeleteSet:
 			if i := findDeviceSet(m.state.deviceSets, m.activeSet); i >= 0 {
+				m.message = "deleted device set " + m.activeSet
+				if m.state.deviceSets[i].shadow != nil {
+					m.message = "local " + m.activeSet + " removed; using the shared set"
+				}
 				m.state.deviceSets = deleteDeviceSet(m.state.deviceSets, i)
 				m.dirty = true
-				m.message = "deleted device set " + m.activeSet
 			}
 			m.mode = editorMenu
 			return m.popSubmenu().withMessage(m.message), nil

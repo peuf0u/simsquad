@@ -262,12 +262,26 @@ func TestBubbleEditorDeleteLocalSetRevertsToSharedSet(t *testing.T) {
 	dir, state := localOverShared(t)
 	m := openSet(t, editorModel{configDir: dir, mode: editorMenu, cursor: menuDeviceSets, state: state}, "tablet")
 	m.cursor = 3 // Delete set
-	m = press(t, m, "enter", "y")
+	m = press(t, m, "enter")
+	if want := "Remove the local override of tablet? The shared set stays."; m.confirmTitle != want {
+		t.Fatalf("confirm = %q, want %q", m.confirmTitle, want)
+	}
+	m = press(t, m, "y")
+	if want := "local tablet removed; using the shared set"; m.message != want {
+		t.Fatalf("message = %q, want %q", m.message, want)
+	}
 	m.cursor = 0
 	m = press(t, m, "esc") // back to the top menu
 	m = openSet(t, m, "old phones")
 	m.cursor = 3
-	m = press(t, m, "enter", "y")
+	m = press(t, m, "enter")
+	if want := "Delete device set old phones?"; m.confirmTitle != want {
+		t.Fatalf("confirm = %q, want %q", m.confirmTitle, want)
+	}
+	m = press(t, m, "y")
+	if want := "deleted device set old phones"; m.message != want {
+		t.Fatalf("message = %q, want %q", m.message, want)
+	}
 	if _, err := writeState(dir, m.state, true); err != nil {
 		t.Fatal(err)
 	}
