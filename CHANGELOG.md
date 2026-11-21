@@ -6,6 +6,16 @@ All notable changes are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Dismissed squads no longer leave an AVD folder behind.** Android
+  teardown (`dismiss`, `sweep`, a failed `deploy`) now waits up to 15s for
+  the emulator to exit before deleting its AVD; an emulator still shutting
+  down could recreate `simsquad-*.avd/` holding only `emulator-user.ini`.
+  `simsquad sweep` also removes such a folder when it has no `.ini` and no
+  squad tracks it (in `$ANDROID_AVD_HOME`, or `~/.android/avd`), and lists
+  it under `pruned.android`.
+
 ## [0.5.0] - 2026-10-14
 
 ### Added
