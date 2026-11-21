@@ -110,3 +110,127 @@ func TestRunWorkerOtherFailureKeepsExitCode(t *testing.T) {
 		t.Errorf("status file = %q", s)
 	}
 }
+
+// writeTree creates each file (path relative to dir) with its content; a
+// path ending in "/" is an empty directory.
+func writeTree(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
+	for rel, content := range files {
+		p := filepath.Join(dir, rel)
+		if strings.HasSuffix(rel, "/") {
+			if err := os.MkdirAll(p, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// readTree returns every file under dir (relative path → content), and
+// every empty directory as "<path>/" → "".
+func readTree(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	got := map[string]string{}
+	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, p)
+		if d.IsDir() {
+			if entries, _ := os.ReadDir(p); len(entries) == 0 && rel != "." {
+				got[rel+"/"] = ""
+			}
+			return nil
+		}
+		b, err := os.ReadFile(p)
+		got[rel] = string(b)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func assertTree(t *testing.T, dir string, want map[string]string) {
+	t.Helper()
+	got := readTree(t, dir)
+	for k, v := range want {
+		if g, ok := got[k]; !ok {
+			t.Errorf("missing %s", k)
+		} else if g != v {
+			t.Errorf("%s = %q, want %q", k, g, v)
+		}
+	}
+	for k := range got {
+		if _, ok := want[k]; !ok {
+			t.Errorf("unexpected %s", k)
+		}
+	}
+}
+
+func TestRunWorkerFirstAttemptMovesNothing(t *testing.T) {
+	dir := t.TempDir()
+	// What the skill prepares before the first run.
+	writeTree(t, dir, map[string]string{"prompt.md": "test", "screenshots/": ""})
+	runShellWorker(t, dir, writeResultScript(dir))
+	assertTree(t, dir, map[string]string{
+		"prompt.md":    "test",
+		"screenshots/": "",
+		"result.json":  "{}\n",
+		"worker.log":   "",
+	})
+}
+
+func TestRunWorkerRetryMovesEarlierAttempts(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{"prompt.md": "test", "screenshots/": ""})
+	first := "echo first; echo '# first' > '" + filepath.Join(dir, "log.md") + "'; " +
+		"echo png > '" + filepath.Join(dir, "screenshots", "scenario-01.png") + "'; " +
+		writeResultScript(dir)
+	if got := runShellWorker(t, dir, first); got != StatusOK {
+		t.Fatalf("first attempt = %q", got)
+	}
+	writeTree(t, dir, map[string]string{"validation.json": `{"valid": true}`})
+
+	if got := runShellWorker(t, dir, "echo second; exit 3"); got != "error: worker exited 3" {
+		t.Fatalf("second attempt = %q", got)
+	}
+	if got := runShellWorker(t, dir, "echo third"); got != StatusNoResult {
+		t.Fatalf("third attempt = %q, want %q: a retry must never read the stale result", got, StatusNoResult)
+	}
+	assertTree(t, dir, map[string]string{
+		"prompt.md":    "test",
+		"screenshots/": "",
+		"worker.log":   "third\n",
+		"status":       StatusNoResult + "\n",
+
+		"attempts/1/result.json":                 "{}\n",
+		"attempts/1/log.md":                      "# first\n",
+		"attempts/1/worker.log":                  "first\n",
+		"attempts/1/screenshots/scenario-01.png": "png\n",
+		"attempts/1/validation.json":             `{"valid": true}`,
+
+		"attempts/2/worker.log": "second\n",
+		"attempts/2/status":     "error: worker exited 3\n",
+	})
+}
+
+func TestRunWorkerRetryRecordsItsOwnFailure(t *testing.T) {
+	dir := t.TempDir()
+	if got := runShellWorker(t, dir, writeResultScript(dir)); got != StatusOK {
+		t.Fatalf("first attempt = %q", got)
+	}
+	if got := runShellWorker(t, dir, "exit 3"); got != "error: worker exited 3" {
+		t.Errorf("retry = %q, want error: worker exited 3", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, contract.ResultFileName)); !os.IsNotExist(err) {
+		t.Errorf("the first attempt's result.json is still current (stat err %v)", err)
+	}
+}

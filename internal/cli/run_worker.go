@@ -30,8 +30,11 @@ func newRunWorkerCmd() *cobra.Command {
 			"the end of worker.log holds a known harness usage-limit message, else\n" +
 			"`error: worker exited <code>`. A clean exit without <worker-dir>/result.json\n" +
 			"writes `error: no result.json`; a clean exit with one writes no status file.\n" +
-			"Only these fixed texts are recorded, never log lines. A status file left\n" +
-			"by an earlier attempt is deleted before the worker starts.\n\n" +
+			"Only these fixed texts are recorded, never log lines.\n\n" +
+			"Running it again on the same folder is a retry: before the worker starts,\n" +
+			"the earlier attempt's outputs (everything but prompt.md and attempts/)\n" +
+			"move to <worker-dir>/attempts/<n>/, so a stale result or status is never\n" +
+			"read as the retry's. `run validate` and `run report` ignore attempts/.\n\n" +
 			"stdout is only {\"status\": …}: `ok`, or the status line written. The\n" +
 			"command exits 0 whenever the outcome was recorded, so one bad worker\n" +
 			"doesn't derail a fan-out; non-zero means simsquad itself was misused.",

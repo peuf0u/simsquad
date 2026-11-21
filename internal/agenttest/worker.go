@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -41,6 +42,14 @@ const StatusFile = "status"
 // stderr. simsquad's own stdout is reserved for the {status} JSON.
 const LogFile = "worker.log"
 
+// AttemptsDir is the worker-dir folder holding earlier attempts' outputs,
+// one numbered folder per attempt (attempts/1, attempts/2, …).
+const AttemptsDir = "attempts"
+
+// PromptFile is the worker's prompt, written by the orchestrator and reused
+// by every attempt.
+const PromptFile = "prompt.md"
+
 // Worker describes one supervised worker run.
 type Worker struct {
 	Dir      string        // worker dir; created if missing
@@ -63,10 +72,8 @@ func RunWorker(ctx context.Context, w Worker) (string, error) {
 	if err := os.MkdirAll(w.Dir, 0o755); err != nil {
 		return "", fmt.Errorf("create worker dir: %w", err)
 	}
-	// A status file overrides even a valid result.json, so a line left by an
-	// earlier attempt would make a successful retry read as blocked/error.
-	if err := os.Remove(filepath.Join(w.Dir, StatusFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("clear old worker status: %w", err)
+	if err := archiveAttempt(w.Dir); err != nil {
+		return "", err
 	}
 	logf, err := os.OpenFile(filepath.Join(w.Dir, LogFile), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
@@ -128,6 +135,57 @@ func RunWorker(ctx context.Context, w Worker) (string, error) {
 		killGroup(cmd.Process.Pid, done)
 		return "", ctx.Err()
 	}
+}
+
+// archiveAttempt moves an earlier attempt's outputs into the next free
+// attempts/<n>/, so a retry starts from a clean worker dir: a stale
+// result.json would be reported as the retry's, and a stale status file
+// overrides even a valid new result. Everything but the prompt and earlier
+// attempts moves. Empty directories stay where they are, so the folder the
+// orchestrator prepared (screenshots/) counts as no attempt, and a moved
+// directory is recreated empty for the same reason.
+func archiveAttempt(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("read worker dir: %w", err)
+	}
+	var move []os.DirEntry
+	for _, e := range entries {
+		if e.Name() == PromptFile || e.Name() == AttemptsDir {
+			continue
+		}
+		if e.IsDir() {
+			if sub, err := os.ReadDir(filepath.Join(dir, e.Name())); err == nil && len(sub) == 0 {
+				continue
+			}
+		}
+		move = append(move, e)
+	}
+	if len(move) == 0 {
+		return nil
+	}
+	n := 1
+	for {
+		if _, err := os.Lstat(filepath.Join(dir, AttemptsDir, strconv.Itoa(n))); errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		n++
+	}
+	dest := filepath.Join(dir, AttemptsDir, strconv.Itoa(n))
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return fmt.Errorf("archive earlier attempt: %w", err)
+	}
+	for _, e := range move {
+		if err := os.Rename(filepath.Join(dir, e.Name()), filepath.Join(dest, e.Name())); err != nil {
+			return fmt.Errorf("archive earlier attempt: %w", err)
+		}
+		if e.IsDir() {
+			if err := os.Mkdir(filepath.Join(dir, e.Name()), 0o755); err != nil {
+				return fmt.Errorf("archive earlier attempt: %w", err)
+			}
+		}
+	}
+	return nil
 }
 
 // usageLimitMessages are the messages a harness prints when it stops
