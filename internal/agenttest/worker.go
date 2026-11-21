@@ -244,15 +244,18 @@ const termGrace = 5 * time.Second
 // killGroup sends SIGTERM to the worker's process group, waits up to
 // termGrace for the worker to exit, then sends SIGKILL to the group
 // regardless, so children that outlive the leader or ignore SIGTERM die too.
-// ESRCH (group already gone) is not an error.
+// ESRCH (group already gone) is not an error. The worker's exit error is
+// discarded: a killed worker's outcome is the reason it was killed.
 func killGroup(pgid int, done <-chan error) {
 	_ = syscall.Kill(-pgid, syscall.SIGTERM)
 	select {
-	case <-done:
+	case err := <-done:
+		_ = err
 		_ = syscall.Kill(-pgid, syscall.SIGKILL)
 	case <-time.After(termGrace):
 		_ = syscall.Kill(-pgid, syscall.SIGKILL)
-		<-done // reap the leader
+		err := <-done // reap the leader
+		_ = err
 	}
 }
 
