@@ -42,15 +42,33 @@ type ProvisionInput struct {
 	BundleID        string
 	ExistingDevices []contract.Device
 	PreserveData    bool
-	Logger          *progress.Logger
+	// Window shows each ready device in Simulator.app after provisioning
+	// (deploy --window).
+	Window bool
+	Logger *progress.Logger
 }
 
 // Provision creates a sim per slot defined by Specs, boots each, waits for
 // installd, installs the app, and wipes the data container. Per-slot failures
 // surface as Device.Status == StatusError with a populated ErrorMessage; the
 // function itself only errors when the inputs are unusable (e.g. missing idb
-// for wipe). Slots run in parallel via errgroup.
+// for wipe). Slots run in parallel via errgroup. With Window set, the ready
+// devices are then shown in Simulator.app one by one.
 func Provision(in ProvisionInput) []contract.Device {
+	devices := provisionDevices(in)
+	if in.Window {
+		for _, f := range showInSimulator(devices, runOpen) {
+			if in.Logger != nil {
+				in.Logger.Warn("ios-provision: simulator-window",
+					progress.F("name", f.name), progress.F("udid", f.udid),
+					progress.F("error", f.err.Error()))
+			}
+		}
+	}
+	return devices
+}
+
+func provisionDevices(in ProvisionInput) []contract.Device {
 	if len(in.ExistingDevices) > 0 {
 		return reprovision(in)
 	}
@@ -95,6 +113,41 @@ func Provision(in ProvisionInput) []contract.Device {
 	}
 	_ = g.Wait()
 	return devices
+}
+
+// openFailure is a device Simulator.app could not be asked to show.
+type openFailure struct {
+	name, udid string
+	err        error
+}
+
+// showInSimulator asks Simulator.app to show each ready device. simctl boots
+// sims without a window; opening Simulator.app is idempotent and needs no
+// recorded mode (issue #33). It also shows windows for every other booted
+// sim, which --help says. Failures are returned for a warning: the device is
+// still ready, only not on screen.
+func showInSimulator(devices []contract.Device, run func(name string, args []string) error) []openFailure {
+	var failed []openFailure
+	for _, d := range devices {
+		if d.Status != contract.StatusReady || d.UDID == "" {
+			continue
+		}
+		if err := run("open", []string{"-a", "Simulator", "--args", "-CurrentDeviceUDID", d.UDID}); err != nil {
+			failed = append(failed, openFailure{name: d.Name, udid: d.UDID, err: err})
+		}
+	}
+	return failed
+}
+
+func runOpen(name string, args []string) error {
+	r, err := util.Run(name, args, util.RunOpts{Timeout: 30 * time.Second})
+	if err != nil {
+		return err
+	}
+	if r.Code != 0 {
+		return fmt.Errorf("%s exited %d: %s", name, r.Code, strings.TrimSpace(r.Stderr))
+	}
+	return nil
 }
 
 func reprovision(in ProvisionInput) []contract.Device {
