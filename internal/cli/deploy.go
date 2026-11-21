@@ -241,6 +241,8 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		clearCtx:     opts.clearCtx,
 		tomlCtx:      tomlCtx,
 		ctxOverrides: ctxOverrides,
+		iosRepo:      iosRepo,
+		androidRepo:  androidRepo,
 	}
 	claim, err := claimSquad(squadName, co)
 	if err != nil {
@@ -501,6 +503,8 @@ type claimOpts struct {
 	clearCtx     bool
 	tomlCtx      map[string]string
 	ctxOverrides map[string]string
+	iosRepo      string
+	androidRepo  string
 }
 
 // squadClaim is claimSquad's outcome. devices is the existing squad's device
@@ -551,6 +555,7 @@ func claimSquad(name string, o claimOpts) (squadClaim, error) {
 				existing.Context = nil
 			}
 			existing.Context = applyContextSource(existing.Context, o.tomlCtx, o.ctxOverrides)
+			o.markClaim(existing)
 			if err := state.SaveRecord(existing); err != nil {
 				return fmt.Errorf("deploy: save context: %w", err)
 			}
@@ -563,6 +568,7 @@ func claimSquad(name string, o claimOpts) (squadClaim, error) {
 			Context:   applyContextSource(nil, o.tomlCtx, o.ctxOverrides),
 			Ports:     map[string]int{},
 		}
+		o.markClaim(rec)
 		if err := state.SaveRecord(rec); err != nil {
 			return fmt.Errorf("deploy: initial save: %w", err)
 		}
@@ -576,6 +582,20 @@ func claimSquad(name string, o claimOpts) (squadClaim, error) {
 		return nil
 	})
 	return c, err
+}
+
+// markClaim writes a placeholder builds entry (repo and specs, no artifact)
+// for each platform this deploy is about to deploy. From the moment of the
+// claim the record then shows a deploy in flight, so another deploy's
+// failed-create cleanup doesn't remove a squad this one is still building
+// for. The final merge overwrites the placeholder with the real build.
+func (o claimOpts) markClaim(rec *contract.SquadRecord) {
+	if len(o.iosSpecs) > 0 {
+		rec.Builds.IOS = &contract.IosBuild{Repo: o.iosRepo, Specs: o.iosSpecs}
+	}
+	if len(o.androidSpecs) > 0 {
+		rec.Builds.Android = &contract.AndroidBuild{Repo: o.androidRepo, Specs: o.androidSpecs}
+	}
 }
 
 // deployResult is what one deploy produced for the platforms it deployed.
@@ -645,11 +665,11 @@ func (r deployResult) devices() []contract.Device {
 }
 
 // cleanupCreatedSquad undoes a failed deploy of a squad it created: it tears
-// down the deploy's own devices and drops its platforms from the record. The
-// squad itself goes only when nothing is left in it — a concurrent deploy of
-// the other platform may have added devices, a builds entry or emulator port
-// reservations meanwhile, and those keep it. (A concurrent deploy that has
-// written nothing yet recreates the squad through its upserts.)
+// down the deploy's own devices and, under the lock, drops its devices, its
+// own builds entries and (for Android) its port reservations from the
+// reloaded record. The squad itself goes only when no devices, ports or
+// builds entries are left: a concurrent deploy of the other platform shows
+// at least its claim marker (markClaim), and its part keeps the squad.
 func cleanupCreatedSquad(name string, result deployResult, logger *progress.Logger) {
 	deployVia.teardownDevices(result.devices(), logger)
 	drop := deployResult{ios: result.ios, android: result.android}

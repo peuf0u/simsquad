@@ -845,6 +845,15 @@ func TestDeployConcurrentPlatformSurvivesCleanupOfFailedCreate(t *testing.T) {
 	if _, code, err := deployCLI(t, "--name", "s", "--platform", "ios", "--context", "user=bob"); err != nil || code != 1 {
 		t.Fatalf("A: code %d err %v, want exit 1", code, err)
 	}
+	// B has written no devices or ports yet; its claim marker alone keeps
+	// A's cleanup from removing the squad.
+	mid := loadTestRecord(t, "s")
+	if _, ok, _ := state.FindSquad("s"); !ok || mid == nil {
+		t.Fatalf("A's cleanup removed the squad B is deploying (record %+v)", mid)
+	}
+	if mid.Builds.IOS != nil || mid.Builds.Android == nil {
+		t.Fatalf("builds after A's cleanup = %+v, want A's entry dropped and B's marker kept", mid.Builds)
+	}
 	close(releaseB)
 	b := <-bDone
 	if b.err != nil {
@@ -937,5 +946,37 @@ func TestDeployCleanupKeepsSquadWithAnotherDeploysPorts(t *testing.T) {
 	}
 	if _, ok, _ := state.FindSquad("s"); !ok {
 		t.Fatal("squad unregistered")
+	}
+}
+
+// The claim writes a placeholder builds entry (repo and specs, no artifact)
+// for each platform the deploy is about to deploy, so the record shows the
+// deploy in flight from the moment it claims the squad.
+func TestClaimSquadMarksDeployedPlatforms(t *testing.T) {
+	t.Setenv("SIMSQUAD_CACHE_DIR", t.TempDir())
+	o := testClaimOpts()
+	o.iosRepo = "/repo/ios"
+	if _, err := claimSquad("s", o); err != nil {
+		t.Fatal(err)
+	}
+	rec := loadTestRecord(t, "s")
+	if rec.Builds.IOS == nil || rec.Builds.IOS.Repo != "/repo/ios" || len(rec.Builds.IOS.Specs) != 1 || rec.Builds.IOS.AppPath != "" {
+		t.Fatalf("builds.ios = %+v, want a placeholder", rec.Builds.IOS)
+	}
+	if rec.Builds.Android != nil {
+		t.Fatalf("builds.android = %+v, want none (not deployed)", rec.Builds.Android)
+	}
+
+	// A second deploy of the other platform adds its marker and keeps ours.
+	o2 := claimOpts{
+		androidSpecs: []contract.AndroidSpec{{Device: testAndProfile, Image: testAndImage, Count: 1}},
+		androidRepo:  "/repo/android",
+	}
+	if _, err := claimSquad("s", o2); err != nil {
+		t.Fatal(err)
+	}
+	rec = loadTestRecord(t, "s")
+	if rec.Builds.IOS == nil || rec.Builds.Android == nil || rec.Builds.Android.Repo != "/repo/android" {
+		t.Fatalf("builds = %+v, want both markers", rec.Builds)
 	}
 }
