@@ -114,9 +114,9 @@ All notable changes are recorded here. The format follows
   git toplevel.
 - **`run worker` records why a worker left no result.** A clean exit
   without `result.json` is now `error: no result.json` (it was `ok`), in
-  the status file and on stdout, and a non-zero exit whose `worker.log`
-  ends with a known Claude Code or Codex usage-limit message is `error:
-  usage limit` instead of `error: worker exited <code>`. Only these fixed
+  the status file and on stdout. A worker whose `worker.log` ends with a
+  known Claude Code or Codex usage-limit message, and that exited non-zero
+  or left no result, is `error: usage limit`. Only these fixed
   texts are recorded, never log lines. The `simsquad-test` skill lists
   every status, and its worker writes `result.json` with every scenario
   `blocked` (and the exploration's `blocked_reason`) when it is stopped

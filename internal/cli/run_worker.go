@@ -26,10 +26,10 @@ func newRunWorkerCmd() *cobra.Command {
 			"The command runs in its own process group with its input closed; its\n" +
 			"output goes to <worker-dir>/worker.log. When --timeout passes, the whole\n" +
 			"group (every process the worker started) is killed and <worker-dir>/status\n" +
-			"says `blocked: timeout`. A non-zero exit writes `error: usage limit` when\n" +
-			"the end of worker.log holds a known harness usage-limit message, else\n" +
-			"`error: worker exited <code>`. A clean exit without <worker-dir>/result.json\n" +
-			"writes `error: no result.json`; a clean exit with one writes no status file.\n" +
+			"says `blocked: timeout`. A clean exit with <worker-dir>/result.json writes\n" +
+			"no status file. Otherwise, when the end of worker.log holds a known harness\n" +
+			"usage-limit message, it writes `error: usage limit`; else a clean exit\n" +
+			"writes `error: no result.json` and a non-zero exit `error: worker exited <code>`.\n" +
 			"Only these fixed texts are recorded, never log lines.\n\n" +
 			"Running it again on the same folder is a retry: before the worker starts,\n" +
 			"the earlier attempt's outputs (everything but prompt.md and attempts/)\n" +

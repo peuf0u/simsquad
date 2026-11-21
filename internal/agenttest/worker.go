@@ -111,8 +111,14 @@ func RunWorker(ctx context.Context, w Worker) (string, error) {
 			if _, statErr := os.Stat(filepath.Join(w.Dir, contract.ResultFileName)); statErr == nil {
 				return StatusOK, nil
 			}
-			w.progress("%s", StatusNoResult)
-			return StatusNoResult, writeStatus(w.Dir, StatusNoResult)
+			// A harness may exit 0 when it stops at a usage limit, so the
+			// log decides between the two reasons for a missing result.
+			status := StatusNoResult
+			if usageLimitHit(filepath.Join(w.Dir, LogFile)) {
+				status = StatusUsageLimit
+			}
+			w.progress("%s", status)
+			return status, writeStatus(w.Dir, status)
 		}
 		var exitErr *exec.ExitError
 		if !errors.As(err, &exitErr) {
@@ -166,8 +172,14 @@ func archiveAttempt(dir string) error {
 	}
 	n := 1
 	for {
-		if _, err := os.Lstat(filepath.Join(dir, AttemptsDir, strconv.Itoa(n))); errors.Is(err, os.ErrNotExist) {
+		_, err := os.Lstat(filepath.Join(dir, AttemptsDir, strconv.Itoa(n)))
+		if errors.Is(err, os.ErrNotExist) {
 			break
+		}
+		// Any other error (attempts is a file, or unreadable) would repeat
+		// for every n, so it ends the search instead of spinning.
+		if err != nil {
+			return fmt.Errorf("archive earlier attempt: %w", err)
 		}
 		n++
 	}

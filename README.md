@@ -304,8 +304,8 @@ command's output to `<dir>/worker.log`. The outcome:
 | Worker | `<dir>/status` | stdout `status` |
 |---|---|---|
 | exits 0 in time, `<dir>/result.json` exists | not written | `ok` |
+| exits non-zero, or exits 0 without `<dir>/result.json`, and the end of `worker.log` holds a known Claude Code or Codex usage-limit message | `error: usage limit` | same |
 | exits 0 in time, no `<dir>/result.json` | `error: no result.json` | same |
-| exits non-zero, the end of `worker.log` holds a known Claude Code or Codex usage-limit message | `error: usage limit` | same |
 | exits non-zero otherwise | `error: worker exited <code>` | same |
 | still running at `--timeout` | `blocked: timeout` — the whole group, children included, is killed | same |
 

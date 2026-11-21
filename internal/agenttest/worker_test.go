@@ -234,3 +234,41 @@ func TestRunWorkerRetryRecordsItsOwnFailure(t *testing.T) {
 		t.Errorf("the first attempt's result.json is still current (stat err %v)", err)
 	}
 }
+
+func TestRunWorkerFailsWhenAttemptsIsNotAFolder(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{"attempts": "not a folder", "result.json": "{}"})
+	done := make(chan error, 1)
+	go func() {
+		_, err := RunWorker(context.Background(), Worker{
+			Dir: dir, Timeout: 10 * time.Second, Command: []string{"true"},
+		})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "archive earlier attempt") {
+			t.Errorf("err = %v, want an archive error", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunWorker hung numbering attempts under a file named attempts")
+	}
+}
+
+func TestRunWorkerUsageLimitOnCleanExitWithoutResult(t *testing.T) {
+	dir := t.TempDir()
+	if got := runShellWorker(t, dir, "echo 'Claude usage limit reached. Your limit will reset at 3pm'"); got != StatusUsageLimit {
+		t.Errorf("status = %q, want %q", got, StatusUsageLimit)
+	}
+	if got := statusFile(t, dir); got != StatusUsageLimit+"\n" {
+		t.Errorf("status file = %q", got)
+	}
+}
+
+func TestRunWorkerCleanExitWithResultIgnoresUsageLimitText(t *testing.T) {
+	dir := t.TempDir()
+	script := "echo 'usage limit reached'; " + writeResultScript(dir)
+	if got := runShellWorker(t, dir, script); got != StatusOK {
+		t.Errorf("status = %q, want %q: a written result wins", got, StatusOK)
+	}
+}
