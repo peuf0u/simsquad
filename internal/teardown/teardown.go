@@ -4,7 +4,8 @@
 // Per-platform behaviour:
 //
 //	iOS                 → simctl shutdown + simctl delete
-//	Android emulator    → adb emu kill + avdmanager delete avd
+//	Android emulator    → adb emu kill, wait for it to exit (bounded),
+//	                      then avdmanager delete avd
 //	Android physical    → adb uninstall <bundle>      (never delete device)
 //	orphan              → any simsquad-* sim/AVD not in the registry
 //	removed repo        → a squad whose recorded repo path no longer exists
@@ -106,26 +107,32 @@ func teardownIOS(dev contract.Device) error {
 
 func teardownAndroidEmulator(dev contract.Device) error {
 	adb, err := android.ADB()
-	if err == nil {
-		_, _ = util.Run(adb, []string{"-s", dev.UDID, "emu", "kill"}, util.RunOpts{})
+	if err != nil {
+		adb = ""
+	}
+	kill := func() {
+		if adb != "" {
+			_, _ = util.Run(adb, []string{"-s", dev.UDID, "emu", "kill"}, util.RunOpts{})
+		}
 	}
 	name := dev.AVDName
 	if name == "" {
 		name = dev.Name
 	}
-	if name == "" {
+	avd, avdErr := android.AVDManager()
+	if name == "" || avdErr != nil {
+		// Nothing to delete, so nothing to wait for. Missing cmdline-tools
+		// is recoverable for teardown — log via caller.
+		kill()
 		return nil
 	}
-	avd, err := android.AVDManager()
-	if err != nil {
-		// Missing cmdline-tools is recoverable for teardown — log via caller.
+	return stopThenDelete(kill, emulatorGoneProbe(dev, adb), func() error {
+		r, _ := util.Run(avd, []string{"delete", "avd", "-n", name}, util.RunOpts{Env: android.AVDManagerEnv(avd)})
+		if r.Code != 0 {
+			return fmt.Errorf("avdmanager delete %s: %s", name, strings.TrimSpace(r.Stderr))
+		}
 		return nil
-	}
-	r, _ := util.Run(avd, []string{"delete", "avd", "-n", name}, util.RunOpts{Env: android.AVDManagerEnv(avd)})
-	if r.Code != 0 {
-		return fmt.Errorf("avdmanager delete %s: %s", name, strings.TrimSpace(r.Stderr))
-	}
-	return nil
+	}, emulatorExitTimeout, emulatorExitPoll)
 }
 
 func teardownAndroidPhysical(dev contract.Device) error {
