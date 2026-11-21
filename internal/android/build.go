@@ -1,6 +1,7 @@
 package android
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -75,11 +76,14 @@ func OutputDir(task string) string {
 }
 
 // BuildResult captures the success output of a Gradle build invocation.
+// Exactly one of APKPath (an assemble* task) and APKSetPath (a bundle* task:
+// the .apks bundletool built from the app bundle) is set.
 type BuildResult struct {
-	APKPath  string
-	BundleID string
-	GitSHA   string
-	Reused   bool
+	APKPath    string
+	APKSetPath string
+	BundleID   string
+	GitSHA     string
+	Reused     bool
 }
 
 // BuildOptions configure a single Gradle invocation.
@@ -151,9 +155,11 @@ func latestArtifact(repo, rel, ext string) string {
 	return newest
 }
 
-// Build invokes Gradle and returns the produced APK path. Flag semantics
-// mirror the iOS path: Force always invokes, NoBuild never invokes, default
-// invokes incrementally.
+// Build invokes Gradle and returns the produced APK, or for a bundle* task
+// the APK set built from the produced bundle. Flag semantics mirror the iOS
+// path: Force always invokes, NoBuild never invokes, default invokes
+// incrementally. The APK set is built on every call, once per deploy, so
+// every device gets the same one.
 func Build(opts BuildOptions) (BuildResult, error) {
 	if _, err := SDKRoot(); err != nil {
 		return BuildResult{}, err
@@ -162,68 +168,125 @@ func Build(opts BuildOptions) (BuildResult, error) {
 	if task == "" {
 		task = DefaultGradleTask
 	}
+	mode := TaskMode(task)
+	outRel := OutputDir(task)
+	ext, kind := ".apk", "APK"
+	var bundletool string
+	if mode == ModeBundle {
+		ext, kind = ".aab", "app bundle"
+		// Both are checked before Gradle runs: without them the bundle it
+		// builds can't be installed.
+		var err error
+		if bundletool, err = Bundletool(); err != nil {
+			return BuildResult{}, err
+		}
+		if DebugKeystore() == "" {
+			return BuildResult{}, errors.New(DebugKeystoreHint)
+		}
+	}
 
 	sha := util.GitHeadSHA(opts.Repo)
 	if sha == "" {
 		sha = "nogit"
 	}
-	outRel := OutputDir(task)
-	preExisting := latestArtifact(opts.Repo, outRel, ".apk")
+	preExisting := latestArtifact(opts.Repo, outRel, ext)
 
+	artifact := preExisting
+	var logPath string
 	if opts.NoBuild {
 		if preExisting == "" {
 			return BuildResult{}, fmt.Errorf(
-				"--no-build set but no APK under %s. drop --no-build or run with --force-build first",
-				filepath.Join(opts.Repo, outRel),
+				"--no-build set but no %s under %s. drop --no-build or run with --force-build first",
+				kind, filepath.Join(opts.Repo, outRel),
 			)
 		}
-		bid, err := ReadApplicationID(preExisting)
+	} else {
+		gradlew := filepath.Join(opts.Repo, "gradlew")
+		if !isFile(gradlew) {
+			return BuildResult{}, fmt.Errorf("gradlew not found at %s", gradlew)
+		}
+
+		switch {
+		case opts.Logger != nil && preExisting != "" && !opts.Force:
+			opts.Logger.Info("android-build: incremental", progress.F("sha", sha))
+		case opts.Logger != nil && preExisting == "":
+			opts.Logger.Info("android-build: cold-start", progress.F("sha", sha))
+		case opts.Logger != nil:
+			opts.Logger.Info("android-build: forced", progress.F("sha", sha))
+		}
+
+		logPath = util.AndroidBuildLogPath()
+		if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+			return BuildResult{}, fmt.Errorf("mkdir log dir: %w", err)
+		}
+
+		if err := runGradle(opts.Repo, gradlew, task, logPath); err != nil {
+			return BuildResult{}, err
+		}
+
+		artifact = latestArtifact(opts.Repo, outRel, ext)
+		if artifact == "" {
+			return BuildResult{}, fmt.Errorf(
+				"gradle reported success but no %s under %s. Log: %s",
+				kind, filepath.Join(opts.Repo, outRel), logPath,
+			)
+		}
+	}
+	res := BuildResult{GitSHA: sha, Reused: preExisting != ""}
+
+	if mode == ModeAPK {
+		bid, err := ReadApplicationID(artifact)
 		if err != nil {
 			return BuildResult{}, err
 		}
-		return BuildResult{APKPath: preExisting, BundleID: bid, GitSHA: sha, Reused: true}, nil
+		res.APKPath, res.BundleID = artifact, bid
+		return res, nil
 	}
 
-	gradlew := filepath.Join(opts.Repo, "gradlew")
-	if !isFile(gradlew) {
-		return BuildResult{}, fmt.Errorf("gradlew not found at %s", gradlew)
-	}
-
-	switch {
-	case opts.Logger != nil && preExisting != "" && !opts.Force:
-		opts.Logger.Info("android-build: incremental", progress.F("sha", sha))
-	case opts.Logger != nil && preExisting == "":
-		opts.Logger.Info("android-build: cold-start", progress.F("sha", sha))
-	case opts.Logger != nil:
-		opts.Logger.Info("android-build: forced", progress.F("sha", sha))
-	}
-
-	logPath := util.AndroidBuildLogPath()
-	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
-		return BuildResult{}, fmt.Errorf("mkdir log dir: %w", err)
-	}
-
-	if err := runGradle(opts.Repo, gradlew, task, logPath); err != nil {
-		return BuildResult{}, err
-	}
-
-	apk := latestArtifact(opts.Repo, outRel, ".apk")
-	if apk == "" {
-		return BuildResult{}, fmt.Errorf(
-			"gradle reported success but no APK under %s. Log: %s",
-			filepath.Join(opts.Repo, outRel), logPath,
-		)
-	}
-	bid, err := ReadApplicationID(apk)
+	bid, err := readBundleApplicationID(bundletool, artifact)
 	if err != nil {
 		return BuildResult{}, err
 	}
-	return BuildResult{
-		APKPath:  apk,
-		BundleID: bid,
-		GitSHA:   sha,
-		Reused:   preExisting != "",
-	}, nil
+	set, err := buildAPKSet(bundletool, artifact)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	res.APKSetPath, res.BundleID = set, bid
+	return res, nil
+}
+
+// readBundleApplicationID reads the application id from an app bundle's
+// base manifest; aapt2 can't read an .aab.
+func readBundleApplicationID(bundletool, aab string) (string, error) {
+	r, err := util.Run(bundletool, []string{
+		"dump", "manifest", "--bundle=" + aab, "--xpath=/manifest/@package",
+	}, util.RunOpts{})
+	if err != nil {
+		return "", fmt.Errorf("bundletool: %w", err)
+	}
+	id := strings.TrimSpace(r.Stdout)
+	if r.Code != 0 || id == "" {
+		return "", fmt.Errorf("bundletool dump manifest found no package in %s: %s", aab, strings.TrimSpace(r.Stderr))
+	}
+	return id, nil
+}
+
+// buildAPKSet turns the bundle into an APK set next to it, signed with the
+// debug keystore (bundletool's default). --local-testing lets an on-demand
+// module install without Play: install-apks pushes its splits where the Play
+// Core library looks for them.
+func buildAPKSet(bundletool, aab string) (string, error) {
+	set := strings.TrimSuffix(aab, ".aab") + ".apks"
+	r, err := util.Run(bundletool, []string{
+		"build-apks", "--bundle=" + aab, "--output=" + set, "--local-testing", "--overwrite",
+	}, util.RunOpts{})
+	if err != nil {
+		return "", fmt.Errorf("bundletool: %w", err)
+	}
+	if r.Code != 0 {
+		return "", fmt.Errorf("bundletool build-apks failed: %s", strings.TrimSpace(r.Stderr+r.Stdout))
+	}
+	return set, nil
 }
 
 func runGradle(repo, gradlew, task, logPath string) error {
