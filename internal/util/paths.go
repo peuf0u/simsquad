@@ -43,9 +43,11 @@ func StateFileFor(name string) string {
 // IndexLockPath is the flock target guarding squads.json writes.
 func IndexLockPath() string { return filepath.Join(CacheRoot(), ".index.lock") }
 
-// EnsureCacheRoot creates ~/.cache/simsquad if it doesn't exist.
+// EnsureCacheRoot creates ~/.cache/simsquad if it doesn't exist. It is
+// created 0700: the squad records in it hold secret context values. An
+// existing directory keeps its mode.
 func EnsureCacheRoot() error {
-	return os.MkdirAll(CacheRoot(), 0o755)
+	return os.MkdirAll(CacheRoot(), 0o700)
 }
 
 // BuildCacheRoot is the parent directory for build caches (xcodebuild derived

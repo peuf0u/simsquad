@@ -3,10 +3,13 @@ package state
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
 	"github.com/peuf0u/simsquad/internal/contract"
+	"github.com/peuf0u/simsquad/internal/util"
 )
 
 func TestUpdateRecordAppliesOnTopOfDisk(t *testing.T) {
@@ -95,5 +98,55 @@ func TestUpdateRecordKeepsDiskOnError(t *testing.T) {
 	}
 	if rec, _ := LoadRecord("s"); rec.CreatedAt != "t0" {
 		t.Fatalf("record saved despite error: %+v", rec)
+	}
+}
+
+// Records hold secret values, so the cache root is created private and the
+// record, the registry and the lock file are owner-only.
+func TestCacheFilesArePrivate(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "fresh", "cache")
+	t.Setenv("SIMSQUAD_CACHE_DIR", root)
+	if err := RegisterSquad(RegisterSquadInput{Name: "s", StateFile: util.StateFileFor("s")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveRecord(&contract.SquadRecord{Name: "s", Context: map[string]string{"password": "hunter2"}}); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]os.FileMode{
+		root:                   0o700,
+		util.SquadIndexPath():  0o600,
+		util.StateFileFor("s"): 0o600,
+		util.IndexLockPath():   0o600,
+	} {
+		fi, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := fi.Mode().Perm(); got != want {
+			t.Errorf("%s mode = %o, want %o", filepath.Base(path), got, want)
+		}
+	}
+}
+
+// A record first written by an older simsquad (0644) turns private on its
+// next save.
+func TestSaveRecordTightensAnOldRecord(t *testing.T) {
+	t.Setenv("SIMSQUAD_CACHE_DIR", t.TempDir())
+	path := util.StateFileFor("s")
+	if err := os.WriteFile(path, []byte(`{"name":"s"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+".tmp", []byte(`stale`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveRecord(&contract.SquadRecord{Name: "s"}); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fi.Mode().Perm(); got != 0o600 {
+		t.Fatalf("record mode = %o, want 600", got)
 	}
 }

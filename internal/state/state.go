@@ -27,9 +27,10 @@ func loadIndex() (contract.SquadIndex, error) {
 	return idx, nil
 }
 
-// saveIndex writes the index atomically. Caller must hold the index lock.
+// saveIndex writes the index atomically, owner-only like the records it
+// lists. Caller must hold the index lock.
 func saveIndex(idx contract.SquadIndex) error {
-	return util.WriteJSON(util.SquadIndexPath(), idx)
+	return util.WritePrivateJSON(util.SquadIndexPath(), idx)
 }
 
 // ListSquads returns every squad currently registered. Result is a slice in
@@ -168,9 +169,11 @@ func LoadRecord(name string) (*contract.SquadRecord, error) {
 	return &rec, nil
 }
 
-// SaveRecord persists a squad record atomically.
+// SaveRecord persists a squad record atomically. The file is 0600: the
+// record keeps secret context values in clear (the only store of a secret
+// given by flag), so only the user may read it.
 func SaveRecord(rec *contract.SquadRecord) error {
-	return util.WriteJSON(util.StateFileFor(rec.Name), rec)
+	return util.WritePrivateJSON(util.StateFileFor(rec.Name), rec)
 }
 
 // ErrNoRecord is returned by UpdateRecord when the squad's record is gone,

@@ -13,7 +13,18 @@ import (
 // The trailing newline matches the Python reference's `+ "\n"` so byte-level
 // diffs against captured Python output stay clean.
 func WriteJSON(path string, v any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	return writeJSON(path, v, 0o755, 0o644)
+}
+
+// WritePrivateJSON is WriteJSON for files only the user may read: the squad
+// records (which hold secret context values) and the registry beside them.
+// The file is written 0600, and a missing parent is created 0700.
+func WritePrivateJSON(path string, v any) error {
+	return writeJSON(path, v, 0o700, 0o600)
+}
+
+func writeJSON(path string, v any, dirPerm, perm os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), dirPerm); err != nil {
 		return fmt.Errorf("util.WriteJSON: mkdir parent: %w", err)
 	}
 	data, err := json.MarshalIndent(v, "", "  ")
@@ -23,8 +34,14 @@ func WriteJSON(path string, v any) error {
 	data = append(data, '\n')
 
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, perm); err != nil {
 		return fmt.Errorf("util.WriteJSON: write tmp: %w", err)
+	}
+	// WriteFile sets perm only on a file it creates; a tmp file left by a
+	// crashed write keeps its old mode, which the rename would carry over.
+	if err := os.Chmod(tmp, perm); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("util.WriteJSON: chmod tmp: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		// Best-effort cleanup; the rename failure is the real error.
