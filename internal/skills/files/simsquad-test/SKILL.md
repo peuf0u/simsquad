@@ -114,9 +114,10 @@ When `run new` refuses, fix the cause and run it again:
 - A platform tag the equipment lacks: ask the user to add that platform
   with `simsquad equip` (an interactive wizard in their terminal), or drop
   the tag.
-- The squad is in use by an unfinished run: ask the user whether that run
-  is still going. If not, finish it with the `simsquad run report` command
-  the message names; otherwise pass `--fresh`.
+- The squad is in use by an unfinished run that shares a platform: ask the
+  user whether that run is still going. If not, finish it with the
+  `simsquad run report` command the message names; otherwise pass
+  `--fresh`.
 
 ## 5. Deploy
 

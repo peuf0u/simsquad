@@ -16,7 +16,8 @@ func newRunNewCmd() *cobra.Command {
 			"equipment, computes the per-worker deadline and creates\n" +
 			".simsquad/runs/<run-id>/ with run.json and a copy of the feature file.\n" +
 			"Run it from inside the app repo. Refuses unequipped platform tags,\n" +
-			"malformed Gherkin, and a squad still used by an unfinished run.\n\n" +
+			"malformed Gherkin, and a squad in use by an unfinished run that\n" +
+			"shares a platform with this one.\n\n" +
 			"  simsquad run new qa/features/login.feature > run.json",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

@@ -31,6 +31,17 @@ All notable changes are recorded here. The format follows
   skill deploys only the run's `platforms`. Skill contract 4; rerun
   `simsquad skill install` to update the installed skills.
 
+### Changed
+
+- **`run new` refuses a squad only when an unfinished run on it shares a
+  platform.** An `@ios` run and an `@android` run can now run on one squad
+  at the same time; a second run on a platform an unfinished run uses is
+  still refused, and the message names that run, the shared platforms and
+  the `simsquad run report` command that finishes it. `--fresh` still
+  bypasses the check. A `run.json` written before `platforms` existed
+  counts as using every platform. The `simsquad-test` skill says so in
+  step 4.
+
 ### Fixed
 
 - **Dismissed squads no longer leave an AVD folder behind.** Android

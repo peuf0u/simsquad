@@ -251,8 +251,9 @@ simsquad run new qa/features/login.feature > run-new.json
 - Squad: `qa-<repo>` (the folder holding `simsquad.toml`), or
   `[agent].test_squad`; `--fresh` adds a unique suffix for an isolated squad.
 - Platforms: the equipped platforms the tags allow. A tag naming an
-  unequipped platform, malformed Gherkin, or a squad still used by a run
-  without a `report.json` is refused before anything is written.
+  unequipped platform, malformed Gherkin, or a squad in use by a run that
+  shares a platform and has no `report.json` yet is refused before anything
+  is written.
 - Deadline per worker: `120 + Σ(60 + 30 × steps)` over the scenarios of the
   busiest platform, `+ 600` when it has an exploration.
 - Creates `.simsquad/runs/<run-id>/` with `feature.feature` (a copy) and
