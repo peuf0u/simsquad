@@ -2,6 +2,7 @@ package teardown
 
 import (
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/peuf0u/simsquad/internal/contract"
@@ -46,5 +47,29 @@ func TestSquadRemovesRecordBeforeTearingDownDevices(t *testing.T) {
 	}
 	if _, ok, _ := state.FindSquad("s"); ok {
 		t.Fatal("squad still registered")
+	}
+}
+
+// Review round 4 (#38): deploy keeps each squad's own APK set under the
+// cache root; dismissing the squad removes it.
+func TestSquadRemovesTheSquadsAPKSet(t *testing.T) {
+	t.Setenv("SIMSQUAD_CACHE_DIR", t.TempDir())
+	set := util.SquadAPKSetPath("s")
+	rec := &contract.SquadRecord{Name: "s", Builds: contract.Builds{Android: &contract.AndroidBuild{APKSetPath: set}}}
+	if err := state.SaveRecord(rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.RegisterSquad(state.RegisterSquadInput{Name: "s", StateFile: util.StateFileFor("s")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(set, []byte("set"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Squad("s", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(set); !os.IsNotExist(err) {
+		t.Fatalf("stat the squad's APK set: %v, want it removed", err)
 	}
 }

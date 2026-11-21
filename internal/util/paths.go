@@ -40,6 +40,14 @@ func StateFileFor(name string) string {
 	return filepath.Join(CacheRoot(), name+".json")
 }
 
+// SquadAPKSetPath is the squad's own copy of its bundle build's APK set:
+// ~/.cache/simsquad/<name>.apks. Every deploy from a repo writes the repo's
+// set again, so reset installs this copy, which only the squad's own deploy
+// replaces.
+func SquadAPKSetPath(name string) string {
+	return filepath.Join(CacheRoot(), name+".apks")
+}
+
 // IndexLockPath is the flock target guarding squads.json writes.
 func IndexLockPath() string { return filepath.Join(CacheRoot(), ".index.lock") }
 

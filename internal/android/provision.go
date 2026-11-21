@@ -851,8 +851,8 @@ func installAndClear(serial string, pkg appPackage, bundle string) error {
 // verb. `pm clear` already restores the app to first-install state. For a
 // bundle build, apkSet is the squad's APK set: the clear deletes the
 // on-demand modules' splits from external storage, so the set is installed
-// again to push them back. The caller passes "" when it can't vouch for the
-// set on disk (cli.resetAPKSet).
+// again to push them back: the squad's own copy (StageAPKSet), or "" when
+// it is gone (cli.resetAPKSet).
 func ResetApp(serial, bundle, apkSet string) error {
 	adb, err := ADB()
 	if err != nil {

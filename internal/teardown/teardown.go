@@ -45,7 +45,8 @@ var orphanRx = regexp.MustCompile(`^simsquad-[a-z0-9-]+-(ios|android)-\d+$`)
 func MatchOrphan(name string) bool { return orphanRx.MatchString(name) }
 
 // Squad shuts down + deletes every device in the squad, drops the
-// per-squad state file, and removes the squad from the registry. Physical
+// per-squad state file and the squad's own APK set, and removes the squad
+// from the registry. Physical
 // Android devices are never deleted — only the app is uninstalled.
 //
 // A missing squad record is not an error; the registry entry (if any) is
@@ -80,6 +81,10 @@ func Squad(name string, logger *progress.Logger) error {
 	})
 	if err != nil {
 		return err
+	}
+	// The squad's own APK set (android.StageAPKSet) goes with its record.
+	if err := os.Remove(util.SquadAPKSetPath(name)); err != nil && !errors.Is(err, fs.ErrNotExist) && logger != nil {
+		logger.Warn("teardown: remove-apk-set", progress.F("name", name), progress.F("error", err.Error()))
 	}
 	if rec == nil {
 		if logger != nil {

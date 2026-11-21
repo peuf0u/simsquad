@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -105,7 +104,7 @@ func runReset(cmd *cobra.Command, name string, only []string) error {
 		case contract.PlatformIOS:
 			rerr = ios.ResetApp(dev.UDID, dev.BundleID)
 		case contract.PlatformAndroid:
-			set, skip := resetAPKSet(rec, dev)
+			set, skip := resetAPKSet(rec)
 			if skip != "" {
 				logger.Warn("reset: "+skip, progress.F("id", dev.UDID),
 					progress.F("apks", rec.Builds.Android.APKSetPath))
@@ -138,26 +137,17 @@ func runReset(cmd *cobra.Command, name string, only []string) error {
 // after clearing it, since the clear deletes the on-demand modules' splits
 // that install-apks left in external storage. It is "" for a squad without a
 // bundle build, and "" with skip set to the reason (for a warning) when the
-// set on disk can't be trusted to be the one this squad's deploy installed:
-// gone, or written after the device's ready_at, as when a later deploy from
-// the same repo renamed its own set over it.
-func resetAPKSet(rec *contract.SquadRecord, dev contract.Device) (set, skip string) {
+// set is gone. The recorded set is the squad's own copy under the cache root
+// (android.StageAPKSet), which only the squad's next deploy replaces, so
+// whatever is there is the set this squad's devices run.
+func resetAPKSet(rec *contract.SquadRecord) (set, skip string) {
 	const consequence = "; on-demand modules won't install until the next deploy"
 	if rec.Builds.Android == nil || rec.Builds.Android.APKSetPath == "" {
 		return "", ""
 	}
 	path := rec.Builds.Android.APKSetPath
-	info, err := os.Stat(path)
-	if err != nil {
+	if _, err := os.Stat(path); err != nil {
 		return "", "the squad's APK set no longer exists" + consequence
-	}
-	readyAt, err := time.Parse(time.RFC3339, dev.ReadyAt)
-	if err != nil {
-		return "", "the device has no ready_at to tell the deployed APK set by" + consequence
-	}
-	// ready_at has second precision and is stamped after the install.
-	if info.ModTime().Truncate(time.Second).After(readyAt) {
-		return "", "the APK set on disk is newer than this squad's deploy" + consequence
 	}
 	return path, ""
 }

@@ -104,7 +104,19 @@ func installFakeDeploy(t *testing.T) *fakeDeploy {
 				return android.BuildResult{}, f.androidBuildErr
 			}
 			if f.androidBundle {
-				return android.BuildResult{APKSetPath: filepath.Join(o.Repo, "app.apks"), BundleID: "com.example.app"}, nil
+				// Like the real build, write the set to a temporary file and
+				// rename it over the repo's set; its content names the build.
+				set := filepath.Join(o.Repo, "app.apks")
+				if err := os.MkdirAll(o.Repo, 0o755); err != nil {
+					return android.BuildResult{}, err
+				}
+				if err := os.WriteFile(set+".tmp", []byte(fmt.Sprint("set ", f.androidBuilds)), 0o644); err != nil {
+					return android.BuildResult{}, err
+				}
+				if err := os.Rename(set+".tmp", set); err != nil {
+					return android.BuildResult{}, err
+				}
+				return android.BuildResult{APKSetPath: set, BundleID: "com.example.app"}, nil
 			}
 			return android.BuildResult{APKPath: filepath.Join(o.Repo, "app.apk"), BundleID: "com.example.app"}, nil
 		},
@@ -1129,6 +1141,62 @@ func TestDeployWindowReachesBothProvisions(t *testing.T) {
 	}
 }
 
+// Review round 4 (#38): every deploy from a repo writes the repo's APK set
+// again, so after another squad's deploy reset would have reinstalled that
+// squad's set, or (with the old mtime guard) only cleared. Deploy keeps the
+// squad's own copy under the cache root, installs from it and records it,
+// and reset installs that copy whatever the repo's set holds since.
+func TestDeployKeepsTheSquadsOwnAPKSetForReset(t *testing.T) {
+	newDeployRepo(t, deployToml)
+	f := installFakeDeploy(t)
+	f.androidBundle = true
+
+	if _, code, err := deployCLI(t, "--name", "a", "--platform", "android"); err != nil || code != 0 {
+		t.Fatalf("deploy a: code %d err %v", code, err)
+	}
+	own := util.SquadAPKSetPath("a")
+	if got := f.androidProvisions[0].APKSetPath; got != own {
+		t.Fatalf("provision input APK set %q, want the squad's own %q", got, own)
+	}
+	recA := loadTestRecord(t, "a")
+	if got := recA.Builds.Android.APKSetPath; got != own {
+		t.Fatalf("builds.android.apks_path = %q, want %q", got, own)
+	}
+
+	if _, code, err := deployCLI(t, "--name", "b", "--platform", "android"); err != nil || code != 0 {
+		t.Fatalf("deploy b: code %d err %v", code, err)
+	}
+	b, err := os.ReadFile(own)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "set 1" {
+		t.Fatalf("squad a's APK set holds %q after squad b's deploy, want a's %q", b, "set 1")
+	}
+	set, skip := resetAPKSet(recA)
+	if set != own || skip != "" {
+		t.Fatalf("reset set = %q (skip %q), want %q", set, skip, own)
+	}
+}
+
+// A squad this deploy created and removed again takes its APK set with it.
+func TestDeployCleanupRemovesTheSquadsAPKSet(t *testing.T) {
+	newDeployRepo(t, deployToml)
+	f := installFakeDeploy(t)
+	f.androidBundle = true
+	f.androidFail = true
+
+	if _, code, err := deployCLI(t, "--name", "s", "--platform", "android"); err != nil || code != 1 {
+		t.Fatalf("code %d err %v, want exit 1", code, err)
+	}
+	if rec := loadTestRecord(t, "s"); rec != nil {
+		t.Fatalf("record left behind: %+v", rec)
+	}
+	if _, err := os.Stat(util.SquadAPKSetPath("s")); !os.IsNotExist(err) {
+		t.Fatalf("stat the squad's APK set: %v, want it removed", err)
+	}
+}
+
 // A bundle build's APK set reaches provisioning and the record, and a
 // finished bundle build is not mistaken for a claim marker.
 func TestDeployProvisionsABundleBuildsAPKSet(t *testing.T) {
@@ -1144,7 +1212,7 @@ func TestDeployProvisionsABundleBuildsAPKSet(t *testing.T) {
 		t.Fatalf("android provisions = %d, want 1", len(f.androidProvisions))
 	}
 	in := f.androidProvisions[0]
-	if !strings.HasSuffix(in.APKSetPath, "app.apks") || in.APKPath != "" {
+	if in.APKSetPath != util.SquadAPKSetPath("s") || in.APKPath != "" {
 		t.Fatalf("provision input APK %q, APK set %q; want only the APK set", in.APKPath, in.APKSetPath)
 	}
 	b := loadTestRecord(t, "s").Builds.Android

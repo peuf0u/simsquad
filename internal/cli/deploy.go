@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"sort"
 	"strconv"
@@ -426,8 +427,19 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 				androidBuild.Error = berr.Error()
 				return nil
 			}
+			setPath := res.APKSetPath
+			if setPath != "" {
+				// Install from, and record, the squad's own copy: the next
+				// deploy of any squad from this repo rewrites the repo's set.
+				own := util.SquadAPKSetPath(squadName)
+				if serr := android.StageAPKSet(setPath, own); serr != nil {
+					androidBuild.Error = serr.Error()
+					return nil
+				}
+				setPath = own
+			}
 			androidBuild.APKPath = res.APKPath
-			androidBuild.APKSetPath = res.APKSetPath
+			androidBuild.APKSetPath = setPath
 			androidBuild.BundleID = res.BundleID
 			androidBuild.GitSHA = res.GitSHA
 			androidBuild.Reused = res.Reused || androidAction == actionReuse
@@ -791,6 +803,7 @@ func cleanupCreatedSquad(name string, result deployResult, logger *progress.Logg
 		if err := state.RemoveRecord(name); err != nil {
 			return err
 		}
+		removeSquadAPKSet(name, logger)
 		return state.RemoveSquadLocked(name)
 	})
 	if err != nil {
@@ -798,6 +811,14 @@ func cleanupCreatedSquad(name string, result deployResult, logger *progress.Logg
 		return
 	}
 	logger.Info("deploy: cleanup-empty", progress.F("name", name))
+}
+
+// removeSquadAPKSet deletes the squad's own APK set (android.StageAPKSet)
+// along with its record. A squad without one has nothing to delete.
+func removeSquadAPKSet(name string, logger *progress.Logger) {
+	if err := os.Remove(util.SquadAPKSetPath(name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		logger.Warn("deploy: remove-apk-set", progress.F("name", name), progress.F("error", err.Error()))
+	}
 }
 
 // resetPlatform tears down one platform's devices and drops them and (for
