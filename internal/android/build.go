@@ -75,6 +75,23 @@ func OutputDir(task string) string {
 	return project + "/build/outputs/" + kind
 }
 
+// artifactDir is the folder Build takes the newest artifact from. A bundle
+// task looks only in its variant's folder (bundleDevDebug →
+// bundle/devDebug), so a newer bundle of another variant, left by a flavor
+// switch or a release build, is never installed. An APK task walks the whole
+// apk folder, as it always has.
+func artifactDir(task string) string {
+	dir := OutputDir(task)
+	if TaskMode(task) != ModeBundle {
+		return dir
+	}
+	_, name := splitTask(task)
+	if variant := strings.TrimPrefix(name, "bundle"); variant != "" {
+		dir += "/" + strings.ToLower(variant[:1]) + variant[1:]
+	}
+	return dir
+}
+
 // BuildResult captures the success output of a Gradle build invocation.
 // Exactly one of APKPath (an assemble* task) and APKSetPath (a bundle* task:
 // the .apks bundletool built from the app bundle) is set.
@@ -169,19 +186,17 @@ func Build(opts BuildOptions) (BuildResult, error) {
 		task = DefaultGradleTask
 	}
 	mode := TaskMode(task)
-	outRel := OutputDir(task)
+	outRel := artifactDir(task)
 	ext, kind := ".apk", "APK"
 	var bundletool string
 	if mode == ModeBundle {
 		ext, kind = ".aab", "app bundle"
-		// Both are checked before Gradle runs: without them the bundle it
-		// builds can't be installed.
+		// Checked before Gradle runs: without it the bundle Gradle builds
+		// can't be installed. The debug keystore is checked after, since a
+		// default-signed debug build creates it.
 		var err error
 		if bundletool, err = Bundletool(); err != nil {
 			return BuildResult{}, err
-		}
-		if DebugKeystore() == "" {
-			return BuildResult{}, errors.New(DebugKeystoreHint)
 		}
 	}
 
@@ -250,6 +265,9 @@ func Build(opts BuildOptions) (BuildResult, error) {
 		return res, nil
 	}
 
+	if DebugKeystore() == "" {
+		return BuildResult{}, errors.New(DebugKeystoreHint)
+	}
 	bid, err := readBundleApplicationID(bundletool, artifact)
 	if err != nil {
 		return BuildResult{}, err
@@ -282,16 +300,32 @@ func readBundleApplicationID(bundletool, aab string) (string, error) {
 // debug keystore (bundletool's default). --local-testing lets an on-demand
 // module install without Play: install-apks pushes its splits where the Play
 // Core library looks for them.
+//
+// bundletool writes the set in place, so it writes to a file of its own that
+// is renamed over <bundle>.apks once complete: a concurrent deploy from the
+// same repo installing the set reads a whole one, its own or this one.
 func buildAPKSet(bundletool, aab string) (string, error) {
 	set := strings.TrimSuffix(aab, ".aab") + ".apks"
-	r, err := util.Run(bundletool, []string{
-		"build-apks", "--bundle=" + aab, "--output=" + set, "--local-testing", "--overwrite",
-	}, util.RunOpts{})
+	f, err := os.CreateTemp(filepath.Dir(set), filepath.Base(set)+".*.tmp")
 	if err != nil {
-		return "", fmt.Errorf("bundletool: %w", err)
+		return "", fmt.Errorf("create APK set: %w", err)
 	}
-	if r.Code != 0 {
-		return "", fmt.Errorf("bundletool build-apks failed: %s", strings.TrimSpace(r.Stderr+r.Stdout))
+	tmp := f.Name()
+	_ = f.Close()
+	r, err := util.Run(bundletool, []string{
+		"build-apks", "--bundle=" + aab, "--output=" + tmp, "--local-testing", "--overwrite",
+	}, util.RunOpts{})
+	if err == nil && r.Code != 0 {
+		err = fmt.Errorf("bundletool build-apks failed: %s", strings.TrimSpace(r.Stderr+r.Stdout))
+	} else if err != nil {
+		err = fmt.Errorf("bundletool: %w", err)
+	}
+	if err == nil {
+		err = os.Rename(tmp, set)
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+		return "", err
 	}
 	return set, nil
 }

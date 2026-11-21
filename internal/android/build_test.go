@@ -1,6 +1,7 @@
 package android
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,7 +90,7 @@ func fakeBundletool(t *testing.T, pathDir, pkg string) string {
 echo "bundletool $*" >> `+log+`
 case "$1" in
   dump) echo `+pkg+` ;;
-  build-apks) for a; do case "$a" in --output=*) : > "${a#--output=}" ;; esac; done ;;
+  build-apks) for a; do case "$a" in --output=*) echo set > "${a#--output=}" ;; esac; done ;;
 esac
 `)
 	return log
@@ -112,7 +113,7 @@ func TestBundleBuildWithoutBundletoolNamesTheInstall(t *testing.T) {
 // the missing keystore instead.
 func TestBundleBuildWithoutDebugKeystoreSaysHowToCreateIt(t *testing.T) {
 	pathDir, _ := bundleEnv(t)
-	fakeBundletool(t, pathDir, "com.example")
+	log := fakeBundletool(t, pathDir, "com.example")
 	repo := t.TempDir()
 	writeFile(t, filepath.Join(repo, "app", "build", "outputs", "bundle", "debug", "app-debug.aab"), "")
 
@@ -120,25 +121,29 @@ func TestBundleBuildWithoutDebugKeystoreSaysHowToCreateIt(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "debug.keystore") || !strings.Contains(err.Error(), "keytool") {
 		t.Fatalf("err = %v, want the missing debug.keystore and the keytool command", err)
 	}
+	if b, _ := os.ReadFile(log); strings.Contains(string(b), "build-apks") {
+		t.Fatalf("bundletool calls =\n%s\nwant no build-apks", b)
+	}
 }
 
-// A bundle build reads the package from the newest bundle and turns that
-// bundle into one APK set in local-testing mode, next to it.
-func TestBundleBuildMakesTheAPKSetFromTheNewestBundle(t *testing.T) {
+// A bundle build reads the package from the task's own variant bundle and
+// turns it into one APK set in local-testing mode, next to it.
+func TestBundleBuildMakesTheAPKSetFromTheTasksVariant(t *testing.T) {
 	pathDir, home := bundleEnv(t)
 	writeFile(t, filepath.Join(home, ".android", "debug.keystore"), "")
 	log := fakeBundletool(t, pathDir, "com.example.bundle")
 	repo := t.TempDir()
 	out := filepath.Join(repo, "app", "build", "outputs")
-	old := filepath.Join(out, "bundle", "release", "app-release.aab")
-	writeFile(t, old, "")
-	past := time.Now().Add(-time.Hour)
-	if err := os.Chtimes(old, past, past); err != nil {
-		t.Fatal(err)
-	}
 	aab := filepath.Join(out, "bundle", "devDebug", "app-dev-debug.aab")
 	writeFile(t, aab, "")
-	// An APK from an earlier assemble build is not what a bundle task made.
+	past := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(aab, past, past); err != nil {
+		t.Fatal(err)
+	}
+	// Newer bundles of other variants (a flavor switch, a release build) and
+	// an APK from an assemble build are not what this task made.
+	writeFile(t, filepath.Join(out, "bundle", "mockDebug", "app-mock-debug.aab"), "")
+	writeFile(t, filepath.Join(out, "bundle", "release", "app-release.aab"), "")
 	writeFile(t, filepath.Join(out, "apk", "debug", "app-debug.apk"), "")
 
 	res, err := Build(BuildOptions{Repo: repo, NoBuild: true, GradleTask: ":app:bundleDevDebug"})
@@ -149,14 +154,66 @@ func TestBundleBuildMakesTheAPKSetFromTheNewestBundle(t *testing.T) {
 	if res.APKSetPath != set || res.APKPath != "" || res.BundleID != "com.example.bundle" {
 		t.Fatalf("Build = %+v, want APK set %s and com.example.bundle", res, set)
 	}
-	want := "bundletool dump manifest --bundle=" + aab + " --xpath=/manifest/@package\n" +
-		"bundletool build-apks --bundle=" + aab + " --output=" + set + " --local-testing --overwrite\n"
 	b, err := os.ReadFile(log)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(b) != want {
-		t.Fatalf("bundletool calls =\n%s\nwant\n%s", b, want)
+	calls := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(calls) != 2 || calls[0] != "bundletool dump manifest --bundle="+aab+" --xpath=/manifest/@package" {
+		t.Fatalf("bundletool calls =\n%s\nwant dump manifest of %s, then build-apks", b, aab)
+	}
+	// The set is written under a name of its own and renamed into place, so
+	// a deploy installing the set never reads one half written by another.
+	var tmp string
+	if _, err := fmt.Sscanf(calls[1], "bundletool build-apks --bundle="+aab+" --output=%s --local-testing --overwrite", &tmp); err != nil {
+		t.Fatalf("build-apks call = %q: %v", calls[1], err)
+	}
+	if tmp == set || filepath.Dir(tmp) != filepath.Dir(set) {
+		t.Fatalf("build-apks wrote %s, want a file of its own beside %s", tmp, set)
+	}
+	if got, err := os.ReadFile(set); err != nil || string(got) != "set\n" {
+		t.Fatalf("APK set %s = %q, %v; want what build-apks wrote", set, got, err)
+	}
+	if _, err := os.Stat(tmp); !os.IsNotExist(err) {
+		t.Fatalf("temporary set %s left behind (%v)", tmp, err)
+	}
+}
+
+// A bundle task without its variant folder fails naming that folder, even
+// when another variant has a bundle.
+func TestBundleBuildWithoutTheVariantsBundleNamesItsFolder(t *testing.T) {
+	pathDir, home := bundleEnv(t)
+	writeFile(t, filepath.Join(home, ".android", "debug.keystore"), "")
+	fakeBundletool(t, pathDir, "com.example")
+	repo := t.TempDir()
+	writeFile(t, filepath.Join(repo, "app", "build", "outputs", "bundle", "mockDebug", "app-mock-debug.aab"), "")
+
+	_, err := Build(BuildOptions{Repo: repo, NoBuild: true, GradleTask: ":app:bundleDevDebug"})
+	want := filepath.Join(repo, "app", "build", "outputs", "bundle", "devDebug")
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %v, want it to name %s", err, want)
+	}
+}
+
+// AGP creates ~/.android/debug.keystore during a default-signed debug
+// build, so the keystore is looked for after Gradle runs.
+func TestBundleBuildFindsTheKeystoreGradleCreated(t *testing.T) {
+	pathDir, home := bundleEnv(t)
+	t.Setenv("SIMSQUAD_CACHE_DIR", t.TempDir())
+	fakeBundletool(t, pathDir, "com.example")
+	repo := t.TempDir()
+	writeFile(t, filepath.Join(repo, "gradlew"), `#!/bin/sh
+mkdir -p "`+home+`/.android" app/build/outputs/bundle/debug
+: > "`+home+`/.android/debug.keystore"
+: > app/build/outputs/bundle/debug/app-debug.aab
+`)
+
+	res, err := Build(BuildOptions{Repo: repo, GradleTask: ":app:bundleDebug"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.APKSetPath == "" {
+		t.Fatalf("Build = %+v, want an APK set", res)
 	}
 }
 
@@ -168,7 +225,7 @@ func TestBundleNoBuildWithoutABundleNamesTheFolder(t *testing.T) {
 	repo := t.TempDir()
 
 	_, err := Build(BuildOptions{Repo: repo, NoBuild: true, GradleTask: ":mobile:bundleDebug"})
-	want := filepath.Join(repo, "mobile", "build", "outputs", "bundle")
+	want := filepath.Join(repo, "mobile", "build", "outputs", "bundle", "debug")
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("err = %v, want it to name %s", err, want)
 	}
