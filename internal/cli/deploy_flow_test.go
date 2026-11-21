@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -59,9 +60,12 @@ count = 1
 type fakeDeploy struct {
 	iosBuilds, androidBuilds int
 	iosBuildErr              error
-	androidBuildErr          error
-	iosProvisions            []ios.ProvisionInput
-	androidProvisions        []android.ProvisionInput
+	// duringIOSBuild runs inside the fake iOS build, to interleave another
+	// writer with the deploy.
+	duringIOSBuild    func()
+	androidBuildErr   error
+	iosProvisions     []ios.ProvisionInput
+	androidProvisions []android.ProvisionInput
 	// androidFail makes fresh Android slots come back errored.
 	androidFail     bool
 	squadTeardowns  []string
@@ -80,6 +84,9 @@ func installFakeDeploy(t *testing.T) *fakeDeploy {
 		deleteIosDestination: func(string) error { return nil },
 		iosBuild: func(o ios.BuildOptions) (ios.BuildResult, error) {
 			f.iosBuilds++
+			if f.duringIOSBuild != nil {
+				f.duringIOSBuild()
+			}
 			if f.iosBuildErr != nil {
 				return ios.BuildResult{}, f.iosBuildErr
 			}
@@ -455,5 +462,131 @@ func TestDeployWholeResetWhenEveryPlatformResets(t *testing.T) {
 	}
 	if len(rec.Devices) != 2 || pub.Reused {
 		t.Fatalf("devices = %+v reused=%v", rec.Devices, pub.Reused)
+	}
+}
+
+// On a squad with one iOS sim and one Android emulator, --platform ios
+// builds and installs iOS only; the Android device, its builds entry and its
+// ports stay exactly as they were.
+func TestDeployPlatformLeavesOtherPlatformUntouched(t *testing.T) {
+	newDeployRepo(t, deployToml)
+	f := installFakeDeploy(t)
+	and := seededAndroid("s", testAndImage, contract.StatusReady)
+	andBuild := &contract.AndroidBuild{Repo: "/old/android", APKPath: "/old/app.apk", BundleID: "com.example.app", GitSHA: "abc"}
+	seedSquad(t, &contract.SquadRecord{
+		Name:    "s",
+		Builds:  contract.Builds{Android: andBuild},
+		Devices: []contract.Device{seededIOS("s", contract.StatusReady), and},
+		Ports:   map[string]int{and.Name: 5554},
+	})
+
+	pub, code, err := deployCLI(t, "--name", "s", "--platform", "ios")
+	if err != nil || code != 0 {
+		t.Fatalf("deploy --platform ios: code %d err %v", code, err)
+	}
+	if f.androidBuilds != 0 || len(f.androidProvisions) != 0 || f.iosBuilds != 1 || len(f.iosProvisions) != 1 {
+		t.Fatalf("ios build %d provision %d, android build %d provision %d; want iOS only",
+			f.iosBuilds, len(f.iosProvisions), f.androidBuilds, len(f.androidProvisions))
+	}
+	rec := loadTestRecord(t, "s")
+	gotAnd := devicesOf(rec, contract.PlatformAndroid)
+	if len(gotAnd) != 1 || gotAnd[0] != and {
+		t.Fatalf("android devices = %+v, want unchanged %+v", gotAnd, and)
+	}
+	if !reflect.DeepEqual(rec.Builds.Android, andBuild) {
+		t.Fatalf("builds.android = %+v, want unchanged", rec.Builds.Android)
+	}
+	if len(rec.Ports) != 1 || rec.Ports[and.Name] != 5554 {
+		t.Fatalf("ports = %v, want unchanged", rec.Ports)
+	}
+	if rec.Builds.IOS == nil || !rec.Builds.IOS.Reused {
+		t.Fatalf("builds.ios = %+v, want a reused iOS build", rec.Builds.IOS)
+	}
+	ios := devicesOf(rec, contract.PlatformIOS)
+	if len(ios) != 1 || ios[0].ReadyAt == "2026-01-01T00:00:00Z" {
+		t.Fatalf("ios devices = %+v, want reinstalled with a fresh ready_at", ios)
+	}
+	if !pub.Reused || len(pub.Devices) != 2 {
+		t.Fatalf("stdout reused=%v devices=%d, want the whole reused squad", pub.Reused, len(pub.Devices))
+	}
+}
+
+// Two deploys of different platforms on one squad, interleaved as load A,
+// load B, save A, save B: both platforms end up in the record because each
+// save merges into what is on disk instead of writing its stale copy.
+func TestDeployMergeKeepsConcurrentPlatform(t *testing.T) {
+	t.Setenv("SIMSQUAD_CACHE_DIR", t.TempDir())
+	staleAnd := seededAndroid("s", testAndImageOld, contract.StatusError)
+	staleAnd.Name = util.SimName("s", "android", 7)
+	seedSquad(t, &contract.SquadRecord{
+		Name:    "s",
+		Devices: []contract.Device{staleAnd},
+		Context: map[string]string{"user": "alice"},
+		Ports:   map[string]int{staleAnd.Name: 5570},
+	})
+	loadA, _ := state.LoadRecord("s")
+	loadB, _ := state.LoadRecord("s")
+	_, _ = loadA, loadB // each deploy holds its own stale copy from here on
+
+	iosDev := seededIOS("s", contract.StatusReady)
+	andDev := seededAndroid("s", testAndImage, contract.StatusReady)
+	a := deployResult{
+		ios:        true,
+		builds:     contract.Builds{IOS: &contract.IosBuild{AppPath: "/a/App.app"}},
+		iosDevices: []contract.Device{iosDev},
+	}
+	b := deployResult{
+		android:        true,
+		builds:         contract.Builds{Android: &contract.AndroidBuild{APKPath: "/b/app.apk"}},
+		androidDevices: []contract.Device{andDev},
+		androidPorts:   map[string]int{andDev.Name: 5554},
+	}
+	if _, err := state.UpdateRecord("s", a.mergeInto); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.UpdateRecord("s", b.mergeInto); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := loadTestRecord(t, "s")
+	if len(rec.Devices) != 2 || rec.Devices[0] != iosDev || rec.Devices[1] != andDev {
+		t.Fatalf("devices = %+v, want A's iOS sim then B's emulator", rec.Devices)
+	}
+	if rec.Builds.IOS == nil || rec.Builds.Android == nil {
+		t.Fatalf("builds = %+v, want both", rec.Builds)
+	}
+	if len(rec.Ports) != 1 || rec.Ports[andDev.Name] != 5554 {
+		t.Fatalf("ports = %v, want only B's reservation (stale Android port dropped)", rec.Ports)
+	}
+	if rec.Context["user"] != "alice" {
+		t.Fatalf("context = %v, want kept from disk", rec.Context)
+	}
+}
+
+// A set-context that lands while a deploy is building survives the deploy's
+// final save.
+func TestDeployKeepsContextSetDuringDeploy(t *testing.T) {
+	newDeployRepo(t, deployToml)
+	f := installFakeDeploy(t)
+	seedSquad(t, &contract.SquadRecord{
+		Name:    "s",
+		Devices: []contract.Device{seededIOS("s", contract.StatusReady)},
+		Context: map[string]string{"user": "alice"},
+	})
+	f.duringIOSBuild = func() {
+		if _, err := state.UpdateRecord("s", func(r *contract.SquadRecord) error {
+			r.Context["token"] = "fresh"
+			return nil
+		}); err != nil {
+			t.Error(err)
+		}
+	}
+
+	if _, code, err := deployCLI(t, "--name", "s", "--platform", "ios", "--context", "user=bob"); err != nil || code != 0 {
+		t.Fatalf("deploy: code %d err %v", code, err)
+	}
+	rec := loadTestRecord(t, "s")
+	if rec.Context["user"] != "bob" || rec.Context["token"] != "fresh" {
+		t.Fatalf("context = %v, want deploy's user=bob plus the mid-deploy token", rec.Context)
 	}
 }

@@ -264,12 +264,19 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 			// flags if any are present (TOML ignored), otherwise TOML. Either
 			// way the *source* overrides matching keys in the existing
 			// context; non-matched existing keys are preserved (so "rotate
-			// one cred" stays cheap).
-			if opts.clearCtx {
-				existing.Context = nil
+			// one cred" stays cheap). Saved now, under the lock, so the
+			// final merge — which keeps context from disk — carries it and
+			// a set-context made during the deploy.
+			rec, err = state.UpdateRecord(existing.Name, func(r *contract.SquadRecord) error {
+				if opts.clearCtx {
+					r.Context = nil
+				}
+				r.Context = applyContextSource(r.Context, tomlCtx, ctxOverrides)
+				return nil
+			})
+			if err != nil {
+				return fmt.Errorf("deploy: save context: %w", err)
 			}
-			existing.Context = applyContextSource(existing.Context, tomlCtx, ctxOverrides)
-			rec = existing
 			iosAction, androidAction = plan.ios, plan.android
 			reused = plan.allReused()
 			iosDevs, androidDevs := splitByPlatform(existing.Devices)
@@ -277,17 +284,13 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 			case actionReuse:
 				existingIOS = iosDevs
 			case actionReset:
-				logger.Info("deploy: reset-platform", progress.F("name", rec.Name), progress.F("platform", "ios"))
-				deployVia.teardownDevices(iosDevs, logger)
-				rec.Devices = withoutPlatform(rec.Devices, contract.PlatformIOS)
+				resetPlatform(rec.Name, deployResult{ios: true}, iosDevs, logger)
 			}
 			switch androidAction {
 			case actionReuse:
 				existingAndroid = androidDevs
 			case actionReset:
-				logger.Info("deploy: reset-platform", progress.F("name", rec.Name), progress.F("platform", "android"))
-				deployVia.teardownDevices(androidDevs, logger)
-				rec.Devices = withoutPlatform(rec.Devices, contract.PlatformAndroid)
+				resetPlatform(rec.Name, deployResult{android: true}, androidDevs, logger)
 			}
 			if reused {
 				logger.Info("deploy: reuse", progress.F("name", rec.Name))
@@ -317,8 +320,6 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		}); err != nil {
 			return fmt.Errorf("deploy: register squad: %w", err)
 		}
-	} else if rec.Ports == nil {
-		rec.Ports = map[string]int{}
 	}
 	squadName = rec.Name
 
@@ -422,7 +423,6 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		})
 	}
 	_ = buildGroup.Wait()
-	rec.Builds = builds
 
 	// ---------------------------------------------------------------------
 	// Provisioning — iOS and Android run in parallel. Each platform owns
@@ -475,20 +475,26 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 	}
 	_ = provGroup.Wait()
 
-	rec.Devices = append([]contract.Device{}, iosDevices...)
-	rec.Devices = append(rec.Devices, androidDevices...)
 	// Every provision path (fresh, reuse, physical) installs the app, so a
 	// ready device's ready_at is now — reuse must not keep the old stamp.
 	readyAt := util.NowISO()
-	for i := range rec.Devices {
-		if rec.Devices[i].Status == contract.StatusReady {
-			rec.Devices[i].ReadyAt = readyAt
+	for _, devs := range [][]contract.Device{iosDevices, androidDevices} {
+		for i := range devs {
+			if devs[i].Status == contract.StatusReady {
+				devs[i].ReadyAt = readyAt
+			}
 		}
 	}
-	for k, v := range androidPorts {
-		rec.Ports[k] = v
+	result := deployResult{
+		ios:            hasIos,
+		android:        hasAndroid,
+		builds:         builds,
+		iosDevices:     iosDevices,
+		androidDevices: androidDevices,
+		androidPorts:   androidPorts,
 	}
-	if err := state.SaveRecord(rec); err != nil {
+	rec, err = state.UpdateRecord(squadName, result.mergeInto)
+	if err != nil {
 		return fmt.Errorf("deploy: final save: %w", err)
 	}
 
@@ -517,6 +523,57 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		return &ExitError{Code: code}
 	}
 	return nil
+}
+
+// deployResult is what one deploy produced for the platforms it deployed.
+// It is merged into the record on disk rather than saved over it, so a
+// concurrent deploy of the other platform, or a set-context, survives.
+type deployResult struct {
+	ios, android   bool // the platforms this deploy owns
+	builds         contract.Builds
+	iosDevices     []contract.Device
+	androidDevices []contract.Device
+	androidPorts   map[string]int
+}
+
+// mergeInto replaces the deployed platforms' devices and builds entries in
+// rec with this deploy's, and for Android its port reservations too. The
+// other platform's devices, builds entry and ports, and the context, stay
+// as rec has them. Devices keep the iOS-then-Android order.
+func (r deployResult) mergeInto(rec *contract.SquadRecord) error {
+	iosDevs, androidDevs := splitByPlatform(rec.Devices)
+	if r.ios {
+		rec.Builds.IOS = r.builds.IOS
+		iosDevs = r.iosDevices
+	}
+	if r.android {
+		rec.Builds.Android = r.builds.Android
+		androidDevs = r.androidDevices
+		// Ports holds only Android emulator reservations, so the deploy's
+		// set replaces it: stale names from a reset or a shrunk matrix go.
+		rec.Ports = make(map[string]int, len(r.androidPorts))
+		for k, v := range r.androidPorts {
+			rec.Ports[k] = v
+		}
+	}
+	rec.Devices = append(append([]contract.Device{}, iosDevs...), androidDevs...)
+	return nil
+}
+
+// resetPlatform tears down one platform's devices and drops them, its builds
+// entry and (for Android) its ports from the record, leaving the other
+// platform alone. Dropping the ports before reprovisioning lets the fresh
+// emulators take the same port numbers back.
+func resetPlatform(name string, empty deployResult, devs []contract.Device, logger *progress.Logger) {
+	platform := contract.PlatformIOS
+	if empty.android {
+		platform = contract.PlatformAndroid
+	}
+	logger.Info("deploy: reset-platform", progress.F("name", name), progress.F("platform", string(platform)))
+	deployVia.teardownDevices(devs, logger)
+	if _, err := state.UpdateRecord(name, empty.mergeInto); err != nil {
+		logger.Warn("deploy: reset-platform", progress.F("error", err.Error()))
+	}
 }
 
 // platformAction is what a deploy does with one of its platforms on an
@@ -608,16 +665,6 @@ func splitByPlatform(devs []contract.Device) (iosDevs, androidDevs []contract.De
 		}
 	}
 	return iosDevs, androidDevs
-}
-
-func withoutPlatform(devs []contract.Device, platform contract.Platform) []contract.Device {
-	out := make([]contract.Device, 0, len(devs))
-	for _, d := range devs {
-		if d.Platform != platform {
-			out = append(out, d)
-		}
-	}
-	return out
 }
 
 // platformEquipment is what deploy resolved for one platform: the repo to
