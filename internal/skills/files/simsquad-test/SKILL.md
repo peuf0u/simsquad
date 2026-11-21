@@ -105,8 +105,9 @@ simsquad run new .simsquad/drafts/<slug>.feature --worker <claude or codex: the 
 `--fresh` when the user asks for an isolated squad. A saved feature
 file runs from its `qa/features/` path. The output gives `run_id`,
 `run_dir` (absolute), `squad_name`, `fresh`, `platforms`,
-`deadline_seconds` and `worker_model` (never empty: the project's choice
-or the default for `--worker`); keep them for the next steps. The
+`deadline_seconds`, `worker_model` (never empty: the project's choice
+or the default for `--worker`) and `app_notes` (absolute; absent when the
+project has no app notes); keep them for the next steps. The
 run folder holds a copy of the feature file (`feature.feature`). Leave the
 draft where it is: `.simsquad/` is gitignored, and the next draft with the
 same slug overwrites it.
