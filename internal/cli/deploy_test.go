@@ -339,7 +339,9 @@ func TestResolveSpecsCliMode(t *testing.T) {
 	})
 }
 
-func TestSpecMatches(t *testing.T) {
+// TestSpecsMatch is the golden test for the per-platform matrix comparison
+// deploy's reuse plan is made from (iosSpecsMatch, androidSpecsMatch).
+func TestSpecsMatch(t *testing.T) {
 	t.Parallel()
 
 	record := contract.SquadRecord{
@@ -381,11 +383,12 @@ func TestSpecMatches(t *testing.T) {
 		},
 	}
 
+	iosDevs, androidDevs := splitByPlatform(record.Devices)
 	cases := []struct {
-		name    string
-		ios     []contract.IosSpec
-		android []contract.AndroidSpec
-		want    bool
+		name                 string
+		ios                  []contract.IosSpec
+		android              []contract.AndroidSpec
+		wantIOS, wantAndroid bool
 	}{
 		{
 			name: "same multiset regardless of requested order",
@@ -402,7 +405,7 @@ func TestSpecMatches(t *testing.T) {
 				},
 				{Count: 1, Target: contract.TargetPhysical},
 			},
-			want: true,
+			wantIOS: true, wantAndroid: true,
 		},
 		{
 			name: "ios count mismatch",
@@ -419,7 +422,7 @@ func TestSpecMatches(t *testing.T) {
 				},
 				{Count: 1, Target: contract.TargetPhysical},
 			},
-			want: false,
+			wantIOS: false, wantAndroid: true,
 		},
 		{
 			name: "android emulator image mismatch",
@@ -436,7 +439,7 @@ func TestSpecMatches(t *testing.T) {
 				},
 				{Count: 1, Target: contract.TargetPhysical},
 			},
-			want: false,
+			wantIOS: true, wantAndroid: false,
 		},
 		{
 			name: "physical devices compare by count only",
@@ -453,7 +456,7 @@ func TestSpecMatches(t *testing.T) {
 				},
 				{Device: "ignored", Image: "ignored", Count: 2, Target: contract.TargetPhysical},
 			},
-			want: false,
+			wantIOS: true, wantAndroid: false,
 		},
 	}
 
@@ -461,14 +464,17 @@ func TestSpecMatches(t *testing.T) {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			if got := specMatches(record, c.ios, c.android); got != c.want {
-				t.Fatalf("specMatches() = %v, want %v", got, c.want)
+			if got := iosSpecsMatch(iosDevs, c.ios); got != c.wantIOS {
+				t.Fatalf("iosSpecsMatch() = %v, want %v", got, c.wantIOS)
+			}
+			if got := androidSpecsMatch(androidDevs, c.android); got != c.wantAndroid {
+				t.Fatalf("androidSpecsMatch() = %v, want %v", got, c.wantAndroid)
 			}
 		})
 	}
 }
 
-func TestSpecMatchesRejectsNonReadyDevices(t *testing.T) {
+func TestPlanDeployResetsOnlyThePlatformWithANonReadyDevice(t *testing.T) {
 	t.Parallel()
 
 	record := contract.SquadRecord{
@@ -490,7 +496,7 @@ func TestSpecMatchesRejectsNonReadyDevices(t *testing.T) {
 		},
 	}
 
-	got := specMatches(record,
+	got := planDeploy(record,
 		[]contract.IosSpec{{Device: "iPhone 17", Runtime: "iOS 26.4", Count: 1}},
 		[]contract.AndroidSpec{{
 			Device: "pixel_7",
@@ -499,8 +505,8 @@ func TestSpecMatchesRejectsNonReadyDevices(t *testing.T) {
 			Target: contract.TargetEmulator,
 		}},
 	)
-	if got {
-		t.Fatal("specMatches() = true for a squad with an errored Android device")
+	if want := (deployPlan{ios: actionReuse, android: actionReset}); got != want {
+		t.Fatalf("planDeploy() = %+v, want %+v for a squad with an errored Android device", got, want)
 	}
 }
 

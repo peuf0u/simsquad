@@ -590,7 +590,10 @@ type squadClaim struct {
 
 // claimSquad finds the named squad or creates it, in one block under the
 // index lock, so two deploys of a new name can't both create it: the second
-// finds the squad and takes the per-platform path. On an existing squad it
+// finds the squad and takes the per-platform path. That keeps concurrent
+// deploys of different platforms apart; two concurrent deploys of the same
+// name on the same platform still both provision it, and avoiding that is
+// the caller's job (squad naming, see CLAUDE.md). On an existing squad it
 // makes the per-platform plan, refuses when the plan does, and otherwise
 // saves this deploy's context. A
 // new squad is saved with its context and registered before provisioning, so
@@ -1011,14 +1014,6 @@ func androidSlotCount(specs []contract.AndroidSpec) int {
 		n += s.Count
 	}
 	return n
-}
-
-// specMatches reports whether the squad's devices on both platforms match the
-// requested matrices exactly. Deploy decides per platform (planDeploy); this
-// whole-squad form is the two per-platform comparisons together.
-func specMatches(record contract.SquadRecord, iosSpecs []contract.IosSpec, androidSpecs []contract.AndroidSpec) bool {
-	iosDevs, androidDevs := splitByPlatform(record.Devices)
-	return iosSpecsMatch(iosDevs, iosSpecs) && androidSpecsMatch(androidDevs, androidSpecs)
 }
 
 // iosSpecsMatch reports whether devs (one platform's devices) are all ready
