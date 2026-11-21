@@ -112,6 +112,18 @@ All notable changes are recorded here. The format follows
   `simsquad sweep` also removes such a folder when it has no `.ini` and no
   squad tracks it (in `$ANDROID_AVD_HOME`, or `~/.android/avd`), and lists
   it under `pruned.android`.
+- **A Claude Code worker reads its instructions and writes its results
+  from any working directory.** A worker inherits the orchestrator's
+  working directory, so the `simsquad-test` skill's worker command now
+  grants everything by absolute path: `--add-dir` for the skill folder with
+  its symlinks resolved and for the folder holding the app notes, and
+  `Edit(//<run dir>/**)` in place of `Edit(.simsquad/runs/**)`. The prompt
+  names `worker.md` by its resolved path. Before, a skill folder linked
+  from outside the working directory left the worker unable to read
+  `worker.md`, and a worker started anywhere but the folder holding
+  `.simsquad/runs/` couldn't write `result.json`, so the run ended as infra.
+  The Codex command is unchanged. Re-run `simsquad skill install` to pick
+  it up.
 
 ## [0.5.0] - 2026-10-14
 
