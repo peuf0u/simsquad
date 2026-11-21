@@ -226,6 +226,15 @@ func TestTestSkillRedeploysWhenEquipmentChanged(t *testing.T) {
 	if strings.Contains(m[1], "belongs to this run") {
 		t.Error("deploy step still says the squad belongs to this run")
 	}
+	// The runs folder is the config dir's (issue #22), so the loop finds it
+	// from the run folder, whatever folder the agent is in (via `..`: the
+	// skill avoids `$(…)`, which Claude Code asks approval for).
+	if !strings.Contains(m[1], `for d in "$RUN_DIR"/../*/; do`) {
+		t.Error("deploy step does not list the other runs from $RUN_DIR's parent")
+	}
+	if strings.Contains(m[1], "in .simsquad/runs/") {
+		t.Error("deploy step still lists runs relative to the working directory")
+	}
 }
 
 // A run deploys only its own platforms (issue #23), so a single-platform run

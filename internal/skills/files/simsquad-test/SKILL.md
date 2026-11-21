@@ -142,7 +142,7 @@ minutes.
   folder whose `run.json` has this `squad_name` and no `report.json`):
 
   ```sh
-  for d in .simsquad/runs/*/; do
+  for d in "$RUN_DIR"/../*/; do
     [ -e "$d/report.json" ] || [ "$d" -ef "$RUN_DIR" ] && continue
     if grep -q "\"squad_name\": \"$SQUAD\"" "$d/run.json"; then echo "$d"; fi
   done
