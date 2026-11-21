@@ -246,8 +246,10 @@ All notable changes are recorded here. The format follows
   replaces each secret value, raw or JSON-escaped as `devices --reveal`
   prints it, with `<secret>` as it writes the log, so a value split across
   writes is still caught. A value secret only by its key's name is
-  redacted there only from 4 characters on (`TOKEN_TTL=5` would mask every
-  `5`, including a `5-hour limit reached`); outputs mask it regardless.
+  redacted there only from 4 characters on and never when it is `true` or
+  `false` (`TOKEN_TTL=5` would mask every `5`, including a `5-hour limit
+  reached`, and `SECRET_MENU=true` every `true`); outputs mask it
+  regardless.
 - **`simsquad.local.toml` is written `0600`** by `equip`, since it holds
   `[secrets]`; an existing `0644` file is tightened.
 - **Malformed `--context`, `--secret`, `--set` and `--set-secret` entries

@@ -76,17 +76,19 @@ func (s SquadRecord) RevealedDeviceView(d Device) DeviceView {
 
 // minNameRuleRedact is the shortest value redacted from worker.log when
 // only its key's name marks it secret. Such keys are often settings, not
-// credentials (TOKEN_TTL=5, SECRET_MENU=true): redacting every "5" would
+// credentials (TOKEN_TTL=5, PASSWORD_MIN=8): redacting every "5" would
 // wreck the log and hide a "5-hour limit reached" from the usage-limit
-// check. Explicit secrets are redacted whatever their length, and outputs
-// mask every secret regardless.
+// check. Boolean values (SECRET_MENU=true, ENABLE_PASSWORD_RESET=false)
+// are settings too and are left out whatever their length. Explicit
+// secrets are redacted whatever their value, and outputs mask every secret
+// regardless.
 const minNameRuleRedact = 4
 
 // SecretValues returns the values to redact from a worker's log: every
 // non-empty explicit secret, and each value secret only by its key's name
-// that is at least minNameRuleRedact characters long. Longest first, so a
-// redactor replacing them in order never leaves part of a longer secret
-// that contains a shorter one.
+// that has at least minNameRuleRedact characters and isn't true or false.
+// Longest first, so a redactor replacing them in order never leaves part
+// of a longer secret that contains a shorter one.
 func (s SquadRecord) SecretValues() []string {
 	var out []string
 	for k, v := range s.Context {
@@ -94,7 +96,7 @@ func (s SquadRecord) SecretValues() []string {
 			continue
 		}
 		explicit := slices.Contains(s.SecretKeys, k)
-		if explicit || (SecretByName(k) && utf8.RuneCountInString(v) >= minNameRuleRedact) {
+		if explicit || (SecretByName(k) && redactByName(v)) {
 			out = append(out, v)
 		}
 	}
@@ -105,6 +107,15 @@ func (s SquadRecord) SecretValues() []string {
 		return out[i] < out[j]
 	})
 	return out
+}
+
+// redactByName reports whether a value secret only by its key's name is
+// redacted from worker.log (see minNameRuleRedact).
+func redactByName(v string) bool {
+	if strings.EqualFold(v, "true") || strings.EqualFold(v, "false") {
+		return false
+	}
+	return utf8.RuneCountInString(v) >= minNameRuleRedact
 }
 
 // SetContext sets a context key. secret marks it secret; a key that is

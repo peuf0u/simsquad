@@ -338,7 +338,8 @@ sits in a run folder (`<run>/workers/<id>`), the squad named by
 `worker.log` as it is written, raw or JSON-escaped: a Codex worker's
 output repeats the commands it ran and their output, `devices --reveal`
 included. A value secret only by its key's name is redacted there from 4
-characters on, so `TOKEN_TTL=5` doesn't mask every `5`.
+characters on and never as `true`/`false`, so `TOKEN_TTL=5` doesn't mask
+every `5`.
 
 Running `run worker` again on the same `--dir` is a retry. Before the
 worker starts, the earlier attempt's outputs (everything except

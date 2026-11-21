@@ -62,7 +62,8 @@ type Worker struct {
 	// revealed secret included. With none, the output goes straight to
 	// the file. `run worker` passes contract.SquadRecord.SecretValues: every
 	// explicit secret, but a value secret only by its key's name only when
-	// it has at least 4 characters (TOKEN_TTL=5 must not mask every "5").
+	// it has at least 4 characters and isn't true/false (TOKEN_TTL=5 must
+	// not mask every "5", nor SECRET_MENU=true every "true").
 	// Each value is matched raw and JSON-escaped.
 	Redact []string
 }

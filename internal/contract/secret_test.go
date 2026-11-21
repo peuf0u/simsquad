@@ -133,3 +133,19 @@ func TestSquadRecordSecretValues(t *testing.T) {
 		t.Fatalf("SecretValues = %v, want %v", got, want)
 	}
 }
+
+// A boolean secret only by its key's name (ENABLE_PASSWORD_RESET=true) is
+// a setting, not a credential: redacting it would mask every true or false
+// in the log. An explicit boolean secret is still redacted.
+func TestSquadRecordSecretValuesSkipNameRuleBooleans(t *testing.T) {
+	t.Parallel()
+	rec := SquadRecord{
+		Context: map[string]string{
+			"ENABLE_PASSWORD_RESET": "true", "SECRET_MENU": "False", "password": "hunter2", "flag": "false",
+		},
+		SecretKeys: []string{"flag"},
+	}
+	if got, want := rec.SecretValues(), []string{"hunter2", "false"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("SecretValues = %v, want %v", got, want)
+	}
+}
