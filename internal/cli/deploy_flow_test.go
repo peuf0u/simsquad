@@ -1117,6 +1117,70 @@ func TestDeployCleanupIgnoresAnotherDeploysFailedBuild(t *testing.T) {
 	}
 }
 
+// A retry of a platform whose build failed claims it with a marker: A
+// creates s for Android; while A builds, B's iOS build fails (saving
+// builds.ios with an error) and D retries iOS; A's build then fails. A's
+// cleanup must see D's marker in place of B's failed entry and keep the
+// squad, so D's devices land in a registered record.
+func TestDeployRetryOfFailedBuildKeepsSquadThroughCleanup(t *testing.T) {
+	newDeployRepo(t, deployToml)
+	f := installFakeDeploy(t)
+	f.androidBuildErr = errors.New("gradle failed")
+	dInBuild := make(chan struct{})
+	releaseD := make(chan struct{})
+	var dDone <-chan deployOutcome
+	f.duringAndroidBuild = func() {
+		f.iosBuildErr = errors.New("xcodebuild failed")
+		if _, _, err := deployCLI(t, "--name", "s", "--platform", "ios"); err != nil {
+			t.Errorf("B: %v", err)
+		}
+		if b := loadTestRecord(t, "s").Builds.IOS; b == nil || b.Error == "" {
+			t.Errorf("builds.ios after B = %+v, want B's failed build", b)
+		}
+		f.iosBuildErr = nil
+		f.duringIOSBuild = func() {
+			close(dInBuild)
+			<-releaseD
+		}
+		dDone = deployCLIAsync("--name", "s", "--platform", "ios")
+		<-dInBuild
+	}
+
+	if _, code, err := deployCLI(t, "--name", "s", "--platform", "android"); err != nil || code != 1 {
+		t.Fatalf("A: code %d err %v, want exit 1", code, err)
+	}
+	if _, ok, _ := state.FindSquad("s"); !ok {
+		t.Fatal("A's cleanup removed the squad D is deploying")
+	}
+	close(releaseD)
+	d := <-dDone
+	if d.err != nil {
+		t.Fatalf("D failed: %v", d.err)
+	}
+	rec := loadTestRecord(t, "s")
+	if rec == nil || len(devicesOf(rec, contract.PlatformIOS)) != 1 || rec.Builds.IOS == nil || rec.Builds.IOS.AppPath == "" {
+		t.Fatalf("record = %+v, want D's sim and build", rec)
+	}
+}
+
+// The claim replaces a failed builds entry with its marker (the failed
+// entry has no artifact to keep) and leaves a finished one alone.
+func TestClaimSquadMarksOverAFailedBuild(t *testing.T) {
+	t.Setenv("SIMSQUAD_CACHE_DIR", t.TempDir())
+	seedSquad(t, &contract.SquadRecord{
+		Name:   "s",
+		Builds: contract.Builds{IOS: &contract.IosBuild{Repo: "/old", Error: "xcodebuild failed"}},
+	})
+	o := testClaimOpts()
+	o.iosRepo = "/repo/ios"
+	if _, err := claimSquad("s", o); err != nil {
+		t.Fatal(err)
+	}
+	if b := loadTestRecord(t, "s").Builds.IOS; !isIosMarker(b) || b.Repo != "/repo/ios" {
+		t.Fatalf("builds.ios = %+v, want this deploy's marker", b)
+	}
+}
+
 // --window reaches both platforms' provisioning; without it neither asks for
 // a window (issue #33).
 func TestDeployWindowReachesBothProvisions(t *testing.T) {

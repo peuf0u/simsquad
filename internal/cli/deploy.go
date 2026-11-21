@@ -666,19 +666,21 @@ func (o claimOpts) placeholders() contract.Builds {
 }
 
 // markClaim writes a claim marker for each platform this deploy is about to
-// deploy that has no builds entry yet. From the moment of the claim the
-// record then shows a deploy in flight, so another deploy's failed-create
-// cleanup doesn't remove a squad this one is still building for. An existing
-// entry stays until the final merge replaces it: `status` keeps showing the
-// installed build, and a killed deploy doesn't lose its artifact fields.
-// (Cleanup runs only for a squad this deploy created, which had no entries,
-// so the marker is there wherever cleanup looks for it.)
+// deploy that has no builds entry yet or only a failed one. From the moment
+// of the claim the record then shows a deploy in flight, so another deploy's
+// failed-create cleanup doesn't remove a squad this one is still building
+// for; a failed entry doesn't show that, so a retry after a failed build
+// replaces it (it has no artifact to lose). A finished entry stays until the
+// final merge replaces it: `status` keeps showing the installed build, and a
+// killed deploy doesn't lose its artifact fields. (Cleanup runs only for a
+// squad this deploy created, which had no entries, so the marker is there
+// wherever cleanup looks for it.)
 func (o claimOpts) markClaim(rec *contract.SquadRecord) {
 	p := o.placeholders()
-	if rec.Builds.IOS == nil {
+	if p.IOS != nil && (rec.Builds.IOS == nil || rec.Builds.IOS.Error != "") {
 		rec.Builds.IOS = p.IOS
 	}
-	if rec.Builds.Android == nil {
+	if p.Android != nil && (rec.Builds.Android == nil || rec.Builds.Android.Error != "") {
 		rec.Builds.Android = p.Android
 	}
 }
