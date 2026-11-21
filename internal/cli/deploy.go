@@ -3,7 +3,6 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"strconv"
 	"strings"
@@ -250,19 +249,6 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 	}
 	rec := claim.rec
 	createdThisRun := claim.created
-	// seed rebuilds the squad, with this deploy's context, should another
-	// deploy's failed-create cleanup or whole reset remove it while this one
-	// provisions; the port reservation and the final merge upsert with it.
-	seedCtx := maps.Clone(rec.Context)
-	seed := func() *contract.SquadRecord {
-		return &contract.SquadRecord{
-			Name:      squadName,
-			CreatedAt: util.NowISO(),
-			Devices:   []contract.Device{},
-			Context:   maps.Clone(seedCtx),
-			Ports:     map[string]int{},
-		}
-	}
 	// A squad created by this deploy has a zero plan: every platform is
 	// provisioned fresh and nothing counts as reused.
 	iosAction, androidAction := claim.plan.ios, claim.plan.android
@@ -428,7 +414,6 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 			ExistingDevices: existingAndroid,
 			PreserveData:    opts.preserve,
 			Logger:          logger,
-			Seed:            seed,
 		}
 		provGroup.Go(func() error {
 			done := logger.Step("android-provision", progress.F("slots", androidSlotCount(androidSpecs)))
@@ -461,7 +446,14 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		iosBuildFailed:     hasIos && !iosProvisioned,
 		androidBuildFailed: hasAndroid && !androidProvisioned,
 	}
-	rec, err = state.UpsertRecord(squadName, seed, result.mergeInto)
+	rec, err = state.UpdateRecord(squadName, result.mergeInto)
+	if errors.Is(err, state.ErrNoRecord) {
+		// The squad was dismissed while this deploy ran. Recreating it
+		// would undo the dismiss, so tear down what this run provisioned
+		// and print nothing: there is no squad to describe.
+		deployVia.teardownDevices(result.devices(), logger)
+		return fmt.Errorf("deploy: squad %q was dismissed during the deploy; tore down the %d device(s) this deploy provisioned", squadName, len(result.devices()))
+	}
 	if err != nil {
 		return fmt.Errorf("deploy: final save: %w", err)
 	}

@@ -980,3 +980,33 @@ func TestClaimSquadMarksDeployedPlatforms(t *testing.T) {
 		t.Fatalf("builds = %+v, want both markers", rec.Builds)
 	}
 }
+
+// A squad the user dismisses while its deploy runs stays dismissed: the
+// deploy doesn't recreate it, tears down the devices it provisioned, prints
+// nothing on stdout and exits 1.
+func TestDeployDoesNotResurrectSquadDismissedMidDeploy(t *testing.T) {
+	newDeployRepo(t, deployToml)
+	f := installFakeDeploy(t)
+	f.duringIOSBuild = func() {
+		if _, code := runRoot(t, "dismiss", "--name", "s"); code != 0 {
+			t.Errorf("dismiss: exit %d", code)
+		}
+	}
+
+	pub, code, err := deployCLI(t, "--name", "s", "--platform", "ios")
+	if code != -1 || err == nil || !strings.Contains(err.Error(), "dismissed") {
+		t.Fatalf("code %d err %v, want a dismissed-during-deploy error", code, err)
+	}
+	if pub.Name != "" {
+		t.Fatalf("stdout = %+v, want nothing", pub)
+	}
+	if rec := loadTestRecord(t, "s"); rec != nil {
+		t.Fatalf("squad recreated: %+v", rec)
+	}
+	if _, ok, _ := state.FindSquad("s"); ok {
+		t.Fatal("squad re-registered")
+	}
+	if len(f.deviceTeardowns) != 1 || f.deviceTeardowns[0].UDID != "ios-new-0" {
+		t.Fatalf("device teardowns = %+v, want the sim this deploy provisioned", f.deviceTeardowns)
+	}
+}

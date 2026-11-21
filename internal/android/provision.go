@@ -48,10 +48,6 @@ type ProvisionInput struct {
 	ExistingDevices []contract.Device
 	PreserveData    bool
 	Logger          *progress.Logger
-	// Seed rebuilds the squad record if it is gone when the port
-	// reservation is persisted (another deploy's cleanup or whole reset
-	// removed it meanwhile). Opaque here: this package never reads it.
-	Seed func() *contract.SquadRecord
 }
 
 // ProvisionResult bundles per-slot devices with the port reservations made
@@ -101,7 +97,6 @@ func Provision(in ProvisionInput) ProvisionResult {
 			APKPath:  in.APKPath,
 			BundleID: in.BundleID,
 			Logger:   in.Logger,
-			Seed:     in.Seed,
 		})
 		res.Devices = append(res.Devices, emuDevices...)
 		for k, v := range emuPorts {
@@ -233,7 +228,6 @@ type emulatorContext struct {
 	APKPath  string
 	BundleID string
 	Logger   *progress.Logger
-	Seed     func() *contract.SquadRecord
 }
 
 type emulatorSlot struct {
@@ -243,11 +237,7 @@ type emulatorSlot struct {
 	deviceProfile string
 }
 
-// reserveEmulatorSlots picks a free ADB port for every emulator slot under
-// the index lock and persists the reservations to the squad's record, so
-// concurrent simsquad invocations see the claim. A slot with no free port
-// gets port -1.
-func reserveEmulatorSlots(ctx emulatorContext) ([]emulatorSlot, map[string]int) {
+func provisionEmulators(ctx emulatorContext) ([]contract.Device, map[string]int) {
 	slots := make([]emulatorSlot, 0)
 	ports := map[string]int{}
 
@@ -277,29 +267,26 @@ func reserveEmulatorSlots(ctx emulatorContext) ([]emulatorSlot, map[string]int) 
 			}
 		}
 		// Persist reservations to the record so other invocations see them.
-		// The record may be gone — another deploy's failed-create cleanup or
-		// whole reset removed it while this one built — so upsert: a
-		// reservation in no registered record is invisible to the allocator.
-		_, err := state.UpsertRecordLocked(ctx.Name, ctx.Seed, func(rec *contract.SquadRecord) error {
-			if rec.Ports == nil {
-				rec.Ports = map[string]int{}
-			}
-			for k, v := range ports {
-				rec.Ports[k] = v
-			}
+		// Missing record (the orchestrator may not have created it yet on a
+		// degenerate code path) is tolerated by skipping the save — the
+		// in-memory result still carries the ports for the orchestrator to
+		// persist at the final SaveRecord.
+		rec, err := state.LoadRecord(ctx.Name)
+		if err != nil || rec == nil {
 			return nil
-		})
-		return err
+		}
+		if rec.Ports == nil {
+			rec.Ports = map[string]int{}
+		}
+		for k, v := range ports {
+			rec.Ports[k] = v
+		}
+		return state.SaveRecord(rec)
 	})
 	if lockErr != nil && ctx.Logger != nil {
 		ctx.Logger.Warn("android-provision: reserve-error",
 			progress.F("error", lockErr.Error()))
 	}
-	return slots, ports
-}
-
-func provisionEmulators(ctx emulatorContext) ([]contract.Device, map[string]int) {
-	slots, ports := reserveEmulatorSlots(ctx)
 
 	// Phase 2: provision each slot in parallel.
 	devices := make([]contract.Device, len(slots))

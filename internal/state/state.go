@@ -173,6 +173,10 @@ func SaveRecord(rec *contract.SquadRecord) error {
 	return util.WriteJSON(util.StateFileFor(rec.Name), rec)
 }
 
+// ErrNoRecord is returned by UpdateRecord when the squad's record is gone,
+// e.g. the squad was dismissed while a deploy was running.
+var ErrNoRecord = errors.New("squad has no record")
+
 // UpdateRecord is a locked load-modify-save of one squad record: under the
 // index flock it reloads the record from disk, applies fn and saves the
 // result, which it returns. Callers that loaded the record earlier must apply
@@ -196,56 +200,7 @@ func UpdateRecordLocked(name string, fn func(*contract.SquadRecord) error) (*con
 		return nil, err
 	}
 	if rec == nil {
-		return nil, fmt.Errorf("state: squad %q has no record", name)
-	}
-	if err := fn(rec); err != nil {
-		return nil, err
-	}
-	if err := SaveRecord(rec); err != nil {
-		return nil, err
-	}
-	return rec, nil
-}
-
-// UpsertRecord is UpdateRecord that never fails on a missing record: under
-// the same lock it builds the record from seed (a bare {Name, CreatedAt}
-// when seed is nil) and registers the squad if the registry lacks it, then
-// applies fn. A deploy writes through it because another deploy's cleanup
-// or whole reset may remove the squad while it is still provisioning; its
-// devices and ports must still land in a registered record.
-func UpsertRecord(name string, seed func() *contract.SquadRecord, fn func(*contract.SquadRecord) error) (*contract.SquadRecord, error) {
-	return withIndexLock(func() (*contract.SquadRecord, error) {
-		return UpsertRecordLocked(name, seed, fn)
-	})
-}
-
-// UpsertRecordLocked is UpsertRecord for callers already holding the index
-// lock.
-func UpsertRecordLocked(name string, seed func() *contract.SquadRecord, fn func(*contract.SquadRecord) error) (*contract.SquadRecord, error) {
-	rec, err := LoadRecord(name)
-	if err != nil {
-		return nil, err
-	}
-	if rec == nil {
-		if seed != nil {
-			rec = seed()
-		}
-		if rec == nil {
-			rec = &contract.SquadRecord{CreatedAt: util.NowISO()}
-		}
-		rec.Name = name
-		if rec.Devices == nil {
-			rec.Devices = []contract.Device{}
-		}
-	}
-	idx, err := loadIndex()
-	if err != nil {
-		return nil, err
-	}
-	if _, ok := idx.Squads[name]; !ok {
-		if err := RegisterSquadLocked(RegisterSquadInput{Name: name, StateFile: util.StateFileFor(name)}); err != nil {
-			return nil, err
-		}
+		return nil, fmt.Errorf("state: squad %q: %w", name, ErrNoRecord)
 	}
 	if err := fn(rec); err != nil {
 		return nil, err
