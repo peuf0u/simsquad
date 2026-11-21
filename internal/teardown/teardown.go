@@ -160,13 +160,13 @@ func teardownAndroidEmulator(dev contract.Device) error {
 		kill()
 		return nil
 	}
-	return stopThenDelete(kill, emulatorGoneProbe(dev, adb), func() error {
+	return stopThenDelete(kill, android.EmulatorGoneProbe(dev, adb), func() error {
 		r, _ := util.Run(avd, []string{"delete", "avd", "-n", name}, util.RunOpts{Env: android.AVDManagerEnv(avd)})
 		if r.Code != 0 {
 			return fmt.Errorf("avdmanager delete %s: %s", name, strings.TrimSpace(r.Stderr))
 		}
 		return nil
-	}, emulatorExitTimeout, emulatorExitPoll)
+	}, android.EmulatorExitTimeout, android.EmulatorExitPoll)
 }
 
 func teardownAndroidPhysical(dev contract.Device) error {
