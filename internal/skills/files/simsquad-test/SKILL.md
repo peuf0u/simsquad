@@ -259,8 +259,34 @@ Then start one worker per device, all at once. For each device, with
 
 Start every worker as a background command (in Claude Code, a Bash call
 with `run_in_background`), then wait until all have exited. Each exits by
-its time limit at the latest. `worker.json` holds `{"status": …}`: `ok`,
-`blocked: timeout` or `error: worker exited <code>`.
+its time limit at the latest. `worker.json` holds `{"status": …}`:
+
+- `ok`: the worker exited in time and left a `result.json`.
+- `blocked: timeout`: the time limit passed, and the worker was killed.
+- `error: no result.json`: the worker exited without writing its result,
+  often because it couldn't write to its folder. Its `worker.log` says why.
+- `error: usage limit`: the worker's CLI stopped because the account ran
+  out of usage.
+- `error: worker exited <code>`: the worker failed for another reason. Its
+  `worker.log` says why.
+
+### Retry a worker
+
+A worker that didn't end `ok`, or whose result fails step 8, can run again
+once its cause is fixed: a usage limit has reset, or a missing permission
+is now granted. Retrying an unfixed cause fails the same way, and simsquad
+never retries a worker on its own, so ask the user when the fix is theirs.
+
+To retry, run that device's `simsquad run worker` command from step 7
+again, unchanged. Before the worker starts, it moves the earlier attempt's
+files into `$RUN_DIR/workers/$DEVICE_ID/attempts/<n>/` and keeps
+`prompt.md`, so only the new attempt counts. Then validate the worker
+(step 8) and write the report (step 9).
+
+Retry before step 9 when you can. Once the report exists the run is
+finished: another run may already be using its platforms on the squad, and
+step 10 may have dismissed a fresh squad. Running step 9 again after a
+retry overwrites `report.json` and `report.md`.
 
 ## 8. Validate each worker
 
@@ -281,7 +307,9 @@ simsquad run report "$RUN_DIR" --out "$RUN_DIR/report-summary.json"
 Run it on every path that got past step 4, including a failed deploy: the
 report marks the run finished, and until it exists no other run can use
 this run's platforms on the squad. Exit `0` passed, `1` failed, `2` infra. The output gives
-`verdict`, `report_json`, `report_md` and `counts`.
+`verdict`, `report_json`, `report_md` and `counts`. The report reads each
+worker's current attempt and ignores `attempts/`, so after a retry (step 7)
+it can run again.
 
 ## 10. Dismiss a fresh squad
 

@@ -299,18 +299,28 @@ simsquad run worker --dir .simsquad/runs/<run-id>/workers/<device-id> \
 
 `run worker` starts the command in its own process group with its input
 closed (so `codex exec` can't wait for input forever) and sends the
-command's output to `<dir>/worker.log`. It deletes any `<dir>/status` left
-by an earlier attempt before starting, so a successful retry reads as a
-success. The outcome:
+command's output to `<dir>/worker.log`. The outcome:
 
 | Worker | `<dir>/status` | stdout `status` |
 |---|---|---|
-| exits 0 in time | not written | `ok` |
-| exits non-zero | `error: worker exited <code>` | same |
+| exits 0 in time, `<dir>/result.json` exists | not written | `ok` |
+| exits 0 in time, no `<dir>/result.json` | `error: no result.json` | same |
+| exits non-zero, the end of `worker.log` holds a known Claude Code or Codex usage-limit message | `error: usage limit` | same |
+| exits non-zero otherwise | `error: worker exited <code>` | same |
 | still running at `--timeout` | `blocked: timeout` — the whole group, children included, is killed | same |
 
 A worker killed by a signal reports the negative signal number as its
-code (e.g. `-9`). `run worker` exits `0` whenever it recorded an outcome, so
+code (e.g. `-9`). Only these fixed texts are recorded, never lines from
+the log, which can hold credentials from the squad's context.
+
+Running `run worker` again on the same `--dir` is a retry. Before the
+worker starts, the earlier attempt's outputs (everything except
+`prompt.md` and `attempts/`: `result.json`, `log.md`, `screenshots/`,
+`worker.log`, `status`, …) move to `<dir>/attempts/<n>/`, numbered from 1.
+A moved folder is recreated empty, so `screenshots/` is still there for the
+retry. A stale result or status is never read as the retry's: `run
+validate` and `run report` ignore `attempts/`. simsquad never retries a
+worker on its own. `run worker` exits `0` whenever it recorded an outcome, so
 one bad worker doesn't derail a fan-out; it exits `1` only on misuse (no
 command, bad flags, unwritable dir).
 

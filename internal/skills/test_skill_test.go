@@ -574,3 +574,43 @@ func TestWorkerReadsAppNotesFromRunJSON(t *testing.T) {
 		t.Error("Read first still has the worker infer the app notes location")
 	}
 }
+
+// TestTestSkillDocumentsWorkerOutcomesAndRetry (issue #36): step 7 lists
+// every status `run worker` records, the retry reruns the unchanged step 7
+// command before validate and report, and a worker stopped before its
+// first scenario still writes result.json.
+func TestTestSkillDocumentsWorkerOutcomesAndRetry(t *testing.T) {
+	skill, worker := installedTestSkill(t)
+	m := regexp.MustCompile(`(?s)## 7\. Start the workers\n(.*?)\n## `).FindStringSubmatch(skill)
+	if m == nil {
+		t.Fatal("skill has no `## 7. Start the workers` step")
+	}
+	step7 := m[1]
+	for _, want := range []string{
+		"`" + agenttest.StatusOK + "`",
+		"`" + agenttest.StatusTimeout + "`",
+		"`" + agenttest.StatusNoResult + "`",
+		"`" + agenttest.StatusUsageLimit + "`",
+		"`error: worker exited <code>`",
+	} {
+		if !strings.Contains(step7, want) {
+			t.Errorf("step 7 does not list the status %s", want)
+		}
+	}
+	i := strings.Index(step7, "### Retry a worker")
+	if i < 0 {
+		t.Fatal("step 7 has no `### Retry a worker` section")
+	}
+	retry := step7[i:]
+	for _, want := range []string{"`simsquad run worker` command from step 7", "attempts/", "step 8", "step 9",
+		"before step 9", "`report.json`", "never retries"} {
+		if !strings.Contains(retry, want) {
+			t.Errorf("retry section does not mention %q", want)
+		}
+	}
+	for _, want := range []string{"before your first scenario", "`blocked_reason`", "`BLOCKED.md`"} {
+		if !strings.Contains(worker, want) {
+			t.Errorf("worker prompt does not mention %q", want)
+		}
+	}
+}

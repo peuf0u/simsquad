@@ -51,6 +51,16 @@ All notable changes are recorded here. The format follows
 - **README "Project layouts"** says where the config, skills, `qa/` and
   run folders live in a single repo, an umbrella workspace repo and split
   repos with a home repo.
+- **A worker can be retried within its run.** Running the same `run
+  worker` command again on a worker folder first moves the earlier
+  attempt's outputs (everything except `prompt.md`) to
+  `<worker-dir>/attempts/<n>/`, so a failed retry is never reported with
+  the stale result. `run validate` and `run report` ignore `attempts/`, and
+  `run report` can run again after a retry, overwriting `report.json` and
+  `report.md`. The `simsquad-test` skill documents the retry: once the
+  cause is fixed, the same `run worker` command, then `run validate`, then
+  `run report`, preferably before the first report. simsquad never retries
+  a worker on its own.
 
 ### Changed
 
@@ -102,6 +112,15 @@ All notable changes are recorded here. The format follows
   subfolder, re-run `simsquad skill install` from the config dir and
   remove the old `.agents/`, `.claude/skills/` and `.codex/` copies at the
   git toplevel.
+- **`run worker` records why a worker left no result.** A clean exit
+  without `result.json` is now `error: no result.json` (it was `ok`), in
+  the status file and on stdout, and a non-zero exit whose `worker.log`
+  ends with a known Claude Code or Codex usage-limit message is `error:
+  usage limit` instead of `error: worker exited <code>`. Only these fixed
+  texts are recorded, never log lines. The `simsquad-test` skill lists
+  every status, and its worker writes `result.json` with every scenario
+  `blocked` (and the exploration's `blocked_reason`) when it is stopped
+  before its first scenario, instead of files like `BLOCKED.md`.
 
 ### Fixed
 

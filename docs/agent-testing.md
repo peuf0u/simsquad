@@ -161,6 +161,7 @@ limit still leaves a valid partial result. Its files are its only output:
     screenshots/   the evidence
     worker.log     the worker's raw output
     worker.json    {"status": "ok" | "blocked: timeout" | "error: …"}
+    attempts/<n>/  an earlier attempt's files, moved there by a retry
   report.json  report.md
 ```
 

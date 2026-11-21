@@ -30,6 +30,14 @@ Paths inside `result.json` are relative to your worker folder
 after every scenario, so that a run cut off by the time limit still leaves
 a valid partial result.
 
+When something stops you before your first scenario (the app won't
+launch, the credentials fail, the device doesn't answer), still write
+`result.json`: every scenario for your platform `blocked`, its
+`observation` saying what stopped you and its `evidence` a screenshot of
+it, and the exploration, if the run has one for your platform, `blocked`
+with a `blocked_reason`. Write nothing else in its place, such as a
+`BLOCKED.md`: only `result.json` is read.
+
 ## Read first
 
 1. `<run folder>/run.json`: `feature_title`, `scenarios` (each with
