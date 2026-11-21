@@ -551,3 +551,35 @@ func TestLineRedactorBoundsATilingSecretRun(t *testing.T) {
 		t.Fatalf("log less its masks = %q, want only \" end\\n\" left", got)
 	}
 }
+
+// Review round 6, item 1: when a run held past maxPartialLine is forced
+// out, a longer secret that starts inside the run and isn't whole yet must
+// still be found whole once the next write completes it: no part of it may
+// reach the log under or after a mask.
+func TestLineRedactorForcedRunKeepsALongerSecretWhole(t *testing.T) {
+	cases := []struct {
+		secrets []string
+		chunks  []string
+	}{
+		{[]string{"ab", "bSECRETVALUE"}, []string{strings.Repeat("ab", 32763) + "abSECRETVALU", "E\n"}},
+		{[]string{"aba", "abSECRETVALUE"}, []string{strings.Repeat("ab", 32763) + "abSECRETVALU", "E\n"}},
+	}
+	for _, c := range cases {
+		t.Run(strings.Join(c.secrets, ","), func(t *testing.T) {
+			got := redactWrites(t, c.secrets, c.chunks...)
+			masked := strings.ReplaceAll(got, "<secret>", "\x00")
+			for _, s := range c.secrets {
+				for i := 0; i+4 <= len(s); i++ {
+					for j := i + 4; j <= len(s); j++ {
+						if strings.Contains(masked, s[i:j]) {
+							t.Fatalf("log holds %q of secret %q unmasked; it ends %q", s[i:j], s, got[max(0, len(got)-40):])
+						}
+					}
+				}
+			}
+			if !strings.HasSuffix(got, "\n") || strings.Count(got, "<secret>") != 1 {
+				t.Fatalf("log = …%q, want one run masked as one <secret> and the newline", got[max(0, len(got)-40):])
+			}
+		})
+	}
+}

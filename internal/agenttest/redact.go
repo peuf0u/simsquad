@@ -29,8 +29,8 @@ const maxPartialLine = 64 << 10
 // back to the run's start, since a match the next write completes could
 // extend it. So every byte before the cut is decided by bytes already
 // there, and the log is the same however the worker's writes split its
-// output, except for a run held back past maxPartialLine (see emit). Flush
-// writes the rest.
+// output, except for how many masks a run held back past maxPartialLine
+// gets (see emit). Flush writes the rest.
 //
 // Each secret is also matched in its JSON-escaped form: simsquad prints a
 // secret that way (`devices --reveal` turns `pa"ss` into `pa\"ss`), and a
@@ -40,6 +40,9 @@ type lineRedactor struct {
 	secrets [][]byte // longest first (matchAt)
 	longest int
 	buf     []byte
+	// covered counts the bytes at the start of buf that a run already
+	// masked by a forced write-out covers (see emit).
+	covered int
 }
 
 // newLineRedactor redacts the given secret values and their JSON-escaped
@@ -109,10 +112,19 @@ func (r *lineRedactor) emit(final bool) error {
 	var out []byte
 	last := 0            // end of the buffer already copied or masked into out
 	start, end := -1, -1 // the current run of covered bytes, [start, end)
-	mask := func() {
+	// A run a forced write-out already masked goes on into the buffer's
+	// first r.covered bytes: they are hidden without a second mask.
+	covered := r.covered
+	continued := covered > 0
+	if continued {
+		start, end = 0, covered
+	}
+	mask := func(to int) {
 		out = append(out, r.buf[last:start]...)
-		out = append(out, contract.SecretMask...)
-		last = end
+		if !continued || start > 0 {
+			out = append(out, contract.SecretMask...)
+		}
+		last = to
 	}
 	for i := 0; i < cut; i++ {
 		s := r.matchAt(i)
@@ -124,34 +136,34 @@ func (r *lineRedactor) emit(final bool) error {
 			continue
 		}
 		if start >= 0 {
-			mask()
+			mask(end)
 		}
 		start, end = i, i+len(s)
 	}
+	r.covered = 0
 	if start >= 0 {
 		switch {
 		case final || end < cut:
-			mask()
+			mask(end)
 		case start == 0 && len(r.buf) > maxPartialLine:
 			// A chain of touching matches ("ab" in "ababab…" with no
 			// newline) reaches the cut on every write and would be held
 			// back, rescanned and grown without limit. Past maxPartialLine
-			// the run goes out masked up to its end, taking in every whole
-			// match that starts inside it. Only in this degenerate case can
-			// the log depend on how the writes split: a match touching the
-			// run's end that the next write completes gets a mask of its
-			// own, and the rest of a secret that starts inside the run but
-			// isn't whole yet is no longer recognised.
-			for i := cut; i < end; i++ {
-				if s := r.matchAt(i); s != nil {
-					end = max(end, i+len(s))
-				}
-			}
-			mask()
-			cut = end
+			// the run goes out masked up to the cut, and the bytes after the
+			// cut it already covers are remembered as covered: the next
+			// emit hides them as part of the same run, and a secret
+			// starting in the kept tail is still found whole. Only the
+			// number of masks can then depend on how the writes split.
+			mask(cut)
+			r.covered = end - cut
 		default:
 			// The run reaches the cut: keep it back with the tail.
 			cut = start
+			if continued && start == 0 {
+				// Nothing goes out: the buffer still starts with the
+				// bytes the earlier mask covered.
+				r.covered = covered
+			}
 		}
 	}
 	out = append(out, r.buf[last:cut]...)
