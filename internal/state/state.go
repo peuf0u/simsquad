@@ -119,15 +119,18 @@ func TouchSquad(name string) error {
 // RemoveSquad drops the entry from the registry. Per-squad state and any
 // sidecar files are NOT removed here — the teardown package handles that.
 func RemoveSquad(name string) error {
-	_, err := withIndexLock(func() (struct{}, error) {
-		idx, err := loadIndex()
-		if err != nil {
-			return struct{}{}, err
-		}
-		delete(idx.Squads, name)
-		return struct{}{}, saveIndex(idx)
-	})
-	return err
+	return WithIndexLockE(func() error { return RemoveSquadLocked(name) })
+}
+
+// RemoveSquadLocked is the unlocked variant of RemoveSquad. Caller MUST
+// already hold the index lock (via WithIndexLockE).
+func RemoveSquadLocked(name string) error {
+	idx, err := loadIndex()
+	if err != nil {
+		return err
+	}
+	delete(idx.Squads, name)
+	return saveIndex(idx)
 }
 
 // SnapshotSquadsLocked returns every persisted squad record. Caller MUST hold

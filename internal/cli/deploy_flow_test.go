@@ -648,3 +648,81 @@ func TestClaimSquadCreatesOnceUnderContention(t *testing.T) {
 		t.Fatal("squad not registered")
 	}
 }
+
+// The exit code counts only the deployed platforms' devices: a broken
+// Android emulator doesn't turn a clean iOS deploy into a mixed result.
+// Stdout still shows the whole squad, the emulator at its stored status.
+func TestDeployExitCodeCountsOnlyDeployedPlatforms(t *testing.T) {
+	newDeployRepo(t, deployToml)
+	installFakeDeploy(t)
+	brokenAnd := seededAndroid("s", testAndImage, contract.StatusError)
+	seedSquad(t, &contract.SquadRecord{
+		Name:    "s",
+		Devices: []contract.Device{seededIOS("s", contract.StatusReady), brokenAnd},
+	})
+
+	pub, code, err := deployCLI(t, "--name", "s", "--platform", "ios")
+	if err != nil || code != 0 {
+		t.Fatalf("deploy --platform ios: code %d err %v, want exit 0", code, err)
+	}
+	if len(pub.Devices) != 2 || pub.Devices[1] != brokenAnd {
+		t.Fatalf("stdout devices = %+v, want the whole squad with the emulator as stored", pub.Devices)
+	}
+}
+
+// A squad this deploy created and left with nothing ready is removed again.
+func TestDeployCleanupRemovesSquadItCreated(t *testing.T) {
+	newDeployRepo(t, deployToml)
+	f := installFakeDeploy(t)
+	f.iosBuildErr = errors.New("xcodebuild failed")
+
+	pub, code, err := deployCLI(t, "--name", "s", "--platform", "ios")
+	if err != nil || code != 1 {
+		t.Fatalf("code %d err %v, want exit 1", code, err)
+	}
+	if pub.Builds.IOS == nil || pub.Builds.IOS.Error == "" {
+		t.Fatalf("stdout builds = %+v, want the iOS build error", pub.Builds)
+	}
+	if rec := loadTestRecord(t, "s"); rec != nil {
+		t.Fatalf("record left behind: %+v", rec)
+	}
+	if _, ok, _ := state.FindSquad("s"); ok {
+		t.Fatal("squad still registered")
+	}
+}
+
+// Cleanup tears down only the deployed platform: when a concurrent deploy
+// added the other platform meanwhile, the squad stays with those devices.
+func TestDeployCleanupKeepsOtherPlatformsDevices(t *testing.T) {
+	newDeployRepo(t, deployToml)
+	f := installFakeDeploy(t)
+	f.iosBuildErr = errors.New("xcodebuild failed")
+	and := seededAndroid("s", testAndImage, contract.StatusReady)
+	f.duringIOSBuild = func() {
+		if _, err := state.UpdateRecord("s", deployResult{
+			android:        true,
+			builds:         contract.Builds{Android: &contract.AndroidBuild{APKPath: "/b/app.apk"}},
+			androidDevices: []contract.Device{and},
+			androidPorts:   map[string]int{and.Name: and.Port},
+		}.mergeInto); err != nil {
+			t.Error(err)
+		}
+	}
+
+	if _, code, err := deployCLI(t, "--name", "s", "--platform", "ios"); err != nil || code != 1 {
+		t.Fatalf("code %d err %v, want exit 1", code, err)
+	}
+	if len(f.squadTeardowns) != 0 {
+		t.Fatalf("whole squad torn down: %v", f.squadTeardowns)
+	}
+	rec := loadTestRecord(t, "s")
+	if rec == nil || len(rec.Devices) != 1 || rec.Devices[0] != and {
+		t.Fatalf("record = %+v, want the squad kept with the concurrent emulator", rec)
+	}
+	if rec.Builds.IOS != nil || rec.Builds.Android == nil || rec.Ports[and.Name] != and.Port {
+		t.Fatalf("builds = %+v ports = %v, want the failed iOS build dropped and Android kept", rec.Builds, rec.Ports)
+	}
+	if _, ok, _ := state.FindSquad("s"); !ok {
+		t.Fatal("squad unregistered")
+	}
+}

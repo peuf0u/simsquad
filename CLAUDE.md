@@ -100,7 +100,7 @@ output by JSON key. Renaming a field is a breaking change.
 | Registry | `internal/contract.SquadIndex` / `SquadIndexEntry` | `~/.cache/simsquad/squads.json`. Map keyed by squad name. |
 | Consumer device view (`devices`) | `internal/contract.DeviceView` | Uniform `{platform, id, name, model, os_version, bundle_id?, status, ready_at, context?}`. Platform-tagged; same shape iOS + Android. `context` is the squad's context copied onto every row. |
 | Context block | `map[string]string` on `SquadRecord` / `SquadPublic` / `DeviceView` | Free-form test context. Set via `deploy --context KEY=VALUE` or `simsquad.toml [context]`; mutated via `simsquad set-context --set/--unset/--clear`. Execution layer never reads it. Called `env` before 0.5.0; `[env]`/`--env`/`set-env` still work with a stderr warning, and old record files with an `env` key are read as context. |
-| Exit codes | `internal/cli/deploy.go::exitCodeFromDevices` | `0` = all ready; `2` = mixed; `1` = none ready / bad args / build failed. |
+| Exit codes | `internal/cli/deploy.go::exitCodeFromDevices` | `0` = all ready; `2` = mixed; `1` = none ready / bad args / build failed. Counts only the deployed platforms' devices (`deploy --platform`); stdout is still the whole squad. |
 | Run record | `internal/contract.RunRecord` | `<repo>/.simsquad/runs/<run-id>/run.json`, written by `run new`. |
 | Worker result | `internal/contract.WorkerResult` + `internal/contract/schemas/result.schema.json` | `workers/<device-id>/result.json`; checked by `run validate`. |
 | Report | `internal/contract.Report` + `internal/contract/schemas/report.schema.json` | `report.json` from `run report`; exit `0` passed / `1` failed / `2` infra. |

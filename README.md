@@ -113,7 +113,7 @@ and verdicts: [docs/agent-testing.md](docs/agent-testing.md).
 
 | Command | Action | Key flags |
 |---|---|---|
-| `deploy` | Build + install; reuse the squad if it exists (same name+matrix), else provision fresh; emit the descriptor | `--name` (req), `--ios-repo`/`--android-repo`, `--ios-spec`/`--android-spec`, `--context KEY=VALUE`, `--no-build`, `--force-build`, `--preserve-data`, `--clear-context` |
+| `deploy` | Build + install; reuse the squad if it exists (same name+matrix), else provision fresh; emit the descriptor | `--name` (req), `--platform ios\|android`, `--ios-repo`/`--android-repo`, `--ios-spec`/`--android-spec`, `--context KEY=VALUE`, `--no-build`, `--force-build`, `--preserve-data`, `--clear-context` |
 | `status` | Squad registry (no arg) or one full record (`--name`) | `--name` |
 | `devices` | Uniform device list — one squad (`--name`) or all (no arg) | `--name`, `--ready`, `--platform=ios\|android` |
 | `set-context` | Mutate a squad's context | `--name` (req), `--set KEY=VALUE`, `--unset KEY`, `--clear` |
@@ -134,8 +134,14 @@ platforms — omit a platform's flag to skip it for this run. With no spec
 flags, both `[[ios.sims]]` and `[[android.sims]]` from `simsquad.toml` are
 used.
 
+`deploy --platform ios|android` (repeatable) deploys only those equipped
+platforms; the squad's other platform keeps its devices untouched. Reuse is
+decided per platform, so a later bare deploy adds the missing platform. It
+can't be combined with spec flags.
+
 `deploy` exit codes: `0` = all devices ready · `2` = mixed (some ready, some
-errored) · `1` = none ready / bad args / build failed.
+errored) · `1` = none ready / bad args / build failed. Only the deployed
+platforms' devices count; stdout is still the whole squad.
 
 ## Agent skills
 

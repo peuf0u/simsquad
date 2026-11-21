@@ -48,8 +48,18 @@ func newDeployCmd() *cobra.Command {
 			"matrix, installs the build, and emits the squad descriptor on stdout.\n\n" +
 			"Idempotent by squad name: deploying an existing name with the same\n" +
 			"matrix REUSES the running sims/emulators and just reinstalls the build\n" +
-			"(no reboot) — the cheap inner-loop path for iterating on a fix. A fresh\n" +
-			"matrix is created only when the name is new or its devices are gone.\n\n" +
+			"(no reboot) — the cheap inner-loop path for iterating on a fix. Reuse\n" +
+			"is decided per platform: a platform with no devices in the squad is\n" +
+			"added; one whose devices no longer match is reset when none of them is\n" +
+			"ready, and refused (dismiss first) when one is.\n\n" +
+			"--platform ios|android (repeatable) deploys only those equipped\n" +
+			"platforms, each with its simsquad.toml matrix; the default is every\n" +
+			"equipped platform. A platform left out is untouched: no build, boot or\n" +
+			"install, and its devices stay as they are. It can't be combined with\n" +
+			"spec flags.\n\n" +
+			"Stdout is the whole squad, with devices of platforms left out at their\n" +
+			"stored status. The exit code counts only this deploy's platforms:\n" +
+			"0 = all ready, 2 = mixed, 1 = none ready / build failed / bad args.\n\n" +
 			"Spec flags (repeatable):\n" +
 			"  --ios-spec     DEVICE:RUNTIME:COUNT          e.g. 'iPhone 17:iOS 26.4:1'\n" +
 			"  --android-spec DEVICE:IMAGE:COUNT[:TARGET]   e.g. 'pixel_7:system-images;android-34;google_apis;arm64-v8a:1'\n\n" +
@@ -453,14 +463,15 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		return fmt.Errorf("deploy: final save: %w", err)
 	}
 
-	code := exitCodeFromDevices(rec.Devices)
+	// The exit code reports what this deploy did: only its platforms'
+	// devices count, so a broken device on a platform left out of the
+	// deploy doesn't change it. Stdout still shows the whole squad.
+	code := exitCodeFromDevices(result.devices())
 	if createdThisRun && code == 1 {
 		// Build/provision produced nothing usable and we created this squad
 		// this run — don't leave a stale empty record to block or confuse the
 		// next deploy. (Done with the logger still open so it narrates.)
-		if terr := deployVia.teardownSquad(rec.Name, logger); terr != nil {
-			logger.Warn("deploy: cleanup-empty", progress.F("error", terr.Error()))
-		}
+		cleanupCreatedSquad(squadName, result, logger)
 	} else if err := state.TouchSquad(rec.Name); err != nil {
 		logger.Warn("deploy: touch-squad", progress.F("error", err.Error()))
 	}
@@ -604,6 +615,39 @@ func (r deployResult) mergeInto(rec *contract.SquadRecord) error {
 	}
 	rec.Devices = append(append([]contract.Device{}, iosDevs...), androidDevs...)
 	return nil
+}
+
+// devices is every device this deploy provisioned, iOS first.
+func (r deployResult) devices() []contract.Device {
+	return append(append([]contract.Device{}, r.iosDevices...), r.androidDevices...)
+}
+
+// cleanupCreatedSquad undoes a failed deploy of a squad it created: it tears
+// down the deploy's own devices and drops its platforms from the record. The
+// squad itself goes only when nothing is left in it — a concurrent deploy of
+// the other platform may have added devices meanwhile, and those stay.
+func cleanupCreatedSquad(name string, result deployResult, logger *progress.Logger) {
+	deployVia.teardownDevices(result.devices(), logger)
+	drop := deployResult{ios: result.ios, android: result.android}
+	err := state.WithIndexLockE(func() error {
+		rec, err := state.LoadRecord(name)
+		if err != nil || rec == nil {
+			return err
+		}
+		_ = drop.mergeInto(rec)
+		if len(rec.Devices) > 0 {
+			return state.SaveRecord(rec)
+		}
+		if err := state.RemoveRecord(name); err != nil {
+			return err
+		}
+		return state.RemoveSquadLocked(name)
+	})
+	if err != nil {
+		logger.Warn("deploy: cleanup-empty", progress.F("error", err.Error()))
+		return
+	}
+	logger.Info("deploy: cleanup-empty", progress.F("name", name))
 }
 
 // resetPlatform tears down one platform's devices and drops them, its builds
