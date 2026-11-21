@@ -227,3 +227,46 @@ func TestSkillStatusMobilecli(t *testing.T) {
 		})
 	}
 }
+
+// TestSkillStatusRootsAtConfigDir reads the skills beside the config from a
+// folder below it.
+func TestSkillStatusRootsAtConfigDir(t *testing.T) {
+	mobile := filepath.Join(newBareDir(t), "mobile")
+	writeTestFile(t, filepath.Join(mobile, "simsquad.toml"), equipIOSOnly)
+	t.Chdir(mobile)
+	withMobilecli(t, "1.0.13")
+	mustInstall(t)
+	if err := os.MkdirAll(filepath.Join(mobile, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(filepath.Join(mobile, "src"))
+
+	got, err := skillStatus(t)
+	if exitCode(err) != 0 {
+		t.Fatalf("err = %v, want exit 0", err)
+	}
+	if !got.Installed || !got.InSync {
+		t.Errorf("installed=%v in_sync=%v, want both true (warning %q)", got.Installed, got.InSync, got.Warning)
+	}
+}
+
+// TestSkillStatusWithoutConfig keeps the status shape and exit 0: no config
+// means no skills root, reported as not installed with the equip hint.
+func TestSkillStatusWithoutConfig(t *testing.T) {
+	newBareDir(t)
+	withMobilecli(t, "1.0.13")
+
+	got, err := skillStatus(t)
+	if exitCode(err) != 0 {
+		t.Fatalf("err = %v, want exit 0", err)
+	}
+	if got.Installed || got.InSync {
+		t.Errorf("installed=%v in_sync=%v, want both false", got.Installed, got.InSync)
+	}
+	if !strings.Contains(got.Warning, "run `simsquad equip` first") {
+		t.Errorf("warning = %q, want the equip hint", got.Warning)
+	}
+	if got.BinaryContract != skills.Contract || got.Mobilecli.Minimum != "1.0.13" {
+		t.Errorf("binary_contract=%d mobilecli=%+v, want the full status", got.BinaryContract, got.Mobilecli)
+	}
+}

@@ -30,7 +30,9 @@ func newSkillInstallCmd() *cobra.Command {
 			"and the skill contract number. Install refuses to overwrite a file that was\n" +
 			"edited by hand unless --force is given. Re-running it is safe.\n" +
 			"\n" +
-			"The repo root is the enclosing git work tree, or the current directory.\n" +
+			"The paths above are relative to the config dir: the nearest folder up from\n" +
+			"here holding simsquad.toml, where `run new` also puts its runs. Without\n" +
+			"config, install refuses: run `simsquad equip` first.\n" +
 			"stdout: {dir, version, contract, files}. Redirect stdout only (> out.json).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -41,8 +43,12 @@ func newSkillInstallCmd() *cobra.Command {
 				}
 				dir = abs
 			}
+			root := skillsRoot()
+			if root == "" {
+				return fmt.Errorf("skill install: %w", errNoConfig)
+			}
 			res, err := skills.Install(skills.Options{
-				Root:    repoRoot(),
+				Root:    root,
 				Dir:     dir,
 				Force:   force,
 				Version: Version,

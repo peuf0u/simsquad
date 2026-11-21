@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
@@ -67,7 +68,7 @@ func newEquipCmd() *cobra.Command {
 			if cmd.Flags().Changed("install-skills") {
 				answer = &installSkills
 			}
-			installed, err := maybeInstallSkills(cmd.ErrOrStderr(), answer)
+			installed, err := maybeInstallSkills(cmd.ErrOrStderr(), filepath.Dir(res.ProjectFile), answer)
 			if err != nil {
 				return err
 			}
@@ -106,12 +107,12 @@ var offerSkillInstall = func(w io.Writer) (bool, error) {
 	return install, nil
 }
 
-// maybeInstallSkills runs the post-equip skill offer. answer is the
-// --install-skills flag when given (no prompt); nil means ask, unless the
-// skills this binary would write are already installed untouched. It
-// returns the install result, or nil when nothing was installed.
-func maybeInstallSkills(w io.Writer, answer *bool) (*skills.Result, error) {
-	root := repoRoot()
+// maybeInstallSkills runs the post-equip skill offer for the config dir
+// root. answer is the --install-skills flag when given (no prompt); nil
+// means ask, unless the skills this binary would write are already
+// installed untouched. It returns the install result, or nil when nothing
+// was installed.
+func maybeInstallSkills(w io.Writer, root string, answer *bool) (*skills.Result, error) {
 	if answer == nil {
 		if skillsCurrent(root) {
 			return nil, nil

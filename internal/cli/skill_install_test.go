@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,8 +17,9 @@ type skillInstallOut struct {
 	Files    []string `json:"files"`
 }
 
-// newAppRepo chdirs into a fresh temporary app repo and returns its path.
-func newAppRepo(t *testing.T) string {
+// newBareDir chdirs into a fresh temporary folder with no simsquad config
+// and returns its path.
+func newBareDir(t *testing.T) string {
 	t.Helper()
 	t.Setenv("SIMSQUAD_CACHE_DIR", t.TempDir())
 	dir, err := filepath.EvalSymlinks(t.TempDir())
@@ -26,6 +28,24 @@ func newAppRepo(t *testing.T) string {
 	}
 	t.Chdir(dir)
 	return dir
+}
+
+// newAppRepo chdirs into a fresh temporary app repo, equipped with a
+// minimal simsquad.toml so the skill commands find their root, and returns
+// its path.
+func newAppRepo(t *testing.T) string {
+	t.Helper()
+	dir := newBareDir(t)
+	writeTestFile(t, filepath.Join(dir, "simsquad.toml"), "[project]\nios_scheme = \"App\"\n")
+	return dir
+}
+
+// gitInit makes dir a git work tree.
+func gitInit(t *testing.T, dir string) {
+	t.Helper()
+	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init %s: %v\n%s", dir, err, out)
+	}
 }
 
 // runSkill executes `simsquad skill <args>` through the real root command
@@ -302,5 +322,63 @@ func TestSkillInstallNeverOverwritesAppNotes(t *testing.T) {
 
 	if got := readFile(t, notes); got != mine {
 		t.Errorf("qa/README.md was changed:\n%s", got)
+	}
+}
+
+// TestSkillInstallRootsAtConfigDir: with the config in a repo subfolder,
+// the skills land beside the config, where `run new` puts its runs, not at
+// the git toplevel, from the config dir and from a folder below it.
+func TestSkillInstallRootsAtConfigDir(t *testing.T) {
+	for _, sub := range []string{"", "src"} {
+		t.Run("cwd mobile/"+sub, func(t *testing.T) {
+			base := newBareDir(t)
+			gitInit(t, base)
+			mobile := filepath.Join(base, "mobile")
+			writeTestFile(t, filepath.Join(mobile, "simsquad.toml"), equipIOSOnly)
+			writeTestFile(t, filepath.Join(mobile, "qa", "features", "login.feature"), loginFeature)
+			cwd := filepath.Join(mobile, sub)
+			if err := os.MkdirAll(cwd, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Chdir(cwd)
+
+			got := mustInstall(t)
+
+			if want := filepath.Join(mobile, ".agents", "skills"); got.Dir != want {
+				t.Errorf("dir = %q, want %q", got.Dir, want)
+			}
+			readFile(t, filepath.Join(mobile, ".agents", "skills", "simsquad-test", "SKILL.md"))
+			readFile(t, filepath.Join(mobile, "qa", "README.md"))
+			if !strings.Contains(readFile(t, filepath.Join(mobile, ".gitignore")), ".simsquad/") {
+				t.Error("mobile/.gitignore lacks .simsquad/")
+			}
+			if _, err := os.Stat(filepath.Join(base, ".agents")); !os.IsNotExist(err) {
+				t.Errorf("skills also written at the git toplevel (err=%v)", err)
+			}
+
+			run := mustRunNew(t, filepath.Join(mobile, "qa", "features", "login.feature"))
+			if want := filepath.Join(mobile, ".simsquad", "runs"); filepath.Dir(run.RunDir) != want {
+				t.Errorf("run_dir = %q, want it under %q beside the skills", run.RunDir, want)
+			}
+		})
+	}
+}
+
+func TestSkillInstallWithoutConfigRefusesWithEquipHint(t *testing.T) {
+	dir := newBareDir(t)
+
+	out, err := runSkill(t, "install")
+
+	if err == nil {
+		t.Fatal("skill install without config succeeded; want refusal")
+	}
+	if !strings.Contains(err.Error(), "run `simsquad equip` first") {
+		t.Errorf("error = %v, want the equip hint", err)
+	}
+	if out != "" {
+		t.Errorf("stdout must be empty on refusal, got %s", out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".agents")); !os.IsNotExist(err) {
+		t.Errorf("refused install still wrote .agents/ (err=%v)", err)
 	}
 }

@@ -114,9 +114,10 @@ func TestEquipAcceptingOfferInstallsSkillsExactlyAsSkillInstall(t *testing.T) {
 	refRepo := newAppRepo(t)
 	mustInstall(t)
 	want := tree(t, refRepo)
-	delete(want, ".gitignore") // shared with equip; checked below
+	delete(want, ".gitignore")    // shared with equip; checked below
+	delete(want, "simsquad.toml") // the reference repo's config
 
-	repo := newAppRepo(t)
+	repo := newBareDir(t)
 	yes := true
 	stdout, err := runEquip(t, &yes, "--add-ios-spec", equipSpec)
 	if err != nil {
@@ -149,7 +150,7 @@ func TestEquipAcceptingOfferInstallsSkillsExactlyAsSkillInstall(t *testing.T) {
 }
 
 func TestEquipDecliningOfferWritesNoSkillFiles(t *testing.T) {
-	repo := newAppRepo(t)
+	repo := newBareDir(t)
 	no := false
 	stdout, err := runEquip(t, &no, "--add-ios-spec", equipSpec)
 	if err != nil {
@@ -167,7 +168,7 @@ func TestEquipDecliningOfferWritesNoSkillFiles(t *testing.T) {
 }
 
 func TestEquipInstallSkillsFlagAnswersTheOfferWithoutPrompting(t *testing.T) {
-	newAppRepo(t)
+	newBareDir(t)
 	stdout, err := runEquip(t, nil, "--add-ios-spec", equipSpec, "--install-skills")
 	if err != nil {
 		t.Fatalf("equip: %v", err)
@@ -176,7 +177,7 @@ func TestEquipInstallSkillsFlagAnswersTheOfferWithoutPrompting(t *testing.T) {
 		t.Error("--install-skills did not install")
 	}
 
-	repo := newAppRepo(t)
+	repo := newBareDir(t)
 	stdout, err = runEquip(t, nil, "--add-ios-spec", equipSpec, "--install-skills=false")
 	if err != nil {
 		t.Fatalf("equip: %v", err)
@@ -202,5 +203,30 @@ func TestEquipShowNeverOffersSkills(t *testing.T) {
 	newAppRepo(t)
 	if _, err := runEquip(t, nil, "--show"); err != nil {
 		t.Fatalf("equip --show: %v", err)
+	}
+}
+
+// TestEquipInstallsSkillsAtTheConfigDir: equip creates the config in the
+// current folder, and the skills it offers land beside it, not at the git
+// toplevel above.
+func TestEquipInstallsSkillsAtTheConfigDir(t *testing.T) {
+	base := newBareDir(t)
+	gitInit(t, base)
+	mobile := filepath.Join(base, "mobile")
+	if err := os.MkdirAll(mobile, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(mobile)
+
+	stdout, err := runEquip(t, nil, "--add-ios-spec", equipSpec, "--install-skills")
+	if err != nil {
+		t.Fatalf("equip: %v", err)
+	}
+	got := decodeEquip(t, stdout)
+	if got.Skills == nil || got.Skills.Dir != filepath.Join(mobile, ".agents", "skills") {
+		t.Errorf("skills result = %+v, want dir under %s", got.Skills, mobile)
+	}
+	if _, err := os.Stat(filepath.Join(base, ".agents")); !os.IsNotExist(err) {
+		t.Errorf("skills written at the git toplevel (err=%v)", err)
 	}
 }

@@ -1,12 +1,11 @@
 package cli
 
 import (
-	"os"
-	"strings"
+	"errors"
 
 	"github.com/spf13/cobra"
 
-	"github.com/peuf0u/simsquad/internal/util"
+	"github.com/peuf0u/simsquad/internal/config"
 )
 
 // newSkillCmd assembles the `skill` group: installing the embedded agent
@@ -32,15 +31,14 @@ func skillSubcommands() []*cobra.Command {
 	}
 }
 
-// repoRoot is the app repo the skill commands act on: the enclosing git
-// work tree, or the current directory outside one.
-func repoRoot() string {
-	r, err := util.Run("git", []string{"rev-parse", "--show-toplevel"}, util.RunOpts{})
-	if err == nil && r.Code == 0 {
-		if top := strings.TrimSpace(r.Stdout); top != "" {
-			return top
-		}
-	}
-	wd, _ := os.Getwd()
-	return wd
+// errNoConfig is the refusal of a skill command that needs a skills root
+// but finds no simsquad config to anchor it.
+var errNoConfig = errors.New("no simsquad.toml found; run `simsquad equip` first")
+
+// skillsRoot is the folder the skill commands act on: the config dir (the
+// nearest folder up from the working directory holding simsquad.toml or
+// simsquad.local.toml), the same root `run new` puts runs under and the
+// workers read qa/README.md from. Empty when there is no config.
+func skillsRoot() string {
+	return config.FindConfigDir(".")
 }

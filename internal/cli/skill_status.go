@@ -25,7 +25,8 @@ func newSkillStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Check the installed skills and mobilecli fit this binary",
-		Long: "Compares the skill contract of the skills installed in this app repo with\n" +
+		Long: "Compares the skill contract of the skills installed at the config dir (the\n" +
+			"nearest folder up from here holding simsquad.toml) with\n" +
 			"this binary's, and checks the mobilecli on PATH against the minimum version\n" +
 			"simsquad was tested with (" + mobilecliMinimum + ").\n" +
 			"\n" +
@@ -33,7 +34,8 @@ func newSkillStatusCmd() *cobra.Command {
 			"         mobilecli: {found, version, minimum, meets_minimum}}.\n" +
 			"\n" +
 			"Exit codes: 0 = skills in sync, older, hand-edited or missing files\n" +
-			"(warning: re-run `simsquad skill install`) or not installed; 1 = skills\n" +
+			"(warning: re-run `simsquad skill install`), not installed, or no config\n" +
+			"(warning: run `simsquad equip` first); 1 = skills\n" +
 			"newer than this binary, so a skill\n" +
 			"would call commands it doesn't have. Redirect stdout only (> out.json).",
 		Args: cobra.NoArgs,
@@ -45,11 +47,19 @@ func newSkillStatusCmd() *cobra.Command {
 				}
 				dir = abs
 			}
-			in, err := skills.ReadInstalled(repoRoot(), dir)
-			if err != nil {
-				return fmt.Errorf("skill status: %w", err)
+			var st contract.SkillStatus
+			if root := skillsRoot(); root == "" {
+				// Keep the status shape and exit 0: a missing config is
+				// "not installed" with the way out, not a version clash.
+				st = compareSkills(nil)
+				st.Warning = errNoConfig.Error()
+			} else {
+				in, err := skills.ReadInstalled(root, dir)
+				if err != nil {
+					return fmt.Errorf("skill status: %w", err)
+				}
+				st = compareSkills(in)
 			}
-			st := compareSkills(in)
 			st.Mobilecli = probeMobilecli()
 
 			if err := writeJSON(cmd, st); err != nil {
