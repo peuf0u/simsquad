@@ -597,8 +597,8 @@ func TestDeployKeepsContextSetDuringDeploy(t *testing.T) {
 
 func testClaimOpts() claimOpts {
 	return claimOpts{
-		iosSpecs:     []contract.IosSpec{{Device: testIOSDevice, Runtime: testIOSRuntime, Count: 1}},
-		ctxOverrides: map[string]string{"user": "alice"},
+		iosSpecs: []contract.IosSpec{{Device: testIOSDevice, Runtime: testIOSRuntime, Count: 1}},
+		ctx:      contextInput{context: map[string]string{"user": "alice"}},
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -36,6 +37,7 @@ func newDeployCmd() *cobra.Command {
 		iosSpecs    []string
 		androidSpec []string
 		ctxEntries  []string
+		secrets     []string
 		clearCtx    bool
 		envEntries  []string // deprecated --env
 		clearEnv    bool     // deprecated --clear-env
@@ -77,6 +79,13 @@ func newDeployCmd() *cobra.Command {
 			"0 = all ready, 2 = mixed, 1 = none ready / build failed / bad args.\n" +
 			"A platform whose build failed counts as not ready; its devices stay in\n" +
 			"the squad as error and the next deploy resets them.\n\n" +
+			"--context KEY=VALUE and --secret KEY=VALUE set the squad context. A\n" +
+			"secret (a key from [secrets] or --secret, or any key whose name holds\n" +
+			"password, secret or token) is kept in the squad record and shows as\n" +
+			"\"<secret>\" in every output; `simsquad devices --name NAME --reveal`\n" +
+			"prints the real value. Any --context replaces TOML [context] and any\n" +
+			"--secret replaces TOML [secrets]; each leaves the other alone. A key\n" +
+			"in both is an error.\n\n" +
 			"Spec flags (repeatable):\n" +
 			"  --ios-spec     DEVICE:RUNTIME:COUNT          e.g. 'iPhone 17:iOS 26.4:1'\n" +
 			"  --android-spec DEVICE:IMAGE:COUNT[:TARGET]   e.g. 'pixel_7:system-images;android-34;google_apis;arm64-v8a:1'\n\n" +
@@ -110,6 +119,7 @@ func newDeployCmd() *cobra.Command {
 				iosSpecs:    iosSpecs,
 				androidSpec: androidSpec,
 				ctxEntries:  ctxEntries,
+				secrets:     secrets,
 				clearCtx:    clearCtx,
 				platforms:   platforms,
 			})
@@ -130,7 +140,8 @@ func newDeployCmd() *cobra.Command {
 	cmd.Flags().StringVar(&deviceSet, "device-set", "", "deploy this named device set ([device_sets.NAME] in simsquad.toml) instead of the default matrix; the squad remembers it")
 	cmd.Flags().StringArrayVar(&platforms, "platform", nil, "deploy only this equipped platform, repeatable: 'ios' or 'android' (default: every equipped platform)")
 	cmd.Flags().StringArrayVar(&ctxEntries, "context", nil, "squad context entry, repeatable: 'KEY=VALUE' (any --context replaces TOML [context] entirely)")
-	cmd.Flags().BoolVar(&clearCtx, "clear-context", false, "on reuse: wipe the squad's existing context before applying --context / TOML")
+	cmd.Flags().StringArrayVar(&secrets, "secret", nil, "secret context entry, repeatable: 'KEY=VALUE', shown as \"<secret>\" in every output (any --secret replaces TOML [secrets] entirely)")
+	cmd.Flags().BoolVar(&clearCtx, "clear-context", false, "on reuse: wipe the squad's existing context, secrets included, before applying --context / --secret / TOML")
 	// Pre-0.5.0 names, kept for one release.
 	cmd.Flags().StringArrayVar(&envEntries, "env", nil, "deprecated: use --context")
 	cmd.Flags().BoolVar(&clearEnv, "clear-env", false, "deprecated: use --clear-context")
@@ -156,6 +167,7 @@ type deployOpts struct {
 	iosSpecs    []string
 	androidSpec []string
 	ctxEntries  []string
+	secrets     []string
 	clearCtx    bool
 	platforms   []string
 }
@@ -249,13 +261,24 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		return errors.New("deploy: no platform configured. Set ios.sims or android.sims in simsquad.toml or pass --ios-spec/--android-spec")
 	}
 
-	ctxOverrides, err := parseContextEntries(opts.ctxEntries)
+	ctxFlags, err := parseContextEntries("--context", opts.ctxEntries)
+	if err != nil {
+		return err
+	}
+	secretFlags, err := parseContextEntries("--secret", opts.secrets)
 	if err != nil {
 		return err
 	}
 	tomlCtx, legacyEnv := cfg.Context()
-	if legacyEnv && len(ctxOverrides) == 0 {
+	if legacyEnv && len(ctxFlags) == 0 {
 		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), config.LegacyEnvWarning)
+	}
+	if keys := cfg.CommittedSecretKeys(); len(keys) > 0 && len(secretFlags) == 0 {
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), config.CommittedSecretsWarning(keys))
+	}
+	ctxIn, err := resolveContextInput(opts.clearCtx, tomlCtx, ctxFlags, cfg.Secrets(), secretFlags)
+	if err != nil {
+		return err
 	}
 
 	logger := progress.New()
@@ -278,9 +301,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		deviceSet:    deviceSet,
 		iosSpecs:     deployedIosSpecs,
 		androidSpecs: deployedAndroidSpecs,
-		clearCtx:     opts.clearCtx,
-		tomlCtx:      tomlCtx,
-		ctxOverrides: ctxOverrides,
+		ctx:          ctxIn,
 		iosRepo:      iosRepo,
 		androidRepo:  androidRepo,
 	}
@@ -541,9 +562,7 @@ type claimOpts struct {
 	deviceSet    string
 	iosSpecs     []contract.IosSpec
 	androidSpecs []contract.AndroidSpec
-	clearCtx     bool
-	tomlCtx      map[string]string
-	ctxOverrides map[string]string
+	ctx          contextInput
 	iosRepo      string
 	androidRepo  string
 }
@@ -585,17 +604,9 @@ func claimSquad(name string, o claimOpts) (squadClaim, error) {
 				return fmt.Errorf("deploy: squad %q is not reusable with the requested %s matrix/status; run `simsquad dismiss --name %s` first", name, p, name)
 			}
 			c = squadClaim{rec: existing, plan: plan, devices: existing.Devices}
-			// --clear-context wipes first. Then context layers on top — CLI
-			// flags if any are present (TOML ignored), otherwise TOML. Either
-			// way the *source* overrides matching keys in the existing
-			// context; non-matched existing keys are preserved (so "rotate
-			// one cred" stays cheap). Saved now so the final merge, which
-			// keeps context from disk, carries it along with any set-context
-			// made during the deploy.
-			if o.clearCtx {
-				existing.Context = nil
-			}
-			existing.Context = applyContextSource(existing.Context, o.tomlCtx, o.ctxOverrides)
+			// Saved now so the final merge, which keeps context from disk,
+			// carries it along with any set-context made during the deploy.
+			o.ctx.applyTo(existing)
 			if o.deviceSet != "" {
 				existing.DeviceSet = o.deviceSet
 			}
@@ -610,9 +621,9 @@ func claimSquad(name string, o claimOpts) (squadClaim, error) {
 			CreatedAt: util.NowISO(),
 			DeviceSet: o.deviceSet,
 			Devices:   []contract.Device{},
-			Context:   applyContextSource(nil, o.tomlCtx, o.ctxOverrides),
 			Ports:     map[string]int{},
 		}
+		o.ctx.applyTo(rec)
 		o.markClaim(rec)
 		if err := state.SaveRecord(rec); err != nil {
 			return fmt.Errorf("deploy: initial save: %w", err)
@@ -1160,59 +1171,90 @@ func resolveAndroidSpecs(cfg *config.Config, cliSpecs []string, cliSpecMode bool
 	return out, nil
 }
 
-// parseContextEntries parses `--context KEY=VALUE` flags into a string map. Empty
-// keys, missing `=`, or duplicate keys are rejected so misconfigured calls
-// fail fast with a clear message rather than silently dropping data.
-func parseContextEntries(entries []string) (map[string]string, error) {
+// parseContextEntries parses repeatable `KEY=VALUE` flags (--context,
+// --secret) into a string map. Empty keys, a missing `=`, or duplicate keys
+// are rejected so misconfigured calls fail fast rather than silently
+// dropping data. Errors name the key or the entry's position, never the
+// entry: without its `=` the whole entry may be a secret value.
+func parseContextEntries(flag string, entries []string) (map[string]string, error) {
 	if len(entries) == 0 {
 		return nil, nil
 	}
 	out := make(map[string]string, len(entries))
-	for _, raw := range entries {
-		idx := strings.Index(raw, "=")
-		if idx <= 0 {
-			return nil, fmt.Errorf("deploy: --context %q: expected KEY=VALUE", raw)
-		}
-		key := strings.TrimSpace(raw[:idx])
-		value := raw[idx+1:]
-		if key == "" {
-			return nil, fmt.Errorf("deploy: --context %q: key must be non-empty", raw)
+	for i, raw := range entries {
+		key, value, err := splitContextEntry(flag, i, raw)
+		if err != nil {
+			return nil, fmt.Errorf("deploy: %w", err)
 		}
 		if _, dup := out[key]; dup {
-			return nil, fmt.Errorf("deploy: --context %q: duplicate key", key)
+			return nil, fmt.Errorf("deploy: %s: duplicate key %q", flag, key)
 		}
 		out[key] = value
 	}
 	return out, nil
 }
 
-// applyContextSource resolves the context for a deploy. CLI flags and TOML
-// [context] are mutually exclusive sources — if any --context flag is passed,
-// the TOML layer is ignored entirely (mirrors how --ios-spec/--android-spec
-// replace the TOML matrix). Whichever source applies then overlays the base
-// context (the existing squad's context on reuse, or nil on a new deploy).
-//
-// Returns nil when the result is empty so callers don't carry an empty map
-// through omitempty serialisation.
-func applyContextSource(base, toml, overrides map[string]string) map[string]string {
-	source := toml
-	if len(overrides) > 0 {
-		source = overrides
+// splitContextEntry splits the i-th (0-based) KEY=VALUE entry of flag.
+// Shared by deploy and set-context; its errors never contain the entry.
+func splitContextEntry(flag string, i int, raw string) (key, value string, err error) {
+	idx := strings.Index(raw, "=")
+	if idx < 0 {
+		return "", "", fmt.Errorf("%s entry %d is malformed: expected KEY=VALUE", flag, i+1)
 	}
-	if len(base) == 0 && len(source) == 0 {
-		return nil
+	key = strings.TrimSpace(raw[:idx])
+	if key == "" {
+		return "", "", fmt.Errorf("%s entry %d is malformed: the key before '=' is empty", flag, i+1)
 	}
-	out := make(map[string]string, len(base)+len(source))
-	for k, v := range base {
-		out[k] = v
+	return key, raw[idx+1:], nil
+}
+
+// contextInput is the context one deploy applies to its squad. [context] and
+// [secrets] are separate sources: each comes from its flags when any is
+// given (the TOML table is then ignored entirely, as spec flags replace the
+// TOML matrix), else from its TOML table.
+type contextInput struct {
+	clear   bool // --clear-context: wipe the squad's context first
+	context map[string]string
+	secrets map[string]string
+}
+
+// resolveContextInput picks each source and rejects a key that both carry:
+// it would be ambiguous whether the key is a secret.
+func resolveContextInput(clear bool, tomlCtx, ctxFlags, tomlSecrets, secretFlags map[string]string) (contextInput, error) {
+	in := contextInput{clear: clear, context: tomlCtx, secrets: tomlSecrets}
+	if len(ctxFlags) > 0 {
+		in.context = ctxFlags
 	}
-	for k, v := range source {
-		out[k] = v
+	if len(secretFlags) > 0 {
+		in.secrets = secretFlags
 	}
-	if len(out) == 0 {
-		return nil
+	keys := make([]string, 0, len(in.secrets))
+	for k := range in.secrets {
+		if _, ok := in.context[k]; ok {
+			keys = append(keys, k)
+		}
 	}
-	return out
+	if len(keys) > 0 {
+		sort.Strings(keys)
+		return contextInput{}, fmt.Errorf("deploy: context key %q is set both as context and as a secret; keep it in one of [context]/--context and [secrets]/--secret", keys[0])
+	}
+	return in, nil
+}
+
+// applyTo layers the input over rec's context: --clear-context wipes first,
+// then each source overrides matching keys while keys it doesn't name are
+// kept (so rotating one credential stays cheap). Keys from the secrets
+// source are marked secret; a key that already was one stays one.
+func (in contextInput) applyTo(rec *contract.SquadRecord) {
+	if in.clear {
+		rec.ClearContext()
+	}
+	for k, v := range in.context {
+		rec.SetContext(k, v, false)
+	}
+	for k, v := range in.secrets {
+		rec.SetContext(k, v, true)
+	}
 }
 
 // parseIosSpec accepts the canonical `DEVICE:RUNTIME:COUNT` form. iOS device

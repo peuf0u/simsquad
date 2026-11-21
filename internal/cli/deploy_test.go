@@ -212,7 +212,7 @@ func TestParseContextEntries(t *testing.T) {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := parseContextEntries(c.in)
+			got, err := parseContextEntries("--context", c.in)
 			if c.wantErr {
 				if err == nil {
 					t.Fatalf("parseContextEntries(%v) succeeded with %v, want error", c.in, got)
@@ -229,7 +229,7 @@ func TestParseContextEntries(t *testing.T) {
 	}
 }
 
-func TestApplyContextSource(t *testing.T) {
+func TestContextInputApplyTo(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -268,9 +268,14 @@ func TestApplyContextSource(t *testing.T) {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			got := applyContextSource(c.base, c.toml, c.overrides)
-			if !reflect.DeepEqual(got, c.want) {
-				t.Fatalf("applyContextSource = %v, want %v", got, c.want)
+			in, err := resolveContextInput(false, c.toml, c.overrides, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := contract.SquadRecord{Context: c.base}
+			in.applyTo(&rec)
+			if !reflect.DeepEqual(rec.Context, c.want) || rec.SecretKeys != nil {
+				t.Fatalf("context = %v secret keys %v, want %v and none", rec.Context, rec.SecretKeys, c.want)
 			}
 		})
 	}
