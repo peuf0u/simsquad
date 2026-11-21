@@ -215,8 +215,20 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 
 	squadName := canonName(opts.name)
 
+	// The matrix of each platform in this deploy; nil for a platform left out,
+	// so the reuse decision never looks at it.
+	var deployedIosSpecs []contract.IosSpec
+	var deployedAndroidSpecs []contract.AndroidSpec
+	if hasIos {
+		deployedIosSpecs = iosSpecs
+	}
+	if hasAndroid {
+		deployedAndroidSpecs = androidSpecs
+	}
+
 	reused := false
 	createdThisRun := false
+	var iosAction, androidAction platformAction
 	var existingIOS []contract.Device
 	var existingAndroid []contract.Device
 	var rec *contract.SquadRecord
@@ -233,38 +245,52 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		if existing == nil {
 			return fmt.Errorf("deploy: squad %q exists in registry but has no state file; run `simsquad dismiss --name %s` first", squadName, squadName)
 		}
+		plan := planDeploy(*existing, deployedIosSpecs, deployedAndroidSpecs)
 		switch {
-		case specMatches(*existing, iosSpecs, androidSpecs):
-			// Reuse path: --clear-context wipes first. Then context layers on
-			// top — CLI flags if any are present (TOML ignored), otherwise TOML.
-			// Either way the *source* overrides matching keys in the existing
-			// context; non-matched existing keys are preserved (so "rotate one
-			// cred" stays cheap).
+		case plan.refused() != "":
+			// A working platform on a different matrix — refuse to clobber it.
+			return fmt.Errorf("deploy: squad %q is not reusable with the requested %s matrix/status; run `simsquad dismiss --name %s` first", squadName, plan.refused(), squadName)
+		case plan.wholeReset:
+			// Nothing in the squad is ready or matching — e.g. a previous
+			// deploy failed at build. Reset it instead of forcing a manual
+			// dismiss in the build-debug retry loop. rec stays nil so the
+			// create branch below rebuilds it.
+			logger.Info("deploy: reset-empty", progress.F("name", existing.Name))
+			if terr := deployVia.teardownSquad(existing.Name, logger); terr != nil {
+				logger.Warn("deploy: reset-empty", progress.F("error", terr.Error()))
+			}
+		default:
+			// --clear-context wipes first. Then context layers on top — CLI
+			// flags if any are present (TOML ignored), otherwise TOML. Either
+			// way the *source* overrides matching keys in the existing
+			// context; non-matched existing keys are preserved (so "rotate
+			// one cred" stays cheap).
 			if opts.clearCtx {
 				existing.Context = nil
 			}
 			existing.Context = applyContextSource(existing.Context, tomlCtx, ctxOverrides)
-			reused = true
 			rec = existing
-			for _, dev := range existing.Devices {
-				switch dev.Platform {
-				case contract.PlatformIOS:
-					existingIOS = append(existingIOS, dev)
-				case contract.PlatformAndroid:
-					existingAndroid = append(existingAndroid, dev)
-				}
+			iosAction, androidAction = plan.ios, plan.android
+			reused = plan.allReused()
+			iosDevs, androidDevs := splitByPlatform(existing.Devices)
+			switch iosAction {
+			case actionReuse:
+				existingIOS = iosDevs
+			case actionReset:
+				logger.Info("deploy: reset-platform", progress.F("name", rec.Name), progress.F("platform", "ios"))
+				deployVia.teardownDevices(iosDevs, logger)
+				rec.Devices = withoutPlatform(rec.Devices, contract.PlatformIOS)
 			}
-			logger.Info("deploy: reuse", progress.F("name", rec.Name))
-		case hasReadyDevice(*existing):
-			// A working squad on a different matrix — refuse to clobber it.
-			return fmt.Errorf("deploy: squad %q is not reusable with the requested matrix/status; run `simsquad dismiss --name %s` first", squadName, squadName)
-		default:
-			// No ready devices — e.g. a previous deploy failed at build. Reset
-			// it instead of forcing a manual dismiss in the build-debug retry
-			// loop. rec stays nil so the create branch below rebuilds it.
-			logger.Info("deploy: reset-empty", progress.F("name", existing.Name))
-			if terr := deployVia.teardownSquad(existing.Name, logger); terr != nil {
-				logger.Warn("deploy: reset-empty", progress.F("error", terr.Error()))
+			switch androidAction {
+			case actionReuse:
+				existingAndroid = androidDevs
+			case actionReset:
+				logger.Info("deploy: reset-platform", progress.F("name", rec.Name), progress.F("platform", "android"))
+				deployVia.teardownDevices(androidDevs, logger)
+				rec.Devices = withoutPlatform(rec.Devices, contract.PlatformAndroid)
+			}
+			if reused {
+				logger.Info("deploy: reuse", progress.F("name", rec.Name))
 			}
 		}
 	}
@@ -361,7 +387,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 			iosBuild.AppPath = res.AppPath
 			iosBuild.BundleID = res.BundleID
 			iosBuild.GitSHA = res.GitSHA
-			iosBuild.Reused = res.Reused || reused
+			iosBuild.Reused = res.Reused || iosAction == actionReuse
 			return nil
 		})
 	}
@@ -391,7 +417,7 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 			androidBuild.APKPath = res.APKPath
 			androidBuild.BundleID = res.BundleID
 			androidBuild.GitSHA = res.GitSHA
-			androidBuild.Reused = res.Reused || reused
+			androidBuild.Reused = res.Reused || androidAction == actionReuse
 			return nil
 		})
 	}
@@ -493,6 +519,107 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 	return nil
 }
 
+// platformAction is what a deploy does with one of its platforms on an
+// existing squad. A platform outside the deploy has no action: no build, boot
+// or install, and its devices stay as they are.
+type platformAction string
+
+const (
+	actionAdd    platformAction = "add"    // squad has none of its devices: provision and add them
+	actionReuse  platformAction = "reuse"  // devices match the matrix: reinstall on them
+	actionReset  platformAction = "reset"  // mismatch and nothing ready: tear down, provision fresh
+	actionRefuse platformAction = "refuse" // mismatch with a ready device: don't clobber it
+)
+
+// deployPlan is the per-platform reuse decision for a deploy onto an existing
+// squad. wholeReset is set when every device the squad holds sits on a
+// resetting platform: the squad is then torn down and created fresh (new
+// created_at, context from this deploy only), which is what a full-matrix
+// mismatch with nothing ready did before reuse was decided per platform.
+type deployPlan struct {
+	ios, android platformAction
+	wholeReset   bool
+}
+
+// refused names the first platform the plan refuses, or "" when it refuses
+// none.
+func (p deployPlan) refused() string {
+	switch {
+	case p.ios == actionRefuse:
+		return "iOS"
+	case p.android == actionRefuse:
+		return "Android"
+	}
+	return ""
+}
+
+// allReused reports whether every platform in the deploy reuses its devices,
+// i.e. this deploy created no device. It feeds SquadPublic.Reused.
+func (p deployPlan) allReused() bool {
+	return (p.ios == "" || p.ios == actionReuse) && (p.android == "" || p.android == actionReuse) &&
+		(p.ios != "" || p.android != "")
+}
+
+// planDeploy decides, for each platform with a non-empty matrix, what the
+// deploy does with that platform's devices in rec. Pass a nil matrix for a
+// platform outside the deploy.
+func planDeploy(rec contract.SquadRecord, iosSpecs []contract.IosSpec, androidSpecs []contract.AndroidSpec) deployPlan {
+	iosDevs, androidDevs := splitByPlatform(rec.Devices)
+	var p deployPlan
+	if len(iosSpecs) > 0 {
+		p.ios = decidePlatform(iosDevs, iosSpecsMatch(iosDevs, iosSpecs))
+	}
+	if len(androidSpecs) > 0 {
+		p.android = decidePlatform(androidDevs, androidSpecsMatch(androidDevs, androidSpecs))
+	}
+	if p.refused() != "" || (p.ios != actionReset && p.android != actionReset) {
+		return p
+	}
+	for _, d := range rec.Devices {
+		if (d.Platform == contract.PlatformIOS && p.ios != actionReset) ||
+			(d.Platform == contract.PlatformAndroid && p.android != actionReset) {
+			return p
+		}
+	}
+	p.wholeReset = true
+	return p
+}
+
+func decidePlatform(devs []contract.Device, matches bool) platformAction {
+	switch {
+	case len(devs) == 0:
+		return actionAdd
+	case matches:
+		return actionReuse
+	case hasReadyDevice(contract.SquadRecord{Devices: devs}):
+		return actionRefuse
+	default:
+		return actionReset
+	}
+}
+
+func splitByPlatform(devs []contract.Device) (iosDevs, androidDevs []contract.Device) {
+	for _, d := range devs {
+		switch d.Platform {
+		case contract.PlatformIOS:
+			iosDevs = append(iosDevs, d)
+		case contract.PlatformAndroid:
+			androidDevs = append(androidDevs, d)
+		}
+	}
+	return iosDevs, androidDevs
+}
+
+func withoutPlatform(devs []contract.Device, platform contract.Platform) []contract.Device {
+	out := make([]contract.Device, 0, len(devs))
+	for _, d := range devs {
+		if d.Platform != platform {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
 // platformEquipment is what deploy resolved for one platform: the repo to
 // build and how many matrix rows simsquad.toml lists for it.
 type platformEquipment struct {
@@ -580,12 +707,19 @@ func androidSlotCount(specs []contract.AndroidSpec) int {
 	return n
 }
 
+// specMatches reports whether the squad's devices on both platforms match the
+// requested matrices exactly. Deploy decides per platform (planDeploy); this
+// whole-squad form is the two per-platform comparisons together.
 func specMatches(record contract.SquadRecord, iosSpecs []contract.IosSpec, androidSpecs []contract.AndroidSpec) bool {
+	iosDevs, androidDevs := splitByPlatform(record.Devices)
+	return iosSpecsMatch(iosDevs, iosSpecs) && androidSpecsMatch(androidDevs, androidSpecs)
+}
+
+// iosSpecsMatch reports whether devs (one platform's devices) are all ready
+// and form exactly the requested device-type × runtime multiset.
+func iosSpecsMatch(devs []contract.Device, iosSpecs []contract.IosSpec) bool {
 	haveIOS := map[[2]string]int{}
-	for _, dev := range record.Devices {
-		if dev.Platform != contract.PlatformIOS {
-			continue
-		}
+	for _, dev := range devs {
 		if dev.Status != contract.StatusReady || dev.UDID == "" {
 			return false
 		}
@@ -595,15 +729,14 @@ func specMatches(record contract.SquadRecord, iosSpecs []contract.IosSpec, andro
 	for _, spec := range iosSpecs {
 		wantIOS[[2]string{spec.Device, spec.Runtime}] += spec.Count
 	}
-	if !reflectString2IntMaps(haveIOS, wantIOS) {
-		return false
-	}
+	return reflectString2IntMaps(haveIOS, wantIOS)
+}
 
+// androidSpecsMatch is iosSpecsMatch for Android: emulators compare by
+// profile and image, physical devices by count only.
+func androidSpecsMatch(devs []contract.Device, androidSpecs []contract.AndroidSpec) bool {
 	haveAndroid := map[[3]string]int{}
-	for _, dev := range record.Devices {
-		if dev.Platform != contract.PlatformAndroid {
-			continue
-		}
+	for _, dev := range devs {
 		if dev.Status != contract.StatusReady || dev.UDID == "" {
 			return false
 		}

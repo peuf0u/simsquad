@@ -532,3 +532,74 @@ func TestHasReadyDevice(t *testing.T) {
 		})
 	}
 }
+
+// TestPlanDeploy is the per-platform reuse table: for each platform in the
+// deploy, no devices → add, matching devices → reuse, mismatch with nothing
+// ready → reset, mismatch with a ready device → refuse. A platform outside
+// the deploy gets no action. When every device the squad holds sits on a
+// resetting platform, the whole squad resets, as before per-platform reuse.
+func TestPlanDeploy(t *testing.T) {
+	t.Parallel()
+
+	iosWant := []contract.IosSpec{{Device: "iPhone 17", Runtime: "iOS 26.4", Count: 1}}
+	andWant := []contract.AndroidSpec{{
+		Device: "pixel_7", Image: "system-images;android-34;google_apis;arm64-v8a",
+		Count: 1, Target: contract.TargetEmulator,
+	}}
+	iosReady := contract.Device{Platform: contract.PlatformIOS, UDID: "ios-1", Status: contract.StatusReady,
+		DeviceType: "iPhone 17", Runtime: "iOS 26.4"}
+	iosOtherReady := iosReady
+	iosOtherReady.DeviceType = "iPhone 16"
+	iosOtherBroken := iosOtherReady
+	iosOtherBroken.Status = contract.StatusError
+	iosBroken := iosReady
+	iosBroken.Status = contract.StatusError
+	andReady := contract.Device{Platform: contract.PlatformAndroid, UDID: "emulator-5554", Status: contract.StatusReady,
+		DeviceProfile: "pixel_7", SystemImage: "system-images;android-34;google_apis;arm64-v8a"}
+	andOtherReady := andReady
+	andOtherReady.SystemImage = "system-images;android-33;google_apis;arm64-v8a"
+	andOtherBroken := andOtherReady
+	andOtherBroken.Status = contract.StatusError
+
+	cases := []struct {
+		name    string
+		devs    []contract.Device
+		ios     []contract.IosSpec
+		android []contract.AndroidSpec
+		want    deployPlan
+	}{
+		{"no devices of the platform → add", []contract.Device{andReady}, iosWant, nil,
+			deployPlan{ios: actionAdd}},
+		{"empty squad, both platforms → add both", nil, iosWant, andWant,
+			deployPlan{ios: actionAdd, android: actionAdd}},
+		{"matching devices → reuse", []contract.Device{iosReady, andReady}, iosWant, andWant,
+			deployPlan{ios: actionReuse, android: actionReuse}},
+		{"matching platform reused, other platform untouched", []contract.Device{iosReady, andOtherReady}, iosWant, nil,
+			deployPlan{ios: actionReuse}},
+		{"mismatch, nothing ready → reset (other platform keeps the squad)", []contract.Device{iosReady, andOtherBroken}, iosWant, andWant,
+			deployPlan{ios: actionReuse, android: actionReset}},
+		{"matching but broken device → reset", []contract.Device{iosBroken, andReady}, iosWant, nil,
+			deployPlan{ios: actionReset}},
+		{"mismatch with a ready device → refuse", []contract.Device{iosOtherReady, andReady}, iosWant, andWant,
+			deployPlan{ios: actionRefuse, android: actionReuse}},
+		{"refuse even when the other platform resets", []contract.Device{iosOtherReady, andOtherBroken}, iosWant, andWant,
+			deployPlan{ios: actionRefuse, android: actionReset}},
+		{"every device on resetting platforms → whole reset", []contract.Device{iosOtherBroken, andOtherBroken}, iosWant, andWant,
+			deployPlan{ios: actionReset, android: actionReset, wholeReset: true}},
+		{"reset plus an added platform → whole reset", []contract.Device{iosOtherBroken}, iosWant, andWant,
+			deployPlan{ios: actionReset, android: actionAdd, wholeReset: true}},
+		{"only platform resets, its devices are all the squad has → whole reset", []contract.Device{iosOtherBroken}, iosWant, nil,
+			deployPlan{ios: actionReset, wholeReset: true}},
+		{"untouched platform's devices keep the squad", []contract.Device{iosOtherBroken, andOtherBroken}, iosWant, nil,
+			deployPlan{ios: actionReset}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			got := planDeploy(contract.SquadRecord{Devices: c.devs}, c.ios, c.android)
+			if got != c.want {
+				t.Fatalf("planDeploy() = %+v, want %+v", got, c.want)
+			}
+		})
+	}
+}
