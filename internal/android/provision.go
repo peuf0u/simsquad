@@ -1,6 +1,7 @@
 package android
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -203,10 +204,13 @@ func reprovisionExistingOne(existing contract.Device, in ProvisionInput) contrac
 		// user's own, say) can hold it, and reuse must neither kill nor
 		// install on it. Booting the squad's AVD instead would hit the busy
 		// port, so the device fails with the reason.
-		if running := runningAVDName(dev.UDID); running != avdNameOf(dev) {
-			if running == "" {
-				running = "AVD name unknown"
-			}
+		running, err := runningAVDName(dev.UDID)
+		if err != nil {
+			dev.ErrorMessage = fmt.Sprintf("reuse: could not read the AVD name of the emulator on %s (%s)",
+				portLabel(dev), err.Error())
+			return dev
+		}
+		if running != avdNameOf(dev) {
 			dev.ErrorMessage = fmt.Sprintf("reuse: %s is held by another emulator (%s), not %s",
 				portLabel(dev), running, avdNameOf(dev))
 			return dev
@@ -305,19 +309,45 @@ func portLabel(dev contract.Device) string {
 	return dev.UDID
 }
 
+// The emulator console behind `adb emu avd name` can miss a query under
+// load, so reuse asks a few times before giving up on a working emulator.
+// avdNameRetryDelay is a variable so fake-SDK tests skip the wait.
+const avdNameAttempts = 3
+
+var avdNameRetryDelay = time.Second
+
 // runningAVDName asks the emulator on serial which AVD it runs (`adb emu
-// avd name` prints the name, then OK). Empty when it can't tell.
-func runningAVDName(serial string) string {
+// avd name` prints the name, then OK), retrying an empty or failed answer.
+// The error carries adb's own message from the last attempt.
+func runningAVDName(serial string) (string, error) {
 	adb, err := ADB()
 	if err != nil {
-		return ""
+		return "", err
 	}
-	r, err := util.Run(adb, []string{"-s", serial, "emu", "avd", "name"}, util.RunOpts{Timeout: 5 * time.Second})
-	if err != nil || r.Code != 0 {
-		return ""
+	var lastErr error
+	for attempt := 1; attempt <= avdNameAttempts; attempt++ {
+		if attempt > 1 {
+			time.Sleep(avdNameRetryDelay)
+		}
+		r, err := util.Run(adb, []string{"-s", serial, "emu", "avd", "name"}, util.RunOpts{Timeout: 5 * time.Second})
+		first, _, _ := strings.Cut(r.Stdout, "\n")
+		name := strings.TrimSpace(first)
+		switch {
+		case err != nil:
+			lastErr = err
+		case r.Code != 0:
+			msg := strings.TrimSpace(r.Stderr + r.Stdout)
+			if msg == "" {
+				msg = fmt.Sprintf("adb emu avd name exited %d", r.Code)
+			}
+			lastErr = errors.New(msg)
+		case name == "":
+			lastErr = errors.New("adb emu avd name printed no name")
+		default:
+			return name, nil
+		}
 	}
-	first, _, _ := strings.Cut(r.Stdout, "\n")
-	return strings.TrimSpace(first)
+	return "", lastErr
 }
 
 // stopEmulator asks a running emulator to exit and waits until it has, so

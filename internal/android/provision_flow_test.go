@@ -27,6 +27,8 @@ const flowAVD = "simsquad-x-android-0"
 //     gone; `adb emu kill` removes it.
 //   - offline: adbd doesn't answer `shell true` although the emulator runs.
 //   - avdname: the AVD the emulator on the port runs (default flowAVD).
+//   - noname: `adb emu avd name` fails although the emulator runs; every
+//     query appends a line to namecalls.
 //   - noboot: a started emulator never comes up and wait-for-device fails.
 //   - exitearly: a started emulator exits at once (its AVD is locked).
 //
@@ -84,9 +86,9 @@ func newFakeSDK(t *testing.T, running bool, config string) fakeSDK {
 	t.Setenv("ANDROID_HOME", sdk)
 	t.Setenv("ANDROID_AVD_HOME", avdHome)
 	t.Setenv("PATH", t.TempDir()+":/bin:/usr/bin")
-	oldSettle := emulatorSettleAfterBoot
-	t.Cleanup(func() { emulatorSettleAfterBoot = oldSettle })
-	emulatorSettleAfterBoot = 0
+	oldSettle, oldRetry := emulatorSettleAfterBoot, avdNameRetryDelay
+	t.Cleanup(func() { emulatorSettleAfterBoot, avdNameRetryDelay = oldSettle, oldRetry })
+	emulatorSettleAfterBoot, avdNameRetryDelay = 0, 0
 
 	dir := t.TempDir()
 	t.Setenv(fakeEmulatorEnv, dir)
@@ -115,7 +117,9 @@ case "$*" in
   "shell true") [ -e $d/up ] && [ ! -e $d/offline ] ;;
   "emu kill") echo "adb emu kill" >> $d/log; rm -f $d/up $d/offline ;;
   "emu avd name")
+    echo x >> $d/namecalls
     [ -e $d/up ] || exit 1
+    if [ -e $d/noname ]; then echo 'error: could not connect to TCP port 5557' >&2; exit 1; fi
     name=`+flowAVD+`; [ -e $d/avdname ] && name=$(cat $d/avdname)
     printf '%s\r\nOK\r\n' "$name" ;;
   wait-for-device)
@@ -424,5 +428,34 @@ func TestReuseRestartBootFailureKillsTheStartedEmulator(t *testing.T) {
 	started := f.lastPID(t)
 	if err := syscall.Kill(started, 0); !errors.Is(err, syscall.ESRCH) {
 		t.Fatalf("started emulator %d still exists (kill -0: %v), want it killed and reaped", started, err)
+	}
+}
+
+// Review #33 round 2: an AVD name that can't be read is not proof of another
+// emulator. Reuse retries the query, then fails safe (no kill, boot or
+// install) with its own reason rather than "held by another emulator".
+func TestReuseFailsSafeWhenTheAVDNameCannotBeRead(t *testing.T) {
+	f := newFakeSDK(t, true, "hw.keyboard=no\n")
+	f.touch(t, "noname")
+
+	dev := reprovisionExistingOne(reusedEmulator(false), ProvisionInput{
+		APKPath: "/app.apk", BundleID: "com.example", PreserveData: true, Window: true,
+	})
+	want := "reuse: could not read the AVD name of the emulator on port 5556 (error: could not connect to TCP port 5557)"
+	if dev.Status != contract.StatusError || dev.ErrorMessage != want {
+		t.Fatalf("status = %s (%q), want error %q", dev.Status, dev.ErrorMessage, want)
+	}
+	if got := f.calls(t); got != "" {
+		t.Fatalf("calls =\n%s\nwant none: no kill, boot or install", got)
+	}
+	if _, err := os.Stat(f.up); err != nil {
+		t.Fatal("the emulator was stopped")
+	}
+	b, err := os.ReadFile(filepath.Join(f.dir, "namecalls"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(b), "\n"); n != avdNameAttempts {
+		t.Fatalf("emu avd name ran %d times, want %d", n, avdNameAttempts)
 	}
 }
