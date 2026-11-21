@@ -907,10 +907,7 @@ func (m *editorModel) applyInput() error {
 		if i < 0 {
 			return errors.New("selected device set no longer exists")
 		}
-		sets := append([]deviceSet{}, m.state.deviceSets...)
-		sets[i].name = name
-		sortDeviceSets(sets)
-		m.state.deviceSets = sets
+		m.state.deviceSets = renameDeviceSet(m.state.deviceSets, i, name)
 		m.activeSet = name
 	case actionAddPhysical:
 		count, err := positiveInt(m.fields[0].value)
@@ -1011,7 +1008,7 @@ func (m editorModel) updateConfirm(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch m.confirmKind {
 		case actionDeleteSet:
 			if i := findDeviceSet(m.state.deviceSets, m.activeSet); i >= 0 {
-				m.state.deviceSets = append(append([]deviceSet{}, m.state.deviceSets[:i]...), m.state.deviceSets[i+1:]...)
+				m.state.deviceSets = deleteDeviceSet(m.state.deviceSets, i)
 				m.dirty = true
 				m.message = "deleted device set " + m.activeSet
 			}
@@ -1254,7 +1251,7 @@ func (m editorModel) summaryView(width int) string {
 	b.WriteString(projectRow("iOS scheme", m.state.iosScheme, width) + "\n")
 	b.WriteString(projectRow("Gradle task", m.state.gradleTask, width) + "\n\n")
 	b.WriteString(sectionTitle("iOS matrix") + "\n")
-	if len((*m.iosTarget())) == 0 {
+	if len(m.state.iosSpecs) == 0 {
 		b.WriteString("  " + editorDimStyle.Render("No iOS simulators configured") + "\n")
 	} else {
 		b.WriteString(matrixHeader(width) + "\n")
@@ -1263,7 +1260,7 @@ func (m editorModel) summaryView(width int) string {
 		b.WriteString(iosMatrixRow(i+1, spec, width) + "\n")
 	}
 	b.WriteString("\n" + sectionTitle("Android matrix") + "\n")
-	if len((*m.androidTarget())) == 0 {
+	if len(m.state.androidSpec) == 0 {
 		b.WriteString("  " + editorDimStyle.Render("No Android targets configured") + "\n")
 	} else {
 		b.WriteString(matrixHeader(width) + "\n")

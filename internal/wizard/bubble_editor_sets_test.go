@@ -1,11 +1,13 @@
 package wizard
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/peuf0u/simsquad/internal/config"
 	"github.com/peuf0u/simsquad/internal/contract"
 )
 
@@ -190,5 +192,114 @@ func TestBubbleEditorSummaryShowsDeviceSets(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
+	}
+}
+
+// localOverShared is a config whose local tablet replaces the shared tablet.
+func localOverShared(t *testing.T) (string, wizardState) {
+	t.Helper()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, config.ProjectFile), handWrittenSharedSets)
+	writeFile(t, filepath.Join(dir, config.LocalFile), handWrittenLocalSets)
+	state, err := loadState(dir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir, state
+}
+
+func openSet(t *testing.T, m editorModel, name string) editorModel {
+	t.Helper()
+	m = press(t, m, "enter") // Device sets…
+	for i, item := range m.currentMenuItems() {
+		if item.set == name {
+			m.cursor = i
+		}
+	}
+	m = press(t, m, "enter")
+	if m.activeSet != name {
+		t.Fatalf("activeSet = %q, want %q", m.activeSet, name)
+	}
+	return m
+}
+
+// Renaming a local set that replaces a shared one renames only the local
+// set: the team's set in simsquad.toml keeps its name and rows.
+func TestBubbleEditorRenameLocalSetKeepsSharedSet(t *testing.T) {
+	t.Parallel()
+	dir, state := localOverShared(t)
+	m := openSet(t, editorModel{configDir: dir, mode: editorMenu, cursor: menuDeviceSets, state: state}, "tablet")
+	m.cursor = 2 // Rename set
+	m = submit(t, press(t, m, "enter"), "tab2")
+	if m.activeSet != "tab2" {
+		t.Fatalf("activeSet = %q, want tab2", m.activeSet)
+	}
+	if _, err := writeState(dir, m.state, true); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared, ok := cfg.DeviceSet("tablet")
+	if !ok || cfg.DeviceSetIsLocal("tablet") || len(shared.IOS) != 1 || shared.IOS[0].Count != 2 || len(shared.Android) != 1 {
+		t.Fatalf("tablet = %+v (found %v, local %v), want the shared set unchanged", shared, ok, cfg.DeviceSetIsLocal("tablet"))
+	}
+	renamed, ok := cfg.DeviceSet("tab2")
+	if !ok || !cfg.DeviceSetIsLocal("tab2") || len(renamed.IOS) != 1 || renamed.IOS[0].Device != "iPad Air 11-inch (M3)" {
+		t.Fatalf("tab2 = %+v (found %v), want the local rows under the new name", renamed, ok)
+	}
+	if _, ok := cfg.SharedDeviceSet("tab2"); ok {
+		t.Fatal("simsquad.toml gained tab2")
+	}
+}
+
+// Deleting a local set that replaces a shared one removes only the local
+// set: the shared set is what deploy reads again. Deleting a shared set
+// removes it from simsquad.toml.
+func TestBubbleEditorDeleteLocalSetRevertsToSharedSet(t *testing.T) {
+	t.Parallel()
+	dir, state := localOverShared(t)
+	m := openSet(t, editorModel{configDir: dir, mode: editorMenu, cursor: menuDeviceSets, state: state}, "tablet")
+	m.cursor = 3 // Delete set
+	m = press(t, m, "enter", "y")
+	m.cursor = 0
+	m = press(t, m, "esc") // back to the top menu
+	m = openSet(t, m, "old phones")
+	m.cursor = 3
+	m = press(t, m, "enter", "y")
+	if _, err := writeState(dir, m.state, true); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tablet, ok := cfg.DeviceSet("tablet")
+	if !ok || cfg.DeviceSetIsLocal("tablet") || len(tablet.IOS) != 1 || tablet.IOS[0].Count != 2 || len(tablet.Android) != 1 {
+		t.Fatalf("tablet = %+v (found %v), want the shared set back", tablet, ok)
+	}
+	if strings.Contains(readTestFile(t, filepath.Join(dir, config.LocalFile)), "tablet") {
+		t.Fatal("simsquad.local.toml still holds tablet")
+	}
+	if _, ok := cfg.DeviceSet("old phones"); ok {
+		t.Fatal("deleted shared set old phones is still in simsquad.toml")
+	}
+}
+
+// The preview lists the default matrix; its empty notes follow the default
+// matrix too, whichever set is open.
+func TestBubbleEditorSummaryWithSetOpen(t *testing.T) {
+	t.Parallel()
+	state := wizardState{
+		iosSpecs:    []contract.IosSpec{{Device: "iPhone 17", Runtime: "iOS 26.4", Count: 1}},
+		androidSpec: nil,
+		deviceSets: []deviceSet{{name: "tablet",
+			android: []contract.AndroidSpec{{Device: "pixel_tablet", Image: "img", Count: 1, Target: contract.TargetEmulator}}}},
+	}
+	m := editorModel{configDir: "/tmp/app", mode: editorMenu, width: 140, state: state, activeSet: "tablet", activeSubmenu: submenuSet}
+	view := m.View()
+	if strings.Contains(view, "No iOS simulators configured") || !strings.Contains(view, "No Android targets configured") {
+		t.Fatalf("empty notes follow the open set, not the default matrix:\n%s", view)
 	}
 }

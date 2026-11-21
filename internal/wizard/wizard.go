@@ -108,8 +108,12 @@ func RunEquipWizard(opts Options) (Result, error) {
 	}
 	if len(opts.AddIOS) > 0 || len(opts.AddAndroid) > 0 {
 		if opts.DeviceSet != "" {
-			if err := validateDeviceSetName(opts.DeviceSet); err != nil {
-				return Result{}, fmt.Errorf("equip: --device-set: %w", err)
+			// Only a new set's name is checked: a hand-written set with a
+			// quoted name still takes appends.
+			if findDeviceSet(state.deviceSets, opts.DeviceSet) < 0 {
+				if err := validateDeviceSetName(opts.DeviceSet); err != nil {
+					return Result{}, fmt.Errorf("equip: --device-set: %w", err)
+				}
 			}
 			addToDeviceSet(&state, opts.DeviceSet, opts.AddIOS, opts.AddAndroid)
 		} else {
@@ -585,16 +589,16 @@ func renderProjectTOML(state wizardState) (string, error) {
 }
 
 func writeIOSRow(b *strings.Builder, spec contract.IosSpec) {
-	b.WriteString("device = " + strconv.Quote(spec.Device) + "\n")
-	b.WriteString("runtime = " + strconv.Quote(spec.Runtime) + "\n")
+	b.WriteString("device = " + tomlQuote(spec.Device) + "\n")
+	b.WriteString("runtime = " + tomlQuote(spec.Runtime) + "\n")
 	b.WriteString("count = " + strconv.Itoa(spec.Count) + "\n")
 }
 
 func writeAndroidRow(b *strings.Builder, spec contract.AndroidSpec) {
-	b.WriteString("device = " + strconv.Quote(spec.Device) + "\n")
-	b.WriteString("image = " + strconv.Quote(spec.Image) + "\n")
+	b.WriteString("device = " + tomlQuote(spec.Device) + "\n")
+	b.WriteString("image = " + tomlQuote(spec.Image) + "\n")
 	b.WriteString("count = " + strconv.Itoa(spec.Count) + "\n")
-	b.WriteString("target = " + strconv.Quote(string(spec.Target)) + "\n")
+	b.WriteString("target = " + tomlQuote(string(spec.Target)) + "\n")
 }
 
 func renderLocalTOML(state wizardState) (string, error) {

@@ -172,3 +172,65 @@ func TestEquipShowListsDeviceSets(t *testing.T) {
 		t.Fatalf("summary sets = %v, want %v", names, want)
 	}
 }
+
+// A hand-written set name with control characters or a quote saves as a
+// TOML string the loader reads back, and so do row values.
+func TestEquipSaveQuotesSetNamesAsTOML(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, config.ProjectFile), `[project]
+ios_scheme = "App"
+
+[[device_sets."a\u0007b\u000bc\"d\\e\u007f".ios.sims]]
+device = "iPhone\u0007 17"
+runtime = "iOS 26.4"
+count = 1
+`)
+	before := snapshotSets(t, dir)
+	state, err := loadState(dir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writeState(dir, state, true); err != nil {
+		t.Fatal(err)
+	}
+	if after := snapshotSets(t, dir); !reflect.DeepEqual(before, after) {
+		t.Fatalf("sets changed: before %v after %v\n%s", before, after, readTestFile(t, filepath.Join(dir, config.ProjectFile)))
+	}
+}
+
+func TestTOMLQuote(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		"plain":       `"plain"`,
+		"a\"b\\c":     `"a\"b\\c"`,
+		"\b\t\n\f\r":  `"\b\t\n\f\r"`,
+		"\a\v\x7f":    `"\u0007\u000B\u007F"`,
+		"bad\xffutf8": `"bad` + "�" + `utf8"`,
+		"ünï 📱":       `"ünï 📱"`,
+	}
+	for in, want := range cases {
+		if got := tomlQuote(in); got != want {
+			t.Errorf("tomlQuote(%q) = %s, want %s", in, got, want)
+		}
+	}
+}
+
+// Appending to an existing set works whatever its hand-written name; only a
+// new set's name is checked.
+func TestEquipAddSpecToExistingQuotedSet(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, config.ProjectFile), handWrittenSharedSets)
+	if _, err := RunEquipWizard(Options{CWD: dir, DeviceSet: "old phones",
+		AddIOS: []contract.IosSpec{{Device: "iPhone 16", Runtime: "iOS 26.4", Count: 1}}}); err != nil {
+		t.Fatalf("append to old phones: %v", err)
+	}
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if set, _ := cfg.DeviceSet("old phones"); len(set.IOS) != 2 {
+		t.Fatalf("old phones = %+v, want two rows", set)
+	}
+}

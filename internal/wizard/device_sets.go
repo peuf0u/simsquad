@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/peuf0u/simsquad/internal/config"
 	"github.com/peuf0u/simsquad/internal/contract"
@@ -85,6 +85,33 @@ func addToDeviceSet(state *wizardState, name string, ios []contract.IosSpec, and
 	state.deviceSets[i].android = append(state.deviceSets[i].android, android...)
 }
 
+// renameDeviceSet renames sets[i] in a copy of sets. Renaming a local set
+// that replaces a shared one renames only the local set: the shared set
+// stays in simsquad.toml under its name, for the teammates and squads that
+// use it.
+func renameDeviceSet(sets []deviceSet, i int, name string) []deviceSet {
+	out := append([]deviceSet{}, sets...)
+	if shadow := out[i].shadow; shadow != nil {
+		out = append(out, deviceSet{name: out[i].name, ios: shadow.IOS, android: shadow.Android})
+		out[i].shadow = nil
+	}
+	out[i].name = name
+	sortDeviceSets(out)
+	return out
+}
+
+// deleteDeviceSet deletes sets[i] from a copy of sets. Deleting a local set
+// that replaces a shared one deletes only the local set, so the shared set
+// is the one deploy reads again; a shared set is deleted from simsquad.toml.
+func deleteDeviceSet(sets []deviceSet, i int) []deviceSet {
+	out := append([]deviceSet{}, sets...)
+	if shadow := out[i].shadow; shadow != nil {
+		out[i] = deviceSet{name: out[i].name, ios: shadow.IOS, android: shadow.Android}
+		return out
+	}
+	return append(out[:i], out[i+1:]...)
+}
+
 func sortDeviceSets(sets []deviceSet) {
 	sort.SliceStable(sets, func(i, j int) bool { return sets[i].name < sets[j].name })
 }
@@ -103,7 +130,8 @@ func summarizeDeviceSets(sets []deviceSet) []DeviceSetSummary {
 }
 
 // renderProjectDeviceSets writes the sets simsquad.toml holds: every shared
-// set, and the shared version under each local set that replaces one.
+// set, and the shared version under each local set that replaces one, always
+// under the name it has in simsquad.toml (the editor never renames it).
 func renderProjectDeviceSets(b *strings.Builder, sets []deviceSet) {
 	for _, s := range sets {
 		switch {
@@ -144,5 +172,42 @@ func tomlKey(name string) string {
 	if deviceSetNameRx.MatchString(name) {
 		return name
 	}
-	return strconv.Quote(name)
+	return tomlQuote(name)
+}
+
+// tomlQuote writes s as a TOML basic string. Go's strconv.Quote escapes
+// (\a, \v, \x..) aren't TOML, and a file equip writes with them fails the
+// next load. Invalid UTF-8 can't be written to TOML at all; it becomes
+// U+FFFD rather than refusing the whole save over one hand-written byte.
+func tomlQuote(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for len(s) > 0 {
+		r, size := utf8.DecodeRuneInString(s)
+		s = s[size:]
+		switch r {
+		case '"':
+			b.WriteString(`\"`)
+		case '\\':
+			b.WriteString(`\\`)
+		case '\b':
+			b.WriteString(`\b`)
+		case '\t':
+			b.WriteString(`\t`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\f':
+			b.WriteString(`\f`)
+		case '\r':
+			b.WriteString(`\r`)
+		default:
+			if r < 0x20 || r == 0x7f {
+				fmt.Fprintf(&b, `\u%04X`, r)
+				continue
+			}
+			b.WriteRune(r) // utf8.RuneError for an invalid byte: U+FFFD
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
