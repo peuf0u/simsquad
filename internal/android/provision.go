@@ -476,13 +476,35 @@ type emulatorSlot struct {
 }
 
 func provisionEmulators(ctx emulatorContext) ([]contract.Device, map[string]int) {
+	slots, ports := reserveEmulatorSlots(ctx)
+
+	// Phase 2: provision each slot in parallel.
+	devices := make([]contract.Device, len(slots))
+	var g errgroup.Group
+	for i, s := range slots {
+		i, s := i, s
+		g.Go(func() error {
+			devices[i] = provisionEmulatorSlot(s, ctx)
+			return nil
+		})
+	}
+	_ = g.Wait()
+	return devices, ports
+}
+
+// reserveEmulatorSlots is phase 1 of provisionEmulators: it reserves a port
+// for every emulator slot under the index lock and persists the
+// reservations to the squad's record so concurrent simsquad invocations see
+// the claim. A slot with no free port gets port -1.
+func reserveEmulatorSlots(ctx emulatorContext) ([]emulatorSlot, map[string]int) {
 	slots := make([]emulatorSlot, 0)
 	ports := map[string]int{}
 
-	// Phase 1: reserve ports under the index lock. Persist the reservations
-	// to the squad's record so concurrent simsquad invocations see our claim.
 	lockErr := state.WithIndexLockE(func() error {
-		reserved := map[int]struct{}{}
+		// Records only know simsquad's ports. After a reboot the user's own
+		// emulator can hold one no record claims any more, and a fresh boot
+		// there would install on it, so ports adb lists count as taken too.
+		reserved := adbListedEmulatorPorts()
 		idx := 0
 		for _, spec := range ctx.Specs {
 			for i := 0; i < spec.Count; i++ {
@@ -525,19 +547,35 @@ func provisionEmulators(ctx emulatorContext) ([]contract.Device, map[string]int)
 		ctx.Logger.Warn("android-provision: reserve-error",
 			progress.F("error", lockErr.Error()))
 	}
+	return slots, ports
+}
 
-	// Phase 2: provision each slot in parallel.
-	devices := make([]contract.Device, len(slots))
-	var g errgroup.Group
-	for i, s := range slots {
-		i, s := i, s
-		g.Go(func() error {
-			devices[i] = provisionEmulatorSlot(s, ctx)
-			return nil
-		})
+// adbListedEmulatorPorts returns the ports of the emulator serials
+// (emulator-<port>) `adb devices` lists, in any state: one call for a whole
+// allocation batch. Best effort: without a working adb it returns none and
+// allocation goes by the recorded ports alone.
+func adbListedEmulatorPorts() map[int]struct{} {
+	ports := map[int]struct{}{}
+	adb, err := ADB()
+	if err != nil {
+		return ports
 	}
-	_ = g.Wait()
-	return devices, ports
+	r, err := util.Run(adb, []string{"devices"}, util.RunOpts{Timeout: 5 * time.Second})
+	if err != nil || r.Code != 0 {
+		return ports
+	}
+	for _, line := range strings.Split(r.Stdout, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if p, ok := strings.CutPrefix(fields[0], "emulator-"); ok {
+			if port, err := strconv.Atoi(p); err == nil {
+				ports[port] = struct{}{}
+			}
+		}
+	}
+	return ports
 }
 
 func provisionEmulatorSlot(s emulatorSlot, ctx emulatorContext) contract.Device {
@@ -601,6 +639,16 @@ func provisionEmulatorSlot(s emulatorSlot, ctx emulatorContext) contract.Device 
 			_ = killEmulatorADB(serial)
 			continue
 		}
+		// The boot poll only proves something answers on the port. Another
+		// emulator holding it (allocation can miss one that came up since)
+		// passes the poll while ours fails to bind, and installing would
+		// clear the app's data on it. Another boot attempt would meet the
+		// same emulator, so the slot fails here.
+		if err := verifyStartedEmulator(cmd, serial, s.name, s.port); err != nil {
+			killEmulatorProcess(cmd)
+			dev.ErrorMessage = "boot: " + err.Error()
+			return dev
+		}
 		// Booted. Record the PID so dismiss can SIGTERM if needed later.
 		dev.EmulatorPID = cmd.Process.Pid
 		dev.Window = ctx.Window
@@ -621,6 +669,24 @@ func provisionEmulatorSlot(s emulatorSlot, ctx emulatorContext) contract.Device 
 
 	dev.Status = contract.StatusReady
 	return dev
+}
+
+// verifyStartedEmulator checks that the emulator answering on serial after
+// a fresh boot is the one cmd started: it runs avd, and cmd is still alive
+// as avd's emulator on port. The caller kills cmd on an error; it never
+// touches the emulator that answered.
+func verifyStartedEmulator(cmd *exec.Cmd, serial, avd string, port int) error {
+	running, err := RunningAVDName(serial)
+	if err != nil {
+		return fmt.Errorf("could not read the AVD name of the emulator on port %d (%s)", port, err.Error())
+	}
+	if running != avd {
+		return fmt.Errorf("port %d is held by another emulator (%s), not %s", port, running, avd)
+	}
+	if !squadEmulatorPIDAlive(cmd.Process.Pid, avd, port) {
+		return fmt.Errorf("the emulator started for %s exited during boot; another instance of it holds port %d", avd, port)
+	}
+	return nil
 }
 
 func createAVD(name, image, deviceProfile string) error {

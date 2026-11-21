@@ -136,8 +136,14 @@ All notable changes are recorded here. The format follows
   itself) likewise kills an emulator only when it answers with the
   squad's AVD name: another emulator on the port, or one whose name can't
   be read, is left running with a warning, and only the squad's AVD is
-  deleted. Before, deploy installed the build on
-  whatever answered on the port, and teardown killed it.
+  deleted. A new emulator gets a port no squad records and `adb devices`
+  doesn't list, and after its boot deploy checks that the emulator
+  answering is the one it started, running the squad's AVD; otherwise it
+  kills the one it started and fails the device with `boot: port N is held
+  by another emulator (<name>), not <avd>` (or a `boot:` reason saying the
+  name can't be read or the started emulator exited). Before, deploy
+  installed the build on whatever answered on the port, and teardown
+  killed it.
 - **Reuse stops the squad's own emulator before rebooting it when it is
   alive but not answering adb** (for example still booting after an
   interrupted deploy), instead of starting a second instance that can't

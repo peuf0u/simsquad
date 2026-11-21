@@ -116,6 +116,7 @@ func newFakeSDK(t *testing.T, running bool, config string) fakeSDK {
 	writeFile(t, filepath.Join(sdk, "platform-tools", "adb"), `#!/bin/sh
 d=`+dir+`
 if [ "$1" = devices ]; then
+  echo x >> $d/devicecalls
   echo 'List of devices attached'
   [ -e $d/up ] && printf 'emulator-5556\tdevice\n'
   exit 0
@@ -598,6 +599,108 @@ func TestStopEmulatorNeverSignalsAProcessRunningAnotherAVDOrPort(t *testing.T) {
 			}
 			if processExited(other.Process.Pid) {
 				t.Fatal("a process that is not the squad's emulator was signalled")
+			}
+		})
+	}
+}
+
+// Review round 5, item 1: after a reboot the user's own emulator can take
+// a port no squad records. Allocation skips every port adb lists, with one
+// `adb devices` call for the whole batch.
+func TestReserveEmulatorSlotsSkipsPortsADBLists(t *testing.T) {
+	f := newFakeSDK(t, true, "hw.keyboard=no\n")
+	t.Setenv("SIMSQUAD_CACHE_DIR", t.TempDir())
+
+	slots, _ := reserveEmulatorSlots(emulatorContext{
+		Name:  "x",
+		Specs: []contract.AndroidSpec{{Count: 3}},
+	})
+	var got []int
+	for _, s := range slots {
+		got = append(got, s.port)
+	}
+	if fmt.Sprint(got) != "[5554 5558 5560]" {
+		t.Fatalf("ports = %v, want [5554 5558 5560]: 5556 is listed by adb", got)
+	}
+	b, err := os.ReadFile(filepath.Join(f.dir, "devicecalls"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(b), "\n"); n != 1 {
+		t.Fatalf("adb devices ran %d times, want once", n)
+	}
+}
+
+// Without adb the allocator goes by the recorded ports alone, as before.
+func TestReserveEmulatorSlotsWithoutADB(t *testing.T) {
+	t.Setenv("ANDROID_HOME", t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("SIMSQUAD_CACHE_DIR", t.TempDir())
+
+	slots, _ := reserveEmulatorSlots(emulatorContext{
+		Name:  "x",
+		Specs: []contract.AndroidSpec{{Count: 2}},
+	})
+	if len(slots) != 2 || slots[0].port != 5554 || slots[1].port != 5556 {
+		t.Fatalf("slots = %+v, want ports 5554 and 5556", slots)
+	}
+}
+
+// Review round 5, item 1: a fresh boot on a port another emulator holds
+// can't bind it, and the boot poll then passes against the other emulator.
+// The slot fails naming the port and the other AVD, the started emulator
+// is killed (landmine 5), and nothing is installed on or killed through
+// the other emulator.
+func TestFreshBootFailsWhenAnotherEmulatorAnswersOnThePort(t *testing.T) {
+	cases := []struct {
+		name      string
+		running   bool
+		markers   []string
+		avdName   string
+		wantError string
+	}{
+		{"started emulator exits", true, []string{"exitearly"}, "Pixel_8_API_35",
+			"boot: port 5556 is held by another emulator (Pixel_8_API_35), not " + flowAVD},
+		{"started emulator stays", false, nil, "Pixel_8_API_35",
+			"boot: port 5556 is held by another emulator (Pixel_8_API_35), not " + flowAVD},
+		{"name unreadable", false, []string{"noname"}, "",
+			"boot: could not read the AVD name of the emulator on port 5556 (error: could not connect to TCP port 5557)"},
+		{"another instance of the squad's AVD", true, []string{"exitearly"}, "",
+			"boot: the emulator started for " + flowAVD + " exited during boot; another instance of it holds port 5556"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFakeSDK(t, c.running, "hw.keyboard=no\n")
+			for _, m := range c.markers {
+				f.touch(t, m)
+			}
+			if c.avdName != "" {
+				writeFile(t, filepath.Join(f.dir, "avdname"), c.avdName)
+			}
+
+			dev := provisionEmulatorSlot(
+				emulatorSlot{name: flowAVD, port: 5556},
+				emulatorContext{APKPath: "/app.apk", BundleID: "com.example"},
+			)
+			if dev.Status != contract.StatusError || dev.ErrorMessage != c.wantError {
+				t.Fatalf("status = %s (%q), want error %q", dev.Status, dev.ErrorMessage, c.wantError)
+			}
+			if dev.EmulatorPID != 0 {
+				t.Fatalf("emulator_pid = %d, want 0", dev.EmulatorPID)
+			}
+			calls := f.calls(t)
+			if strings.Contains(calls, "install") || strings.Contains(calls, "pm clear") || strings.Contains(calls, "emu kill") {
+				t.Fatalf("calls =\n%s\nwant no install, clear or emu kill", calls)
+			}
+			if strings.Count(calls, "emulator -avd") != 1 {
+				t.Fatalf("calls =\n%s\nwant one boot, no wipe retry", calls)
+			}
+			started := f.lastPID(t)
+			for deadline := time.Now().Add(5 * time.Second); !processExited(started) && time.Now().Before(deadline); {
+				time.Sleep(10 * time.Millisecond)
+			}
+			if !processExited(started) {
+				t.Fatalf("started emulator %d still runs, want it killed", started)
 			}
 		})
 	}
