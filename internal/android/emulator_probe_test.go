@@ -36,22 +36,8 @@ func TestEmulatorGoneProbe(t *testing.T) {
 	})
 
 	t.Run("emulator pid alive, then exited", func(t *testing.T) {
-		// A copy of /bin/sleep is killed by code signing on macOS; the Go
-		// test binary is ad-hoc signed, so a renamed copy still runs.
-		self, err := os.Executable()
-		if err != nil {
-			t.Fatal(err)
-		}
-		fake := filepath.Join(t.TempDir(), "qemu-fake")
-		linkOrCopy(t, self, fake)
-		cmd := exec.Command(fake, "-test.run=^TestHelperSleep$")
-		cmd.Env = append(os.Environ(), "SIMSQUAD_TEST_HELPER_SLEEP=1")
-		if err := cmd.Start(); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
-
-		dev := contract.Device{UDID: "emulator-5554", EmulatorPID: cmd.Process.Pid}
+		cmd := startHelperProcess(t, "qemu-fake", "-avd", "simsquad-x-android-0", "-port", "5554")
+		dev := contract.Device{UDID: "emulator-5554", AVDName: "simsquad-x-android-0", EmulatorPID: cmd.Process.Pid}
 		probe := EmulatorGoneProbe(dev, "")
 		if probe() {
 			t.Fatal("probe = gone while the qemu process runs, want alive")
@@ -60,6 +46,14 @@ func TestEmulatorGoneProbe(t *testing.T) {
 		_ = cmd.Wait()
 		if !probe() {
 			t.Fatal("probe = alive after the qemu process exited, want gone")
+		}
+	})
+
+	t.Run("qemu pid running another AVD", func(t *testing.T) {
+		cmd := startHelperProcess(t, "qemu-system-aarch64", "-avd", "Pixel_8_API_35", "-port", "5554")
+		dev := contract.Device{UDID: "emulator-5554", AVDName: "simsquad-x-android-0", EmulatorPID: cmd.Process.Pid}
+		if !EmulatorGoneProbe(dev, "")() {
+			t.Fatal("probe = alive for another AVD's qemu, want gone")
 		}
 	})
 
@@ -83,6 +77,28 @@ func TestEmulatorGoneProbe(t *testing.T) {
 			t.Fatal("probe = alive after the serial left adb devices, want gone")
 		}
 	})
+}
+
+// startHelperProcess runs the test binary, linked as name, as TestHelperSleep
+// with args after "--", so ps shows a process called name whose arguments
+// hold args. A copy of /bin/sleep is killed by code signing on macOS; the Go
+// test binary is ad-hoc signed, so a renamed link still runs. The fake
+// emulator's state dir is cleared so TestMain runs the tests.
+func startHelperProcess(t *testing.T, name string, args ...string) *exec.Cmd {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(t.TempDir(), name)
+	linkOrCopy(t, self, bin)
+	cmd := exec.Command(bin, append([]string{"-test.run=^TestHelperSleep$", "--"}, args...)...)
+	cmd.Env = append(os.Environ(), "SIMSQUAD_TEST_HELPER_SLEEP=1", fakeEmulatorEnv+"=")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	return cmd
 }
 
 // linkOrCopy hard-links src to dst, copying it when the link fails (another

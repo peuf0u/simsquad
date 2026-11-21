@@ -229,7 +229,7 @@ func reprovisionExistingOne(existing contract.Device, in ProvisionInput) contrac
 		// adb not answering doesn't mean the squad's emulator has exited:
 		// it may still be booting after an interrupted deploy. A second
 		// instance can't start on its locked AVD, so stop the live one.
-		if dev.EmulatorPID > 0 && emulatorProcessAlive(dev.EmulatorPID) {
+		if dev.EmulatorPID > 0 && SquadEmulatorAlive(dev) {
 			if err := stopEmulator(dev); err != nil {
 				dev.ErrorMessage = "reuse-boot: " + err.Error()
 				return dev
@@ -290,7 +290,7 @@ func bootReused(dev *contract.Device, window bool, logger *progress.Logger) erro
 	// An emulator that can't lock its AVD exits at once, and the boot poll
 	// then passes against whatever instance still answers on the port.
 	// Recording that boot would store a dead PID and a mode that isn't so.
-	if !emulatorProcessAlive(cmd.Process.Pid) {
+	if !squadEmulatorPIDAlive(cmd.Process.Pid, avd, port) {
 		killEmulatorProcess(cmd)
 		return fmt.Errorf("the emulator started for %s exited during boot; another instance of it may still be running", avd)
 	}
@@ -377,23 +377,35 @@ func stopEmulator(dev contract.Device) error {
 		return nil
 	}
 	// An emulator still booting (after an interrupted deploy, say) may not
-	// honour `emu kill`, and its qemu keeps the AVD locked. Signal the
-	// recorded PID, but only while it is still an emulator process: PIDs
-	// are reused, and the check runs right before each signal.
+	// honour `emu kill`, and its qemu keeps the AVD locked.
 	if dev.EmulatorPID > 0 {
-		for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL} {
-			if !emulatorProcessAlive(dev.EmulatorPID) {
-				return nil
-			}
-			_ = syscall.Kill(dev.EmulatorPID, sig)
-			if WaitGone(gone, stopSignalTimeout, EmulatorExitPoll) {
-				return nil
-			}
+		if SignalSquadEmulator(dev, gone) {
+			return nil
 		}
 		return fmt.Errorf("emulator %s (pid %d) did not exit after emu kill, SIGTERM and SIGKILL",
 			dev.UDID, dev.EmulatorPID)
 	}
 	return fmt.Errorf("emulator %s did not exit within %s", dev.UDID, stopExitTimeout)
+}
+
+// SignalSquadEmulator stops dev's recorded EmulatorPID with SIGTERM, then
+// SIGKILL, waiting up to stopSignalTimeout after each for gone, and reports
+// whether it is gone. The PID is signalled only while SquadEmulatorAlive
+// confirms it is dev's own emulator, checked right before each signal: a
+// PID that isn't (reused, or another emulator or qemu VM) is never
+// signalled and counts as gone. Reuse's stop and teardown both fall back on
+// it when `adb emu kill` didn't stop the emulator.
+func SignalSquadEmulator(dev contract.Device, gone func() bool) bool {
+	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL} {
+		if !SquadEmulatorAlive(dev) {
+			return true
+		}
+		_ = syscall.Kill(dev.EmulatorPID, sig)
+		if WaitGone(gone, stopSignalTimeout, EmulatorExitPoll) {
+			return true
+		}
+	}
+	return false
 }
 
 // turnOnHWKeyboard sets hw.keyboard=yes on avd before a windowed boot. A

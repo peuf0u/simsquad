@@ -169,7 +169,9 @@ func (f fakeSDK) startEmulator(t *testing.T) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(emu)
+	// Started with the squad's arguments, as simsquad starts it, so the
+	// PID check that reads them recognises it.
+	cmd := exec.Command(emu, emulatorArgs(flowAVD, 5556, false, false)...)
 	cmd.Env = append(os.Environ(), "SIMSQUAD_FAKE_EMULATOR_NOLOG=1")
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -506,6 +508,14 @@ func processGone(pid int) bool {
 	return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
 }
 
+// processExited reports whether pid has exited, reaped or not: a child the
+// test hasn't waited for stays a zombie, which kill -0 still finds.
+func processExited(pid int) bool {
+	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "stat=").Output()
+	stat := strings.TrimSpace(string(out))
+	return err != nil || stat == "" || strings.HasPrefix(stat, "Z")
+}
+
 // Review round 4: an emulator still booting after an interrupted deploy may
 // not honour `adb emu kill`, and qemu would keep the AVD locked. stopEmulator
 // then signals the recorded PID, still a verified emulator process: SIGTERM
@@ -558,8 +568,38 @@ func TestStopEmulatorLeavesAPIDThatIsNotAnEmulator(t *testing.T) {
 	if err := stopEmulator(dev); err != nil {
 		t.Fatal(err)
 	}
-	if processGone(other.Process.Pid) {
+	if processExited(other.Process.Pid) {
 		t.Fatal("a process that is not an emulator was signalled")
+	}
+}
+
+// Review round 5: the PID fallback runs when the recorded PID is most
+// likely stale (after a reboot). A process whose arguments don't name the
+// squad's AVD and port (another emulator, a colima or UTM qemu VM) is never
+// signalled, however emulator-like its name.
+func TestStopEmulatorNeverSignalsAProcessRunningAnotherAVDOrPort(t *testing.T) {
+	for _, args := range [][]string{
+		{"-avd", "Pixel_8_API_35", "-port", "5556"},
+		{"-avd", flowAVD, "-port", "5558"},
+		{"-M", "virt", "-accel", "hvf"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			f := newFakeSDK(t, true, "hw.keyboard=no\n")
+			shortStopWaits(t)
+			f.touch(t, "nokill")
+			other := startHelperProcess(t, "qemu-system-aarch64", args...)
+
+			dev := reusedEmulator(false)
+			dev.EmulatorPID = other.Process.Pid
+			// The PID isn't the squad's emulator, so the probe counts it
+			// gone and the stop returns without a signal.
+			if err := stopEmulator(dev); err != nil {
+				t.Fatal(err)
+			}
+			if processExited(other.Process.Pid) {
+				t.Fatal("a process that is not the squad's emulator was signalled")
+			}
+		})
 	}
 }
 

@@ -34,10 +34,11 @@ func WaitGone(gone func() bool, timeout, poll time.Duration) bool {
 
 // EmulatorGoneProbe picks how to tell that dev's emulator has exited: its
 // recorded PID when there is one, otherwise its serial dropping out of
-// `adb devices`. With neither available there is nothing to wait on.
+// `adb devices`. With neither available there is nothing to wait on. A PID
+// that is no longer dev's emulator (see SquadEmulatorAlive) counts as gone.
 func EmulatorGoneProbe(dev contract.Device, adb string) func() bool {
 	if dev.EmulatorPID > 0 {
-		return func() bool { return !emulatorProcessAlive(dev.EmulatorPID) }
+		return func() bool { return !SquadEmulatorAlive(dev) }
 	}
 	if adb == "" {
 		return func() bool { return true }
@@ -55,25 +56,56 @@ func ADBListsSerial(adb, serial string) bool {
 	return serialListed(r.Stdout, serial)
 }
 
-func emulatorProcessAlive(pid int) bool {
-	r, err := util.Run("ps", []string{"-p", strconv.Itoa(pid), "-o", "stat=,comm="},
+// SquadEmulatorAlive reports whether dev's recorded EmulatorPID is still
+// dev's own emulator: a live process whose arguments hold `-avd <its AVD>`
+// and, when its port is known, `-port <port>`. Only then may simsquad
+// signal it. The recorded PID is most likely stale right when it is needed
+// (after a reboot), and by then it can belong to another squad's emulator,
+// the user's Android Studio one, or a colima/lima/UTM qemu VM, all of which
+// a command-name check would accept. The emulator launcher execs qemu with
+// its own arguments, so the PID keeps them.
+func SquadEmulatorAlive(dev contract.Device) bool {
+	port, err := emulatorPort(dev)
+	if err != nil {
+		port = 0
+	}
+	return squadEmulatorPIDAlive(dev.EmulatorPID, avdNameOf(dev), port)
+}
+
+func squadEmulatorPIDAlive(pid int, avd string, port int) bool {
+	if pid <= 0 || avd == "" {
+		return false
+	}
+	r, err := util.Run("ps", []string{"-ww", "-p", strconv.Itoa(pid), "-o", "stat=,args="},
 		util.RunOpts{Timeout: 5 * time.Second})
 	if err != nil || r.Code != 0 {
 		return false
 	}
-	return emulatorProcessLine(r.Stdout)
+	return squadEmulatorLine(r.Stdout, avd, port)
 }
 
-// emulatorProcessLine reports whether `ps -o stat=,comm=` output describes a
-// live emulator. PIDs are reused, so the PID only counts while its command is
-// still the emulator (or its qemu child); a zombie has already exited.
-func emulatorProcessLine(out string) bool {
+// squadEmulatorLine reports whether `ps -o stat=,args=` output describes a
+// live process started with `-avd avd` and, when port > 0, `-port port`. A
+// zombie has already exited.
+func squadEmulatorLine(out, avd string, port int) bool {
 	fields := strings.Fields(out)
 	if len(fields) < 2 || strings.HasPrefix(fields[0], "Z") {
 		return false
 	}
-	comm := strings.ToLower(strings.Join(fields[1:], " "))
-	return strings.Contains(comm, "emulator") || strings.Contains(comm, "qemu")
+	args := fields[1:]
+	if !hasArgPair(args, "-avd", avd) {
+		return false
+	}
+	return port <= 0 || hasArgPair(args, "-port", strconv.Itoa(port))
+}
+
+func hasArgPair(args []string, flag, value string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == flag && args[i+1] == value {
+			return true
+		}
+	}
+	return false
 }
 
 // serialListed reports whether serial appears, in any state, in

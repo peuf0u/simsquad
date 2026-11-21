@@ -142,8 +142,10 @@ All notable changes are recorded here. The format follows
   alive but not answering adb** (for example still booting after an
   interrupted deploy), instead of starting a second instance that can't
   lock the AVD. When it ignores `adb emu kill`, deploy sends SIGTERM, then
-  SIGKILL, to its recorded PID while that PID is still an emulator
-  process, and fails the device only when it still doesn't exit. A started
+  SIGKILL, to its recorded PID, only while that process's arguments name
+  the squad's AVD and port (`-avd <avd> -port <port>`), so a reused PID,
+  another emulator or a qemu VM is never signalled, and fails the device
+  only when it still doesn't exit. A started
   emulator that exits during boot now fails the device with `reuse-boot: …`
   instead of being recorded.
 - **Workers always run on an explicit model.** `run new --worker
