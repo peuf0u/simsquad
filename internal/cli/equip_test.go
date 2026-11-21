@@ -273,3 +273,37 @@ func TestEquipWarnsOutsideGitOnlyWhenCreatingConfig(t *testing.T) {
 		}
 	})
 }
+
+func TestEquipAddSpecToDeviceSet(t *testing.T) {
+	repo := newAppRepo(t)
+	if _, err := runEquip(t, nil, "--add-ios-spec", equipSpec, "--install-skills=false"); err != nil {
+		t.Fatalf("equip: %v", err)
+	}
+	out, err := runEquip(t, nil, "--add-ios-spec", "iPad Pro 13-inch (M5):iOS 26.4:1", "--device-set", "tablet", "--install-skills=false")
+	if err != nil {
+		t.Fatalf("equip --device-set: %v", err)
+	}
+	if !strings.Contains(out, `"device_sets"`) || !strings.Contains(out, `"name": "tablet"`) {
+		t.Fatalf("equip output lists no tablet set:\n%s", out)
+	}
+	project, err := os.ReadFile(filepath.Join(repo, "simsquad.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(project), "[[device_sets.tablet.ios.sims]]") {
+		t.Fatalf("simsquad.toml has no tablet set:\n%s", project)
+	}
+
+	show, err := runEquip(t, nil, "--show")
+	if err != nil || !strings.Contains(show, `"name": "tablet"`) {
+		t.Fatalf("equip --show: err %v, want the tablet set listed:\n%s", err, show)
+	}
+}
+
+func TestEquipDeviceSetNeedsAddSpec(t *testing.T) {
+	newAppRepo(t)
+	_, err := runEquip(t, nil, "--device-set", "tablet")
+	if err == nil || !strings.Contains(err.Error(), "--add-ios-spec") {
+		t.Fatalf("err = %v, want --device-set alone refused", err)
+	}
+}

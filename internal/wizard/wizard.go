@@ -25,6 +25,9 @@ type Options struct {
 	Show       bool
 	AddIOS     []contract.IosSpec
 	AddAndroid []contract.AndroidSpec
+	// DeviceSet sends AddIOS / AddAndroid to this named device set (created
+	// in simsquad.toml when missing) instead of the default matrix.
+	DeviceSet string
 }
 
 // Result reports the files the wizard wrote.
@@ -49,6 +52,7 @@ type ConfigSummary struct {
 	Context     map[string]string      `json:"context,omitempty"`
 	IOS         []contract.IosSpec     `json:"ios"`
 	Android     []contract.AndroidSpec `json:"android"`
+	DeviceSets  []DeviceSetSummary     `json:"device_sets,omitempty"`
 }
 
 type wizardState struct {
@@ -59,6 +63,8 @@ type wizardState struct {
 	testContext map[string]string
 	iosSpecs    []contract.IosSpec
 	androidSpec []contract.AndroidSpec
+	// deviceSets are the named device sets, sorted by name.
+	deviceSets []deviceSet
 	// projectAgent / localAgent are the raw [agent] tables of each file.
 	// The wizard doesn't edit them, but it rewrites both files wholesale, so
 	// it carries each table back into the file it came from (a local
@@ -101,8 +107,15 @@ func RunEquipWizard(opts Options) (Result, error) {
 		}, nil
 	}
 	if len(opts.AddIOS) > 0 || len(opts.AddAndroid) > 0 {
-		state.iosSpecs = append(state.iosSpecs, opts.AddIOS...)
-		state.androidSpec = append(state.androidSpec, opts.AddAndroid...)
+		if opts.DeviceSet != "" {
+			if err := validateDeviceSetName(opts.DeviceSet); err != nil {
+				return Result{}, fmt.Errorf("equip: --device-set: %w", err)
+			}
+			addToDeviceSet(&state, opts.DeviceSet, opts.AddIOS, opts.AddAndroid)
+		} else {
+			state.iosSpecs = append(state.iosSpecs, opts.AddIOS...)
+			state.androidSpec = append(state.androidSpec, opts.AddAndroid...)
+		}
 		res, err := writeState(configDir, state, true)
 		res.Created = err == nil && !hasConfig
 		return res, err
@@ -162,6 +175,7 @@ func loadState(configDir string, hasConfig bool) (wizardState, error) {
 	}
 	state.iosSpecs = cfg.IOSSpecs()
 	state.androidSpec = cfg.AndroidSpecs()
+	state.deviceSets = loadDeviceSets(cfg)
 	if state.projectAgent, err = readAgentTable(filepath.Join(configDir, config.ProjectFile)); err != nil {
 		return wizardState{}, err
 	}
@@ -515,9 +529,10 @@ func summarize(configDir string, state wizardState) ConfigSummary {
 			"ios_scheme":          state.iosScheme,
 			"android_gradle_task": state.gradleTask,
 		},
-		Context: ctx,
-		IOS:     iosSpecs,
-		Android: androidSpecs,
+		Context:    ctx,
+		IOS:        iosSpecs,
+		Android:    androidSpecs,
+		DeviceSets: summarizeDeviceSets(state.deviceSets),
 	}
 }
 
@@ -559,18 +574,27 @@ func renderProjectTOML(state wizardState) (string, error) {
 	b.WriteString(agent)
 	for _, spec := range state.iosSpecs {
 		b.WriteString("\n[[ios.sims]]\n")
-		b.WriteString("device = " + strconv.Quote(spec.Device) + "\n")
-		b.WriteString("runtime = " + strconv.Quote(spec.Runtime) + "\n")
-		b.WriteString("count = " + strconv.Itoa(spec.Count) + "\n")
+		writeIOSRow(&b, spec)
 	}
 	for _, spec := range state.androidSpec {
 		b.WriteString("\n[[android.sims]]\n")
-		b.WriteString("device = " + strconv.Quote(spec.Device) + "\n")
-		b.WriteString("image = " + strconv.Quote(spec.Image) + "\n")
-		b.WriteString("count = " + strconv.Itoa(spec.Count) + "\n")
-		b.WriteString("target = " + strconv.Quote(string(spec.Target)) + "\n")
+		writeAndroidRow(&b, spec)
 	}
+	renderProjectDeviceSets(&b, state.deviceSets)
 	return b.String(), nil
+}
+
+func writeIOSRow(b *strings.Builder, spec contract.IosSpec) {
+	b.WriteString("device = " + strconv.Quote(spec.Device) + "\n")
+	b.WriteString("runtime = " + strconv.Quote(spec.Runtime) + "\n")
+	b.WriteString("count = " + strconv.Itoa(spec.Count) + "\n")
+}
+
+func writeAndroidRow(b *strings.Builder, spec contract.AndroidSpec) {
+	b.WriteString("device = " + strconv.Quote(spec.Device) + "\n")
+	b.WriteString("image = " + strconv.Quote(spec.Image) + "\n")
+	b.WriteString("count = " + strconv.Itoa(spec.Count) + "\n")
+	b.WriteString("target = " + strconv.Quote(string(spec.Target)) + "\n")
 }
 
 func renderLocalTOML(state wizardState) (string, error) {
@@ -583,6 +607,7 @@ func renderLocalTOML(state wizardState) (string, error) {
 		return "", err
 	}
 	b.WriteString(agent)
+	renderLocalDeviceSets(&b, state.deviceSets)
 	return b.String(), nil
 }
 

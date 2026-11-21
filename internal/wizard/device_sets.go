@@ -1,0 +1,148 @@
+package wizard
+
+import (
+	"fmt"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+
+	"github.com/peuf0u/simsquad/internal/config"
+	"github.com/peuf0u/simsquad/internal/contract"
+)
+
+// deviceSet is one named device set as equip edits it: the rows deploy uses,
+// and which file they live in. equip rewrites both TOMLs on every save, so a
+// set defined in simsquad.local.toml is written back there, and the
+// simsquad.toml set it replaces (shadow) is written back unchanged: the team
+// still gets the shared set.
+type deviceSet struct {
+	name    string
+	ios     []contract.IosSpec
+	android []contract.AndroidSpec
+	local   bool
+	shadow  *config.DeviceSet
+}
+
+// DeviceSetSummary is one device set in `equip --show`. Local is true when
+// simsquad.local.toml defines it (replacing any simsquad.toml set of that
+// name).
+type DeviceSetSummary struct {
+	Name    string                 `json:"name"`
+	Local   bool                   `json:"local,omitempty"`
+	IOS     []contract.IosSpec     `json:"ios"`
+	Android []contract.AndroidSpec `json:"android"`
+}
+
+// deviceSetNameRx is what equip accepts for a new or renamed set: a bare TOML
+// key, so the name reads the same in the file and on `deploy --device-set`.
+// Hand-written sets with other names still load and save (quoted).
+var deviceSetNameRx = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+func validateDeviceSetName(name string) error {
+	if !deviceSetNameRx.MatchString(name) {
+		return fmt.Errorf("device set name %q: use letters, digits, '-' and '_' only", name)
+	}
+	return nil
+}
+
+func loadDeviceSets(cfg *config.Config) []deviceSet {
+	var out []deviceSet
+	for _, name := range cfg.DeviceSetNames() {
+		set, _ := cfg.DeviceSet(name)
+		ds := deviceSet{name: name, ios: set.IOS, android: set.Android, local: cfg.DeviceSetIsLocal(name)}
+		if ds.local {
+			if shared, ok := cfg.SharedDeviceSet(name); ok {
+				ds.shadow = &shared
+			}
+		}
+		out = append(out, ds)
+	}
+	return out
+}
+
+// findDeviceSet returns the index of the named set in sets, or -1.
+func findDeviceSet(sets []deviceSet, name string) int {
+	for i := range sets {
+		if sets[i].name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// addToDeviceSet appends rows to the named set, creating it in simsquad.toml
+// when no file defines it. An existing set gets the rows where deploy reads
+// it from, which is the local file for a local set.
+func addToDeviceSet(state *wizardState, name string, ios []contract.IosSpec, android []contract.AndroidSpec) {
+	i := findDeviceSet(state.deviceSets, name)
+	if i < 0 {
+		state.deviceSets = append(state.deviceSets, deviceSet{name: name})
+		sortDeviceSets(state.deviceSets)
+		i = findDeviceSet(state.deviceSets, name)
+	}
+	state.deviceSets[i].ios = append(state.deviceSets[i].ios, ios...)
+	state.deviceSets[i].android = append(state.deviceSets[i].android, android...)
+}
+
+func sortDeviceSets(sets []deviceSet) {
+	sort.SliceStable(sets, func(i, j int) bool { return sets[i].name < sets[j].name })
+}
+
+func summarizeDeviceSets(sets []deviceSet) []DeviceSetSummary {
+	if len(sets) == 0 {
+		return nil
+	}
+	out := make([]DeviceSetSummary, 0, len(sets))
+	for _, s := range sets {
+		ios := append([]contract.IosSpec{}, s.ios...)
+		android := append([]contract.AndroidSpec{}, s.android...)
+		out = append(out, DeviceSetSummary{Name: s.name, Local: s.local, IOS: ios, Android: android})
+	}
+	return out
+}
+
+// renderProjectDeviceSets writes the sets simsquad.toml holds: every shared
+// set, and the shared version under each local set that replaces one.
+func renderProjectDeviceSets(b *strings.Builder, sets []deviceSet) {
+	for _, s := range sets {
+		switch {
+		case !s.local:
+			renderDeviceSet(b, s.name, s.ios, s.android)
+		case s.shadow != nil:
+			renderDeviceSet(b, s.name, s.shadow.IOS, s.shadow.Android)
+		}
+	}
+}
+
+// renderLocalDeviceSets writes the sets simsquad.local.toml defines.
+func renderLocalDeviceSets(b *strings.Builder, sets []deviceSet) {
+	for _, s := range sets {
+		if s.local {
+			renderDeviceSet(b, s.name, s.ios, s.android)
+		}
+	}
+}
+
+// renderDeviceSet writes one set as a [device_sets.<name>] header followed by
+// rows shaped like the default matrix's. The header keeps a set with no rows
+// in the file and marks where each set starts.
+func renderDeviceSet(b *strings.Builder, name string, ios []contract.IosSpec, android []contract.AndroidSpec) {
+	key := "device_sets." + tomlKey(name)
+	b.WriteString("\n[" + key + "]\n")
+	for _, spec := range ios {
+		b.WriteString("\n[[" + key + ".ios.sims]]\n")
+		writeIOSRow(b, spec)
+	}
+	for _, spec := range android {
+		b.WriteString("\n[[" + key + ".android.sims]]\n")
+		writeAndroidRow(b, spec)
+	}
+}
+
+func tomlKey(name string) string {
+	if deviceSetNameRx.MatchString(name) {
+		return name
+	}
+	return strconv.Quote(name)
+}
