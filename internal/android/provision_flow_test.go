@@ -482,8 +482,9 @@ func installAPKSetCall(t *testing.T) string {
 	return "bundletool install-apks --apks=/app.apks --device-id=emulator-5556 --adb=" + adb + " --allow-test-only\n"
 }
 
-// A bundle build installs its APK set with bundletool and clears data after,
-// as the APK path does.
+// A bundle build clears the app's data before installing its APK set, never
+// after: pm clear also deletes external app data, where a local-testing
+// install-apks leaves the on-demand modules' splits.
 func TestReuseInstallsTheAPKSetAndClearsData(t *testing.T) {
 	f := newFakeSDK(t, true, "hw.keyboard=no\n")
 	f.withBundletool(t)
@@ -494,7 +495,7 @@ func TestReuseInstallsTheAPKSetAndClearsData(t *testing.T) {
 	if dev.Status != contract.StatusReady {
 		t.Fatalf("status = %s (%s), want ready", dev.Status, dev.ErrorMessage)
 	}
-	want := installAPKSetCall(t) + "adb shell pm clear com.example\n"
+	want := "adb shell pm clear com.example\n" + installAPKSetCall(t)
 	if got := f.calls(t); got != want {
 		t.Fatalf("calls =\n%s\nwant\n%s", got, want)
 	}
@@ -530,8 +531,44 @@ func TestFreshEmulatorRetriesAFailedAPKSetInstallAfterUninstall(t *testing.T) {
 		t.Fatalf("status = %s (%s), want ready", dev.Status, dev.ErrorMessage)
 	}
 	install := installAPKSetCall(t)
-	want := install + "adb uninstall com.example\n" + install + "adb shell pm clear com.example\n"
+	want := "adb shell pm clear com.example\n" + install + "adb uninstall com.example\n" + install
 	if got := f.calls(t); !strings.HasSuffix(got, want) {
 		t.Fatalf("calls =\n%s\nwant them to end with\n%s", got, want)
+	}
+}
+
+// reset on a bundle squad clears the data, then installs the APK set again
+// so the on-demand splits the clear deleted are back.
+func TestResetAppReinstallsTheAPKSetAfterClearing(t *testing.T) {
+	f := newFakeSDK(t, true, "hw.keyboard=no\n")
+	f.withBundletool(t)
+	set := filepath.Join(t.TempDir(), "app.apks")
+	writeFile(t, set, "")
+
+	if err := ResetApp("emulator-5556", "com.example", set); err != nil {
+		t.Fatal(err)
+	}
+	adb, _ := ADB()
+	want := "adb shell am force-stop com.example\n" +
+		"adb shell pm clear com.example\n" +
+		"bundletool install-apks --apks=" + set + " --device-id=emulator-5556 --adb=" + adb + " --allow-test-only\n"
+	if got := f.calls(t); got != want {
+		t.Fatalf("calls =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// Without the APK set on disk (an APK squad, or the set was deleted) reset
+// only clears.
+func TestResetAppOnlyClearsWithoutAnAPKSet(t *testing.T) {
+	for _, set := range []string{"", "/gone/app.apks"} {
+		f := newFakeSDK(t, true, "hw.keyboard=no\n")
+		f.withBundletool(t)
+		if err := ResetApp("emulator-5556", "com.example", set); err != nil {
+			t.Fatal(err)
+		}
+		want := "adb shell am force-stop com.example\nadb shell pm clear com.example\n"
+		if got := f.calls(t); got != want {
+			t.Fatalf("set %q: calls =\n%s\nwant\n%s", set, got, want)
+		}
 	}
 }

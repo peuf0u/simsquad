@@ -85,6 +85,12 @@ func runReset(cmd *cobra.Command, name string, only []string) error {
 	logger := progress.New()
 	defer logger.Close()
 
+	// A bundle squad's APK set, installed again after the clear.
+	var androidAPKSet string
+	if rec.Builds.Android != nil {
+		androidAPKSet = rec.Builds.Android.APKSetPath
+	}
+
 	resetIDs := []string{}
 	var failures []resetFailure
 	matched := 0
@@ -103,7 +109,7 @@ func runReset(cmd *cobra.Command, name string, only []string) error {
 		case contract.PlatformIOS:
 			rerr = ios.ResetApp(dev.UDID, dev.BundleID)
 		case contract.PlatformAndroid:
-			rerr = android.ResetApp(dev.UDID, dev.BundleID)
+			rerr = android.ResetApp(dev.UDID, dev.BundleID, androidAPKSet)
 		default:
 			rerr = fmt.Errorf("unknown platform %q", dev.Platform)
 		}

@@ -788,17 +788,29 @@ func installOnly(serial string, pkg appPackage) error {
 	return install(serial, pkg)
 }
 
+// installAndClear installs pkg and leaves the app with no data. An APK is
+// cleared after the install; an APK set before it, never after: pm clear
+// also deletes the external app data, where a local-testing install-apks
+// leaves the on-demand modules' splits for Play Core to install from. The
+// clear before fails harmlessly when the app isn't installed yet.
 func installAndClear(serial string, pkg appPackage, bundle string) error {
 	adb, err := ADB()
 	if err != nil {
 		return err
 	}
+	if pkg.apkSet != "" {
+		_, _ = util.Run(adb, []string{"-s", serial, "shell", "pm", "clear", bundle}, util.RunOpts{})
+	}
 	if err := install(serial, pkg); err != nil {
 		// One retry after uninstall — covers signature-mismatch on reuse.
+		// The uninstall drops the data too, so the APK set needs no clear.
 		_, _ = util.Run(adb, []string{"-s", serial, "uninstall", bundle}, util.RunOpts{})
 		if err := install(serial, pkg); err != nil {
 			return err
 		}
+	}
+	if pkg.apkSet != "" {
+		return nil
 	}
 	r, _ := util.Run(adb, []string{"-s", serial, "shell", "pm", "clear", bundle}, util.RunOpts{})
 	if r.Code != 0 {
@@ -809,8 +821,12 @@ func installAndClear(serial string, pkg appPackage, bundle string) error {
 
 // ResetApp force-stops the app and clears its data on a device or emulator —
 // the Android analogue of the iOS data-container wipe, powering the `reset`
-// verb. `pm clear` already restores the app to first-install state.
-func ResetApp(serial, bundle string) error {
+// verb. `pm clear` already restores the app to first-install state. For a
+// bundle build, apkSet is the squad's APK set: the clear deletes the
+// on-demand modules' splits from external storage, so the set is installed
+// again to push them back. A set no longer on disk is skipped, and those
+// modules stay uninstallable until the next deploy.
+func ResetApp(serial, bundle, apkSet string) error {
 	adb, err := ADB()
 	if err != nil {
 		return err
@@ -819,6 +835,11 @@ func ResetApp(serial, bundle string) error {
 	r, _ := util.Run(adb, []string{"-s", serial, "shell", "pm", "clear", bundle}, util.RunOpts{})
 	if r.Code != 0 {
 		return fmt.Errorf("pm clear: %s", strings.TrimSpace(r.Stderr+r.Stdout))
+	}
+	if apkSet != "" && isFile(apkSet) {
+		if err := install(serial, appPackage{apkSet: apkSet}); err != nil {
+			return fmt.Errorf("reinstall the APK set after the clear: %w", err)
+		}
 	}
 	return nil
 }
