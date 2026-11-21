@@ -161,7 +161,7 @@ func reprovisionExistingOne(existing contract.Device, in ProvisionInput) contrac
 			dev.ErrorMessage = "reuse-boot: AVD " + avd + " does not exist"
 			return dev
 		}
-		cmd, err := emulatorStart(avd, port, false)
+		cmd, err := emulatorStart(avd, port, false, false)
 		if err != nil {
 			dev.ErrorMessage = "reuse-boot: " + err.Error()
 			return dev
@@ -335,7 +335,7 @@ func provisionEmulatorSlot(s emulatorSlot, ctx emulatorContext) contract.Device 
 		wipe bool
 	}{{1, false}, {2, true}}
 	for _, a := range bootAttempts {
-		cmd, err := emulatorStart(s.name, s.port, a.wipe)
+		cmd, err := emulatorStart(s.name, s.port, false, a.wipe)
 		if err != nil {
 			lastErr = err
 			if ctx.Logger != nil {
@@ -426,23 +426,12 @@ func avdExists(name string) bool {
 // always; the Day 3 landmine fix is to retain the handle for the timeout path.
 // On boot success we simply stop tracking the process — the OS keeps it
 // running because nothing reaps detached children of a now-exited parent.
-func emulatorStart(name string, port int, wipeData bool) (*exec.Cmd, error) {
+func emulatorStart(name string, port int, window, wipeData bool) (*exec.Cmd, error) {
 	emu, err := Emulator()
 	if err != nil {
 		return nil, err
 	}
-	args := []string{
-		"-avd", name,
-		"-port", strconv.Itoa(port),
-		"-no-snapshot-save",
-		"-no-window",
-		"-no-boot-anim",
-		"-gpu", "swiftshader_indirect",
-	}
-	if wipeData {
-		args = append(args, "-wipe-data")
-	}
-	cmd := exec.Command(emu, args...)
+	cmd := exec.Command(emu, emulatorArgs(name, port, window, wipeData)...)
 	// Detach from controlling terminal — emulator must survive simsquad exit.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdin = nil
@@ -452,6 +441,29 @@ func emulatorStart(name string, port int, wipeData bool) (*exec.Cmd, error) {
 		return nil, fmt.Errorf("emulator start: %w", err)
 	}
 	return cmd, nil
+}
+
+// emulatorArgs builds the emulator command line. Headless is the default
+// for test squads. A windowed boot (deploy --window, issue #33) drops
+// -no-window and uses -gpu auto, since swiftshader is a software renderer
+// meant for headless runs. It also adds -no-snapshot-load: every windowed boot
+// follows a config.ini write (hw.keyboard=yes), which the emulator reads only
+// on a cold boot.
+func emulatorArgs(name string, port int, window, wipeData bool) []string {
+	args := []string{
+		"-avd", name,
+		"-port", strconv.Itoa(port),
+		"-no-snapshot-save",
+	}
+	if window {
+		args = append(args, "-no-snapshot-load", "-no-boot-anim", "-gpu", "auto")
+	} else {
+		args = append(args, "-no-window", "-no-boot-anim", "-gpu", "swiftshader_indirect")
+	}
+	if wipeData {
+		args = append(args, "-wipe-data")
+	}
+	return args
 }
 
 func killEmulatorProcess(cmd *exec.Cmd) {
