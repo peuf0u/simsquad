@@ -197,17 +197,36 @@ func reprovisionExistingOne(existing contract.Device, in ProvisionInput) contrac
 		dev.ErrorMessage = "reuse: no udid in reuse"
 		return dev
 	}
-	switch reuseBootDecision(dev, adbShellTrue(dev.UDID), in.Window) {
+	reachable := adbShellTrue(dev.UDID)
+	if reachable && !dev.Physical {
+		// The serial is only a port. After a reboot another emulator (the
+		// user's own, say) can hold it, and reuse must neither kill nor
+		// install on it. Booting the squad's AVD instead would hit the busy
+		// port, so the device fails with the reason.
+		if running := runningAVDName(dev.UDID); running != avdNameOf(dev) {
+			if running == "" {
+				running = "AVD name unknown"
+			}
+			dev.ErrorMessage = fmt.Sprintf("reuse: %s is held by another emulator (%s), not %s",
+				portLabel(dev), running, avdNameOf(dev))
+			return dev
+		}
+	}
+	switch decision := reuseBootDecision(dev, reachable, in.Window); decision {
 	case reusePhysicalUnreachable:
 		dev.ErrorMessage = "reuse-boot: physical device is not reachable"
 		return dev
-	case reuseBootHeadless:
-		if err := bootReused(&dev, false, in.Logger); err != nil {
-			dev.ErrorMessage = "reuse-boot: " + err.Error()
-			return dev
+	case reuseBootHeadless, reuseBootWindowed:
+		// adb not answering doesn't mean the squad's emulator has exited:
+		// it may still be booting after an interrupted deploy. A second
+		// instance can't start on its locked AVD, so stop the live one.
+		if dev.EmulatorPID > 0 && emulatorProcessAlive(dev.EmulatorPID) {
+			if err := stopEmulator(dev); err != nil {
+				dev.ErrorMessage = "reuse-boot: " + err.Error()
+				return dev
+			}
 		}
-	case reuseBootWindowed:
-		if err := bootReused(&dev, true, in.Logger); err != nil {
+		if err := bootReused(&dev, decision == reuseBootWindowed, in.Logger); err != nil {
 			dev.ErrorMessage = "reuse-boot: " + err.Error()
 			return dev
 		}
@@ -244,10 +263,7 @@ func bootReused(dev *contract.Device, window bool, logger *progress.Logger) erro
 	if err != nil {
 		return err
 	}
-	avd := dev.AVDName
-	if avd == "" {
-		avd = dev.Name
-	}
+	avd := avdNameOf(*dev)
 	if !avdExists(avd) {
 		return fmt.Errorf("AVD %s does not exist", avd)
 	}
@@ -262,10 +278,46 @@ func bootReused(dev *contract.Device, window bool, logger *progress.Logger) erro
 		killEmulatorProcess(cmd)
 		return err
 	}
+	// An emulator that can't lock its AVD exits at once, and the boot poll
+	// then passes against whatever instance still answers on the port.
+	// Recording that boot would store a dead PID and a mode that isn't so.
+	if !emulatorProcessAlive(cmd.Process.Pid) {
+		killEmulatorProcess(cmd)
+		return fmt.Errorf("the emulator started for %s exited during boot; another instance of it may still be running", avd)
+	}
 	time.Sleep(emulatorSettleAfterBoot)
 	dev.EmulatorPID = cmd.Process.Pid
 	dev.Window = window
 	return nil
+}
+
+func avdNameOf(dev contract.Device) string {
+	if dev.AVDName != "" {
+		return dev.AVDName
+	}
+	return dev.Name
+}
+
+func portLabel(dev contract.Device) string {
+	if port, err := emulatorPort(dev); err == nil {
+		return "port " + strconv.Itoa(port)
+	}
+	return dev.UDID
+}
+
+// runningAVDName asks the emulator on serial which AVD it runs (`adb emu
+// avd name` prints the name, then OK). Empty when it can't tell.
+func runningAVDName(serial string) string {
+	adb, err := ADB()
+	if err != nil {
+		return ""
+	}
+	r, err := util.Run(adb, []string{"-s", serial, "emu", "avd", "name"}, util.RunOpts{Timeout: 5 * time.Second})
+	if err != nil || r.Code != 0 {
+		return ""
+	}
+	first, _, _ := strings.Cut(r.Stdout, "\n")
+	return strings.TrimSpace(first)
 }
 
 // stopEmulator asks a running emulator to exit and waits until it has, so
