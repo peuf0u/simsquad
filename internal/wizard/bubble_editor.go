@@ -48,6 +48,13 @@ const (
 	actionAddPhysical   editorAction = "add-physical"
 	actionClearIOS      editorAction = "clear-ios"
 	actionClearAndroid  editorAction = "clear-android"
+	actionDeviceSets    editorAction = "device-sets"
+	actionOpenSet       editorAction = "open-set"
+	actionNewSet        editorAction = "new-set"
+	actionSetIOS        editorAction = "set-ios"
+	actionSetAndroid    editorAction = "set-android"
+	actionRenameSet     editorAction = "rename-set"
+	actionDeleteSet     editorAction = "delete-set"
 )
 
 type submenuID int
@@ -56,7 +63,15 @@ const (
 	submenuNone submenuID = iota
 	submenuIOS
 	submenuAndroid
+	submenuSets // the device sets list
+	submenuSet  // one device set: its rows, rename, delete
 )
+
+// menuFrame is a menu the user descended from, restored on back.
+type menuFrame struct {
+	submenu submenuID
+	cursor  int
+}
 
 type editorField struct {
 	label    string
@@ -80,11 +95,15 @@ type editorModel struct {
 	mode          editorMode
 	cursor        int
 	activeSubmenu submenuID
-	parentCursor  int
-	message       string
-	err           error
-	saved         bool
-	dirty         bool
+	menuStack     []menuFrame
+	// activeSet names the device set whose menu is open (or below it); the
+	// iOS and Android submenus then edit that set's rows instead of the
+	// default matrix. "" is the default matrix.
+	activeSet string
+	message   string
+	err       error
+	saved     bool
+	dirty     bool
 
 	inputTitle string
 	inputKind  editorAction
@@ -102,6 +121,7 @@ type menuItem struct {
 	label  string
 	group  string
 	action editorAction
+	set    string // the device set an actionOpenSet row opens
 }
 
 var editorMenuItems = []menuItem{
@@ -109,6 +129,7 @@ var editorMenuItems = []menuItem{
 	{group: "Project", label: "Project settings", action: actionProject},
 	{group: "Matrix", label: "iOS matrix…", action: actionIOSMatrix},
 	{group: "Matrix", label: "Android matrix…", action: actionAndroidMatrix},
+	{group: "Matrix", label: "Device sets…", action: actionDeviceSets},
 	{group: "Context", label: "Edit context", action: actionEditContext},
 }
 
@@ -135,9 +156,46 @@ func (m editorModel) currentMenuItems() []menuItem {
 		return iosSubmenuItems
 	case submenuAndroid:
 		return androidSubmenuItems
+	case submenuSets:
+		items := make([]menuItem, 0, len(m.state.deviceSets)+2)
+		for _, set := range m.state.deviceSets {
+			label := set.name
+			if set.local {
+				label += " (local)"
+			}
+			items = append(items, menuItem{group: "Sets", label: label, action: actionOpenSet, set: set.name})
+		}
+		return append(items,
+			menuItem{group: "Device sets", label: "New device set", action: actionNewSet},
+			menuItem{group: "Nav", label: "Back", action: actionBack})
+	case submenuSet:
+		return []menuItem{
+			{group: m.activeSet, label: "iOS simulators…", action: actionSetIOS},
+			{group: m.activeSet, label: "Android devices…", action: actionSetAndroid},
+			{group: m.activeSet, label: "Rename set", action: actionRenameSet},
+			{group: m.activeSet, label: "Delete set", action: actionDeleteSet},
+			{group: "Nav", label: "Back", action: actionBack},
+		}
 	default:
 		return editorMenuItems
 	}
+}
+
+// iosTarget is the iOS rows the iOS submenu edits: the open device set's,
+// or the default matrix.
+func (m *editorModel) iosTarget() *[]contract.IosSpec {
+	if i := findDeviceSet(m.state.deviceSets, m.activeSet); m.activeSet != "" && i >= 0 {
+		return &m.state.deviceSets[i].ios
+	}
+	return &m.state.iosSpecs
+}
+
+// androidTarget is iosTarget for the Android submenu.
+func (m *editorModel) androidTarget() *[]contract.AndroidSpec {
+	if i := findDeviceSet(m.state.deviceSets, m.activeSet); m.activeSet != "" && i >= 0 {
+		return &m.state.deviceSets[i].android
+	}
+	return &m.state.androidSpec
 }
 
 var (
@@ -281,6 +339,9 @@ func (m editorModel) updateMenu(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cursor++
 		}
 	case "enter":
+		if items[m.cursor].action == actionOpenSet {
+			m.activeSet = items[m.cursor].set
+		}
 		return m.startAction(items[m.cursor].action)
 	case "q":
 		if m.activeSubmenu != submenuNone {
@@ -293,7 +354,7 @@ func (m editorModel) updateMenu(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m editorModel) pushSubmenu(sub submenuID) editorModel {
-	m.parentCursor = m.cursor
+	m.menuStack = append(append([]menuFrame{}, m.menuStack...), menuFrame{submenu: m.activeSubmenu, cursor: m.cursor})
 	m.activeSubmenu = sub
 	m.cursor = 0
 	m.message = ""
@@ -301,9 +362,15 @@ func (m editorModel) pushSubmenu(sub submenuID) editorModel {
 }
 
 func (m editorModel) popSubmenu() editorModel {
-	m.activeSubmenu = submenuNone
-	m.cursor = m.parentCursor
-	m.parentCursor = 0
+	if m.activeSubmenu == submenuSet {
+		m.activeSet = ""
+	}
+	m.activeSubmenu, m.cursor = submenuNone, 0
+	if n := len(m.menuStack); n > 0 {
+		top := m.menuStack[n-1]
+		m.activeSubmenu, m.cursor = top.submenu, top.cursor
+		m.menuStack = m.menuStack[:n-1]
+	}
 	m.message = ""
 	return m
 }
@@ -320,8 +387,32 @@ func (m editorModel) startAction(action editorAction) (tea.Model, tea.Cmd) {
 		return m.pushSubmenu(submenuAndroid), nil
 	case actionBack:
 		return m.popSubmenu(), nil
+	case actionDeviceSets:
+		return m.pushSubmenu(submenuSets), nil
+	case actionOpenSet:
+		return m.pushSubmenu(submenuSet), nil
+	case actionSetIOS:
+		return m.pushSubmenu(submenuIOS), nil
+	case actionSetAndroid:
+		return m.pushSubmenu(submenuAndroid), nil
+	case actionNewSet:
+		m.mode = editorFields
+		m.inputTitle = "New device set"
+		m.inputKind = action
+		m.fieldIdx = 0
+		m.fields = []editorField{{label: "Name", required: true}}
+	case actionRenameSet:
+		m.mode = editorFields
+		m.inputTitle = "Rename device set " + m.activeSet
+		m.inputKind = action
+		m.fieldIdx = 0
+		m.fields = []editorField{{label: "Name", value: m.activeSet, required: true}}
+	case actionDeleteSet:
+		m.mode = editorConfirm
+		m.confirmTitle = fmt.Sprintf("Delete device set %s?", m.activeSet)
+		m.confirmKind = action
 	case actionRemoveIOS:
-		if len(m.state.iosSpecs) == 0 {
+		if len((*m.iosTarget())) == 0 {
 			m.message = "iOS matrix is empty"
 			return m, nil
 		}
@@ -330,7 +421,7 @@ func (m editorModel) startAction(action editorAction) (tea.Model, tea.Cmd) {
 		m.inputKind = action
 		m.fieldIdx = 0
 	case actionRemoveAndroid:
-		if len(m.state.androidSpec) == 0 {
+		if len((*m.androidTarget())) == 0 {
 			m.message = "Android matrix is empty"
 			return m, nil
 		}
@@ -382,7 +473,7 @@ func (m editorModel) startAction(action editorAction) (tea.Model, tea.Cmd) {
 			{label: "Count", value: "1", required: true, count: true},
 		}
 	case actionEditIOS:
-		if len(m.state.iosSpecs) == 0 {
+		if len((*m.iosTarget())) == 0 {
 			m.message = "iOS matrix is empty"
 			return m, nil
 		}
@@ -403,7 +494,7 @@ func (m editorModel) startAction(action editorAction) (tea.Model, tea.Cmd) {
 			{label: "Count", value: "1", required: true, count: true},
 		}
 	case actionEditAndroid:
-		if len(m.state.androidSpec) == 0 {
+		if len((*m.androidTarget())) == 0 {
 			m.message = "Android matrix is empty"
 			return m, nil
 		}
@@ -468,9 +559,9 @@ func isRemoveAction(action editorAction) bool {
 func (m editorModel) specCount() int {
 	switch m.inputKind {
 	case actionEditIOS, actionRemoveIOS:
-		return len(m.state.iosSpecs)
+		return len((*m.iosTarget()))
 	case actionEditAndroid, actionRemoveAndroid:
-		return len(m.state.androidSpec)
+		return len((*m.androidTarget()))
 	default:
 		return 0
 	}
@@ -479,16 +570,16 @@ func (m editorModel) specCount() int {
 func (m editorModel) removeConfirmTitle() string {
 	switch m.inputKind {
 	case actionRemoveIOS:
-		if m.specIdx < 0 || m.specIdx >= len(m.state.iosSpecs) {
+		if m.specIdx < 0 || m.specIdx >= len((*m.iosTarget())) {
 			return "Remove iOS simulator?"
 		}
-		spec := m.state.iosSpecs[m.specIdx]
+		spec := (*m.iosTarget())[m.specIdx]
 		return fmt.Sprintf("Remove iOS simulator %d — %s / %s ×%d?", m.specIdx+1, spec.Device, spec.Runtime, spec.Count)
 	case actionRemoveAndroid:
-		if m.specIdx < 0 || m.specIdx >= len(m.state.androidSpec) {
+		if m.specIdx < 0 || m.specIdx >= len((*m.androidTarget())) {
 			return "Remove Android spec?"
 		}
-		spec := m.state.androidSpec[m.specIdx]
+		spec := (*m.androidTarget())[m.specIdx]
 		if spec.Target == contract.TargetPhysical {
 			return fmt.Sprintf("Remove physical Android devices ×%d?", spec.Count)
 		}
@@ -504,7 +595,7 @@ func (m *editorModel) startSpecEdit() {
 	m.message = ""
 	switch m.inputKind {
 	case actionEditIOS:
-		spec := m.state.iosSpecs[m.specIdx]
+		spec := (*m.iosTarget())[m.specIdx]
 		m.inputTitle = fmt.Sprintf("Edit iOS simulator %d", m.specIdx+1)
 		m.fields = []editorField{
 			{label: "Device", value: spec.Device, required: true, choices: iosDeviceChoices(spec.Device)},
@@ -512,7 +603,7 @@ func (m *editorModel) startSpecEdit() {
 			{label: "Count", value: strconv.Itoa(spec.Count), required: true, count: true},
 		}
 	case actionEditAndroid:
-		spec := m.state.androidSpec[m.specIdx]
+		spec := (*m.androidTarget())[m.specIdx]
 		if spec.Target == contract.TargetPhysical {
 			m.inputTitle = fmt.Sprintf("Edit physical Android devices %d", m.specIdx+1)
 			m.fields = []editorField{{label: "Count", value: strconv.Itoa(spec.Count), required: true, count: true}}
@@ -743,7 +834,7 @@ func (m *editorModel) applyInput() error {
 		if err != nil {
 			return err
 		}
-		m.state.iosSpecs = append(m.state.iosSpecs, contract.IosSpec{
+		(*m.iosTarget()) = append((*m.iosTarget()), contract.IosSpec{
 			Device:  strings.TrimSpace(m.fields[0].value),
 			Runtime: strings.TrimSpace(m.fields[1].value),
 			Count:   count,
@@ -753,10 +844,10 @@ func (m *editorModel) applyInput() error {
 		if err != nil {
 			return err
 		}
-		if m.specIdx < 0 || m.specIdx >= len(m.state.iosSpecs) {
+		if m.specIdx < 0 || m.specIdx >= len((*m.iosTarget())) {
 			return errors.New("selected iOS spec no longer exists")
 		}
-		m.state.iosSpecs[m.specIdx] = contract.IosSpec{
+		(*m.iosTarget())[m.specIdx] = contract.IosSpec{
 			Device:  strings.TrimSpace(m.fields[0].value),
 			Runtime: strings.TrimSpace(m.fields[1].value),
 			Count:   count,
@@ -766,14 +857,14 @@ func (m *editorModel) applyInput() error {
 		if err != nil {
 			return err
 		}
-		m.state.androidSpec = append(m.state.androidSpec, contract.AndroidSpec{
+		(*m.androidTarget()) = append((*m.androidTarget()), contract.AndroidSpec{
 			Device: strings.TrimSpace(m.fields[0].value),
 			Image:  strings.TrimSpace(m.fields[1].value),
 			Count:  count,
 			Target: contract.TargetEmulator,
 		})
 	case actionEditAndroid:
-		if m.specIdx < 0 || m.specIdx >= len(m.state.androidSpec) {
+		if m.specIdx < 0 || m.specIdx >= len((*m.androidTarget())) {
 			return errors.New("selected Android spec no longer exists")
 		}
 		countIdx := len(m.fields) - 1
@@ -781,25 +872,52 @@ func (m *editorModel) applyInput() error {
 		if err != nil {
 			return err
 		}
-		current := m.state.androidSpec[m.specIdx]
+		current := (*m.androidTarget())[m.specIdx]
 		if current.Target == contract.TargetPhysical {
 			current.Count = count
-			m.state.androidSpec[m.specIdx] = current
+			(*m.androidTarget())[m.specIdx] = current
 			m.dirty = true
 			return nil
 		}
-		m.state.androidSpec[m.specIdx] = contract.AndroidSpec{
+		(*m.androidTarget())[m.specIdx] = contract.AndroidSpec{
 			Device: strings.TrimSpace(m.fields[0].value),
 			Image:  strings.TrimSpace(m.fields[1].value),
 			Count:  count,
 			Target: contract.TargetEmulator,
 		}
+	case actionNewSet:
+		name := strings.TrimSpace(m.fields[0].value)
+		if err := m.checkNewSetName(name); err != nil {
+			return err
+		}
+		m.state.deviceSets = append(append([]deviceSet{}, m.state.deviceSets...), deviceSet{name: name})
+		sortDeviceSets(m.state.deviceSets)
+		// Open the new set so its rows can be added straight away.
+		m.activeSet = name
+		*m = m.pushSubmenu(submenuSet)
+	case actionRenameSet:
+		name := strings.TrimSpace(m.fields[0].value)
+		if name == m.activeSet {
+			return nil
+		}
+		if err := m.checkNewSetName(name); err != nil {
+			return err
+		}
+		i := findDeviceSet(m.state.deviceSets, m.activeSet)
+		if i < 0 {
+			return errors.New("selected device set no longer exists")
+		}
+		sets := append([]deviceSet{}, m.state.deviceSets...)
+		sets[i].name = name
+		sortDeviceSets(sets)
+		m.state.deviceSets = sets
+		m.activeSet = name
 	case actionAddPhysical:
 		count, err := positiveInt(m.fields[0].value)
 		if err != nil {
 			return err
 		}
-		m.state.androidSpec = append(m.state.androidSpec, contract.AndroidSpec{
+		(*m.androidTarget()) = append((*m.androidTarget()), contract.AndroidSpec{
 			Device: "physical",
 			Image:  "physical",
 			Count:  count,
@@ -807,6 +925,18 @@ func (m *editorModel) applyInput() error {
 		})
 	}
 	m.dirty = true
+	return nil
+}
+
+// checkNewSetName refuses a name equip can't write as a bare TOML key, or one
+// another set already has.
+func (m editorModel) checkNewSetName(name string) error {
+	if err := validateDeviceSetName(name); err != nil {
+		return err
+	}
+	if findDeviceSet(m.state.deviceSets, name) >= 0 {
+		return fmt.Errorf("a device set named %s already exists", name)
+	}
 	return nil
 }
 
@@ -826,6 +956,10 @@ func actionDoneMessage(action editorAction) string {
 		return "updated Android spec"
 	case actionAddPhysical:
 		return "added physical Android devices"
+	case actionNewSet:
+		return "added device set"
+	case actionRenameSet:
+		return "updated device set name"
 	default:
 		return "updated " + string(action)
 	}
@@ -847,6 +981,10 @@ func doneLabel(action editorAction) string {
 		return "Update selected Android spec"
 	case actionAddPhysical:
 		return "Add physical devices"
+	case actionNewSet:
+		return "Create device set"
+	case actionRenameSet:
+		return "Rename device set"
 	default:
 		return "Done"
 	}
@@ -871,59 +1009,76 @@ func (m editorModel) updateConfirm(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "y", "Y":
 		switch m.confirmKind {
+		case actionDeleteSet:
+			if i := findDeviceSet(m.state.deviceSets, m.activeSet); i >= 0 {
+				m.state.deviceSets = append(append([]deviceSet{}, m.state.deviceSets[:i]...), m.state.deviceSets[i+1:]...)
+				m.dirty = true
+				m.message = "deleted device set " + m.activeSet
+			}
+			m.mode = editorMenu
+			return m.popSubmenu().withMessage(m.message), nil
 		case actionClearIOS:
-			m.state.iosSpecs = nil
+			(*m.iosTarget()) = nil
 			m.dirty = true
 			m.mode = editorMenu
 			m.message = "cleared iOS matrix"
 		case actionClearAndroid:
-			m.state.androidSpec = nil
+			(*m.androidTarget()) = nil
 			m.dirty = true
 			m.mode = editorMenu
 			m.message = "cleared Android matrix"
 		case actionRemoveIOS:
-			if m.specIdx >= 0 && m.specIdx < len(m.state.iosSpecs) {
-				m.state.iosSpecs = append(m.state.iosSpecs[:m.specIdx], m.state.iosSpecs[m.specIdx+1:]...)
+			if m.specIdx >= 0 && m.specIdx < len((*m.iosTarget())) {
+				(*m.iosTarget()) = append((*m.iosTarget())[:m.specIdx], (*m.iosTarget())[m.specIdx+1:]...)
 				m.dirty = true
 				m.message = fmt.Sprintf("removed iOS simulator %d", m.specIdx+1)
 			}
-			if len(m.state.iosSpecs) == 0 {
+			if len((*m.iosTarget())) == 0 {
 				m.mode = editorMenu
 				m.inputKind = ""
 			} else {
-				if m.specIdx >= len(m.state.iosSpecs) {
-					m.specIdx = len(m.state.iosSpecs) - 1
+				if m.specIdx >= len((*m.iosTarget())) {
+					m.specIdx = len((*m.iosTarget())) - 1
 				}
 				m.fieldIdx = m.specIdx
 				m.mode = editorSpecs
 			}
 		case actionRemoveAndroid:
-			if m.specIdx >= 0 && m.specIdx < len(m.state.androidSpec) {
-				m.state.androidSpec = append(m.state.androidSpec[:m.specIdx], m.state.androidSpec[m.specIdx+1:]...)
+			if m.specIdx >= 0 && m.specIdx < len((*m.androidTarget())) {
+				(*m.androidTarget()) = append((*m.androidTarget())[:m.specIdx], (*m.androidTarget())[m.specIdx+1:]...)
 				m.dirty = true
 				m.message = fmt.Sprintf("removed Android spec %d", m.specIdx+1)
 			}
-			if len(m.state.androidSpec) == 0 {
+			if len((*m.androidTarget())) == 0 {
 				m.mode = editorMenu
 				m.inputKind = ""
 			} else {
-				if m.specIdx >= len(m.state.androidSpec) {
-					m.specIdx = len(m.state.androidSpec) - 1
+				if m.specIdx >= len((*m.androidTarget())) {
+					m.specIdx = len((*m.androidTarget())) - 1
 				}
 				m.fieldIdx = m.specIdx
 				m.mode = editorSpecs
 			}
 		}
 	case "n", "N", "enter":
-		if isRemoveAction(m.confirmKind) {
+		switch {
+		case isRemoveAction(m.confirmKind):
 			m.mode = editorSpecs
 			m.message = "remove cancelled"
-		} else {
+		case m.confirmKind == actionDeleteSet:
+			m.mode = editorMenu
+			m.message = "delete cancelled"
+		default:
 			m.mode = editorMenu
 			m.message = "clear cancelled"
 		}
 	}
 	return m, nil
+}
+
+func (m editorModel) withMessage(msg string) editorModel {
+	m.message = msg
+	return m
 }
 
 func (m editorModel) View() string {
@@ -1051,22 +1206,37 @@ func actionLabel(item menuItem) string {
 }
 
 func (m editorModel) menuTitle() string {
+	switch {
+	case m.activeSubmenu == submenuIOS && m.activeSet != "":
+		return m.activeSet + " · iOS"
+	case m.activeSubmenu == submenuAndroid && m.activeSet != "":
+		return m.activeSet + " · Android"
+	}
 	switch m.activeSubmenu {
 	case submenuIOS:
 		return "iOS matrix"
 	case submenuAndroid:
 		return "Android matrix"
+	case submenuSets:
+		return "Device sets"
+	case submenuSet:
+		return "Device set " + m.activeSet
 	default:
 		return "Actions"
 	}
 }
 
 func (m editorModel) menuSubtitle() string {
+	if m.activeSet != "" {
+		return "" // the set's name in the title fills the line
+	}
 	switch m.activeSubmenu {
 	case submenuIOS:
 		return "add / edit / remove simulators"
 	case submenuAndroid:
 		return "add / edit / remove specs"
+	case submenuSets:
+		return "open / create"
 	default:
 		return "configure + save"
 	}
@@ -1084,7 +1254,7 @@ func (m editorModel) summaryView(width int) string {
 	b.WriteString(projectRow("iOS scheme", m.state.iosScheme, width) + "\n")
 	b.WriteString(projectRow("Gradle task", m.state.gradleTask, width) + "\n\n")
 	b.WriteString(sectionTitle("iOS matrix") + "\n")
-	if len(m.state.iosSpecs) == 0 {
+	if len((*m.iosTarget())) == 0 {
 		b.WriteString("  " + editorDimStyle.Render("No iOS simulators configured") + "\n")
 	} else {
 		b.WriteString(matrixHeader(width) + "\n")
@@ -1093,7 +1263,7 @@ func (m editorModel) summaryView(width int) string {
 		b.WriteString(iosMatrixRow(i+1, spec, width) + "\n")
 	}
 	b.WriteString("\n" + sectionTitle("Android matrix") + "\n")
-	if len(m.state.androidSpec) == 0 {
+	if len((*m.androidTarget())) == 0 {
 		b.WriteString("  " + editorDimStyle.Render("No Android targets configured") + "\n")
 	} else {
 		b.WriteString(matrixHeader(width) + "\n")
@@ -1101,7 +1271,34 @@ func (m editorModel) summaryView(width int) string {
 	for i, spec := range m.state.androidSpec {
 		b.WriteString(androidMatrixRow(i+1, spec, width) + "\n")
 	}
+	m.deviceSetsSummary(&b, width)
 	return b.String()
+}
+
+// deviceSetsSummary lists each named device set and its rows under the
+// default matrix.
+func (m editorModel) deviceSetsSummary(b *strings.Builder, width int) {
+	b.WriteString("\n" + sectionTitle("Device sets") + "\n")
+	if len(m.state.deviceSets) == 0 {
+		b.WriteString("  " + editorDimStyle.Render("No named device sets") + "\n")
+		return
+	}
+	for _, set := range m.state.deviceSets {
+		head := "  " + editorValueStyle.Render(set.name)
+		if set.local {
+			head += " " + editorSubtleStyle.Render("local")
+		}
+		b.WriteString(head + "\n")
+		if len(set.ios)+len(set.android) == 0 {
+			b.WriteString("  " + editorDimStyle.Render("No devices") + "\n")
+		}
+		for i, spec := range set.ios {
+			b.WriteString(iosMatrixRow(i+1, spec, width) + "\n")
+		}
+		for i, spec := range set.android {
+			b.WriteString(androidMatrixRow(len(set.ios)+i+1, spec, width) + "\n")
+		}
+	}
 }
 
 func configHealth(state wizardState) string {
@@ -1222,11 +1419,11 @@ func (m editorModel) specsPanelView() string {
 	b.WriteString("\n\n")
 	switch m.inputKind {
 	case actionEditIOS, actionRemoveIOS:
-		for i, spec := range m.state.iosSpecs {
+		for i, spec := range *m.iosTarget() {
 			m.writeSpecLine(&b, i, fmt.Sprintf("%s / %s x%d", spec.Device, spec.Runtime, spec.Count))
 		}
 	case actionEditAndroid, actionRemoveAndroid:
-		for i, spec := range m.state.androidSpec {
+		for i, spec := range *m.androidTarget() {
 			if spec.Target == contract.TargetPhysical {
 				m.writeSpecLine(&b, i, fmt.Sprintf("physical x%d", spec.Count))
 				continue
