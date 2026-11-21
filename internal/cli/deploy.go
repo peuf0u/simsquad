@@ -261,13 +261,13 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 	case actionReuse:
 		existingIOS = iosDevs
 	case actionReset:
-		resetPlatform(rec.Name, deployResult{ios: true}, iosDevs, logger)
+		resetPlatform(rec.Name, deployResult{ios: true, builds: co.placeholders()}, iosDevs, logger)
 	}
 	switch androidAction {
 	case actionReuse:
 		existingAndroid = androidDevs
 	case actionReset:
-		resetPlatform(rec.Name, deployResult{android: true}, androidDevs, logger)
+		resetPlatform(rec.Name, deployResult{android: true, builds: co.placeholders()}, androidDevs, logger)
 	}
 	if reused {
 		logger.Info("deploy: reuse", progress.F("name", rec.Name))
@@ -578,18 +578,43 @@ func claimSquad(name string, o claimOpts) (squadClaim, error) {
 	return c, err
 }
 
-// markClaim writes a placeholder builds entry (repo and specs, no artifact)
-// for each platform this deploy is about to deploy. From the moment of the
-// claim the record then shows a deploy in flight, so another deploy's
-// failed-create cleanup doesn't remove a squad this one is still building
-// for. The final merge overwrites the placeholder with the real build.
-func (o claimOpts) markClaim(rec *contract.SquadRecord) {
+// placeholders are the claim markers for this deploy's platforms: a builds
+// entry with repo and specs but no artifact and no error.
+func (o claimOpts) placeholders() contract.Builds {
+	var b contract.Builds
 	if len(o.iosSpecs) > 0 {
-		rec.Builds.IOS = &contract.IosBuild{Repo: o.iosRepo, Specs: o.iosSpecs}
+		b.IOS = &contract.IosBuild{Repo: o.iosRepo, Specs: o.iosSpecs}
 	}
 	if len(o.androidSpecs) > 0 {
-		rec.Builds.Android = &contract.AndroidBuild{Repo: o.androidRepo, Specs: o.androidSpecs}
+		b.Android = &contract.AndroidBuild{Repo: o.androidRepo, Specs: o.androidSpecs}
 	}
+	return b
+}
+
+// markClaim writes a claim marker for each platform this deploy is about to
+// deploy that has no builds entry yet. From the moment of the claim the
+// record then shows a deploy in flight, so another deploy's failed-create
+// cleanup doesn't remove a squad this one is still building for. An existing
+// entry stays until the final merge replaces it: `status` keeps showing the
+// installed build, and a killed deploy doesn't lose its artifact fields.
+// (Cleanup runs only for a squad this deploy created, which had no entries,
+// so the marker is there wherever cleanup looks for it.)
+func (o claimOpts) markClaim(rec *contract.SquadRecord) {
+	p := o.placeholders()
+	if rec.Builds.IOS == nil {
+		rec.Builds.IOS = p.IOS
+	}
+	if rec.Builds.Android == nil {
+		rec.Builds.Android = p.Android
+	}
+}
+
+func isIosMarker(b *contract.IosBuild) bool {
+	return b != nil && b.AppPath == "" && b.Error == ""
+}
+
+func isAndroidMarker(b *contract.AndroidBuild) bool {
+	return b != nil && b.APKPath == "" && b.Error == ""
 }
 
 // deployResult is what one deploy produced for the platforms it deployed.
@@ -685,9 +710,10 @@ func (r deployResult) devices() []contract.Device {
 // cleanupCreatedSquad undoes a failed deploy of a squad it created: it tears
 // down the deploy's own devices and, under the lock, drops its devices, its
 // own builds entries and (for Android) its port reservations from the
-// reloaded record. The squad itself goes only when no devices, ports or
-// builds entries are left: a concurrent deploy of the other platform shows
-// at least its claim marker (markClaim), and its part keeps the squad.
+// reloaded record. The squad itself goes only when no devices, ports or claim
+// markers are left: a concurrent deploy of the other platform still in
+// flight shows at least its marker (markClaim). A finished failed build of
+// another deploy, with no devices, doesn't keep the squad.
 func cleanupCreatedSquad(name string, result deployResult, logger *progress.Logger) {
 	deployVia.teardownDevices(result.devices(), logger)
 	drop := deployResult{ios: result.ios, android: result.android}
@@ -697,7 +723,7 @@ func cleanupCreatedSquad(name string, result deployResult, logger *progress.Logg
 			return err
 		}
 		_ = drop.mergeInto(rec)
-		if len(rec.Devices) > 0 || len(rec.Ports) > 0 || rec.Builds.IOS != nil || rec.Builds.Android != nil {
+		if len(rec.Devices) > 0 || len(rec.Ports) > 0 || isIosMarker(rec.Builds.IOS) || isAndroidMarker(rec.Builds.Android) {
 			return state.SaveRecord(rec)
 		}
 		if err := state.RemoveRecord(name); err != nil {
@@ -712,10 +738,12 @@ func cleanupCreatedSquad(name string, result deployResult, logger *progress.Logg
 	logger.Info("deploy: cleanup-empty", progress.F("name", name))
 }
 
-// resetPlatform tears down one platform's devices and drops them, its builds
-// entry and (for Android) its ports from the record, leaving the other
-// platform alone. Dropping the ports before reprovisioning lets the fresh
-// emulators take the same port numbers back.
+// resetPlatform tears down one platform's devices and drops them and (for
+// Android) its ports from the record, leaving the other platform alone. The
+// platform's builds entry becomes the deploy's claim marker (empty.builds),
+// so the record still shows the deploy in flight while it rebuilds.
+// Dropping the ports before reprovisioning lets the fresh emulators take the
+// same port numbers back.
 func resetPlatform(name string, empty deployResult, devs []contract.Device, logger *progress.Logger) {
 	platform := contract.PlatformIOS
 	if empty.android {

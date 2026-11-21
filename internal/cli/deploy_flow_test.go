@@ -1025,3 +1025,76 @@ func TestDeployExitCodeCountsFailedBuildWithoutDevices(t *testing.T) {
 		t.Fatalf("everything failed: code %d err %v, want 1", code, err)
 	}
 }
+
+// A platform reset keeps the deploy's claim marker for that platform, so a
+// concurrent creator's failed-build cleanup still sees the deploy in flight.
+func TestDeployResetKeepsClaimMarker(t *testing.T) {
+	newDeployRepo(t, deployToml)
+	f := installFakeDeploy(t)
+	seedSquad(t, &contract.SquadRecord{
+		Name:    "s",
+		Builds:  contract.Builds{Android: &contract.AndroidBuild{Repo: "/old", APKPath: "/old/app.apk"}},
+		Devices: []contract.Device{seededAndroid("s", testAndImageOld, contract.StatusError)},
+	})
+	var during *contract.AndroidBuild
+	f.duringAndroidBuild = func() { during = loadTestRecord(t, "s").Builds.Android }
+
+	if _, code, err := deployCLI(t, "--name", "s", "--platform", "android"); err != nil || code != 0 {
+		t.Fatalf("code %d err %v", code, err)
+	}
+	if len(f.deviceTeardowns) != 1 {
+		t.Fatalf("device teardowns = %+v, want the stale emulator reset", f.deviceTeardowns)
+	}
+	if during == nil || during.Repo == "" || during.APKPath != "" || during.Error != "" {
+		t.Fatalf("builds.android during the rebuild = %+v, want the claim marker", during)
+	}
+}
+
+// The claim leaves a finished builds entry alone until the final merge, so
+// `status` keeps showing the installed build during the deploy and a killed
+// deploy doesn't lose its artifact fields.
+func TestDeployClaimKeepsFinishedBuildEntry(t *testing.T) {
+	newDeployRepo(t, deployToml)
+	f := installFakeDeploy(t)
+	old := &contract.IosBuild{Repo: "/old", AppPath: "/old/App.app", BundleID: "com.example.app", GitSHA: "abc"}
+	seedSquad(t, &contract.SquadRecord{
+		Name:    "s",
+		Builds:  contract.Builds{IOS: old},
+		Devices: []contract.Device{seededIOS("s", contract.StatusReady)},
+	})
+	var during *contract.IosBuild
+	f.duringIOSBuild = func() { during = loadTestRecord(t, "s").Builds.IOS }
+
+	if _, code, err := deployCLI(t, "--name", "s", "--platform", "ios"); err != nil || code != 0 {
+		t.Fatalf("code %d err %v", code, err)
+	}
+	if !reflect.DeepEqual(during, old) {
+		t.Fatalf("builds.ios during the deploy = %+v, want the finished entry %+v", during, old)
+	}
+}
+
+// Cleanup keeps a squad only for another deploy's devices, ports or claim
+// marker — not for a finished failed build: A creates s for iOS, B adds
+// Android and its build fails first (saving builds.android with an error
+// and no devices), then A's build fails. The squad goes.
+func TestDeployCleanupIgnoresAnotherDeploysFailedBuild(t *testing.T) {
+	newDeployRepo(t, deployToml)
+	f := installFakeDeploy(t)
+	f.iosBuildErr = errors.New("xcodebuild failed")
+	f.androidBuildErr = errors.New("gradle failed")
+	f.duringIOSBuild = func() {
+		if _, code, err := deployCLI(t, "--name", "s", "--platform", "android"); err != nil || code != 1 {
+			t.Errorf("B: code %d err %v, want 1", code, err)
+		}
+	}
+
+	if _, code, err := deployCLI(t, "--name", "s", "--platform", "ios"); err != nil || code != 1 {
+		t.Fatalf("A: code %d err %v, want 1", code, err)
+	}
+	if rec := loadTestRecord(t, "s"); rec != nil {
+		t.Fatalf("zero-device squad left behind: %+v", rec)
+	}
+	if _, ok, _ := state.FindSquad("s"); ok {
+		t.Fatal("squad still registered")
+	}
+}
