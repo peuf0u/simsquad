@@ -209,7 +209,7 @@ func reprovisionExistingOne(existing contract.Device, in ProvisionInput) contrac
 		// user's own, say) can hold it, and reuse must neither kill nor
 		// install on it. Booting the squad's AVD instead would hit the busy
 		// port, so the device fails with the reason.
-		running, err := runningAVDName(dev.UDID)
+		running, err := RunningAVDName(dev.UDID)
 		if err != nil {
 			dev.ErrorMessage = fmt.Sprintf("reuse: could not read the AVD name of the emulator on %s (%s)",
 				portLabel(dev), err.Error())
@@ -321,10 +321,12 @@ const avdNameAttempts = 3
 
 var avdNameRetryDelay = time.Second
 
-// runningAVDName asks the emulator on serial which AVD it runs (`adb emu
+// RunningAVDName asks the emulator on serial which AVD it runs (`adb emu
 // avd name` prints the name, then OK), retrying an empty or failed answer.
-// The error carries adb's own message from the last attempt.
-func runningAVDName(serial string) (string, error) {
+// The error carries adb's own message from the last attempt. Reuse and
+// teardown both use it to tell the squad's emulator from another one on the
+// recorded port.
+func RunningAVDName(serial string) (string, error) {
 	adb, err := ADB()
 	if err != nil {
 		return "", err

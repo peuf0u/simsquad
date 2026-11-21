@@ -5,7 +5,8 @@
 //
 //	iOS                 → simctl shutdown + simctl delete
 //	Android emulator    → adb emu kill, wait for it to exit (bounded),
-//	                      then avdmanager delete avd
+//	                      then avdmanager delete avd; the kill only when
+//	                      the serial answers with the squad's AVD name
 //	Android physical    → adb uninstall <bundle>      (never delete device)
 //	orphan              → any simsquad-* sim/AVD not in the registry, and
 //	                      any simsquad-*.avd folder left without its .ini
@@ -144,29 +145,57 @@ func teardownAndroidEmulator(dev contract.Device) error {
 	if err != nil {
 		adb = ""
 	}
-	kill := func() {
-		if adb != "" {
-			_, _ = util.Run(adb, []string{"-s", dev.UDID, "emu", "kill"}, util.RunOpts{})
-		}
-	}
 	name := dev.AVDName
 	if name == "" {
 		name = dev.Name
+	}
+	ours, left := squadEmulatorOnSerial(adb, dev.UDID, name)
+	kill := func() {
+		if ours {
+			_, _ = util.Run(adb, []string{"-s", dev.UDID, "emu", "kill"}, util.RunOpts{})
+		}
 	}
 	avd, avdErr := android.AVDManager()
 	if name == "" || avdErr != nil {
 		// Nothing to delete, so nothing to wait for. Missing cmdline-tools
 		// is recoverable for teardown — log via caller.
 		kill()
-		return nil
+		return left
 	}
-	return stopThenDelete(kill, android.EmulatorGoneProbe(dev, adb), func() error {
+	del := func() error {
 		r, _ := util.Run(avd, []string{"delete", "avd", "-n", name}, util.RunOpts{Env: android.AVDManagerEnv(avd)})
 		if r.Code != 0 {
 			return fmt.Errorf("avdmanager delete %s: %s", name, strings.TrimSpace(r.Stderr))
 		}
 		return nil
-	}, android.EmulatorExitTimeout, android.EmulatorExitPoll)
+	}
+	if !ours {
+		// No kill, so no exit to wait for.
+		return errors.Join(del(), left)
+	}
+	return stopThenDelete(kill, android.EmulatorGoneProbe(dev, adb), del,
+		android.EmulatorExitTimeout, android.EmulatorExitPoll)
+}
+
+// squadEmulatorOnSerial reports whether the emulator on serial runs the
+// squad's AVD (name), the only case in which teardown may kill it. The
+// serial is only a port: after a reboot another emulator, the user's own
+// say, can hold it (#33). An emulator that answers with another name, or
+// whose name can't be read, is left running (fail safe), and left says so
+// for the caller's warning. Nothing listed on the serial skips the name
+// query and its retries.
+func squadEmulatorOnSerial(adb, serial, name string) (ours bool, left error) {
+	if adb == "" || name == "" || !android.ADBListsSerial(adb, serial) {
+		return false, nil
+	}
+	running, err := android.RunningAVDName(serial)
+	if err != nil {
+		return false, fmt.Errorf("left the emulator on %s running: could not read its AVD name (%s)", serial, err.Error())
+	}
+	if running != name {
+		return false, fmt.Errorf("left the emulator on %s running: it runs %s, not %s", serial, running, name)
+	}
+	return true, nil
 }
 
 func teardownAndroidPhysical(dev contract.Device) error {

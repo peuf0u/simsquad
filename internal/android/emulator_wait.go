@@ -42,13 +42,17 @@ func EmulatorGoneProbe(dev contract.Device, adb string) func() bool {
 	if adb == "" {
 		return func() bool { return true }
 	}
-	return func() bool {
-		r, err := util.Run(adb, []string{"devices"}, util.RunOpts{Timeout: 5 * time.Second})
-		if err != nil || r.Code != 0 {
-			return true
-		}
-		return !serialListed(r.Stdout, dev.UDID)
+	return func() bool { return !ADBListsSerial(adb, dev.UDID) }
+}
+
+// ADBListsSerial reports whether serial appears, in any state, in `adb
+// devices`. A failing adb counts as not listed.
+func ADBListsSerial(adb, serial string) bool {
+	r, err := util.Run(adb, []string{"devices"}, util.RunOpts{Timeout: 5 * time.Second})
+	if err != nil || r.Code != 0 {
+		return false
 	}
+	return serialListed(r.Stdout, serial)
 }
 
 func emulatorProcessAlive(pid int) bool {
