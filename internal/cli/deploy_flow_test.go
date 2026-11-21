@@ -590,3 +590,61 @@ func TestDeployKeepsContextSetDuringDeploy(t *testing.T) {
 		t.Fatalf("context = %v, want deploy's user=bob plus the mid-deploy token", rec.Context)
 	}
 }
+
+func testClaimOpts() claimOpts {
+	return claimOpts{
+		iosSpecs:        []contract.IosSpec{{Device: testIOSDevice, Runtime: testIOSRuntime, Count: 1}},
+		ctxOverrides:    map[string]string{"user": "alice"},
+		allowWholeReset: true,
+	}
+}
+
+// A deploy that finds the squad already created — here by an earlier claim
+// whose deploy is still provisioning — takes the reuse path instead of
+// creating it again.
+func TestClaimSquadSecondCreateTakesReusePath(t *testing.T) {
+	t.Setenv("SIMSQUAD_CACHE_DIR", t.TempDir())
+	first, err := claimSquad("s", testClaimOpts())
+	if err != nil || !first.created {
+		t.Fatalf("first claim: %+v err %v, want created", first, err)
+	}
+	second, err := claimSquad("s", testClaimOpts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.created || second.plan.ios != actionAdd || second.plan.wholeReset {
+		t.Fatalf("second claim = %+v, want the existing squad with iOS to add", second)
+	}
+	if second.rec.CreatedAt != first.rec.CreatedAt {
+		t.Fatal("second claim replaced the squad")
+	}
+}
+
+func TestClaimSquadCreatesOnceUnderContention(t *testing.T) {
+	t.Setenv("SIMSQUAD_CACHE_DIR", t.TempDir())
+	const deploys = 8
+	results := make(chan bool, deploys)
+	errs := make(chan error, deploys)
+	for range deploys {
+		go func() {
+			c, err := claimSquad("s", testClaimOpts())
+			errs <- err
+			results <- c.created
+		}()
+	}
+	created := 0
+	for range deploys {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+		if <-results {
+			created++
+		}
+	}
+	if created != 1 {
+		t.Fatalf("%d claims created the squad, want exactly 1", created)
+	}
+	if _, ok, _ := state.FindSquad("s"); !ok {
+		t.Fatal("squad not registered")
+	}
+}

@@ -226,100 +226,55 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		deployedAndroidSpecs = androidSpecs
 	}
 
-	reused := false
-	createdThisRun := false
-	var iosAction, androidAction platformAction
-	var existingIOS []contract.Device
-	var existingAndroid []contract.Device
-	var rec *contract.SquadRecord
-
-	entry, ok, err := state.FindSquad(squadName)
+	co := claimOpts{
+		iosSpecs:        deployedIosSpecs,
+		androidSpecs:    deployedAndroidSpecs,
+		clearCtx:        opts.clearCtx,
+		tomlCtx:         tomlCtx,
+		ctxOverrides:    ctxOverrides,
+		allowWholeReset: true,
+	}
+	claim, err := claimSquad(squadName, co)
 	if err != nil {
-		return fmt.Errorf("deploy: lookup squad: %w", err)
+		return err
 	}
-	if ok {
-		existing, err := state.LoadRecord(entry.Name)
-		if err != nil {
-			return fmt.Errorf("deploy: load squad %s: %w", entry.Name, err)
+	if claim.plan.wholeReset {
+		// Nothing in the squad is ready or matching — e.g. a previous deploy
+		// failed at build. Reset it instead of forcing a manual dismiss in
+		// the build-debug retry loop, then claim the name afresh. Should
+		// another deploy recreate it in between, the second claim decides
+		// per platform on that squad instead.
+		logger.Info("deploy: reset-empty", progress.F("name", claim.rec.Name))
+		if terr := deployVia.teardownSquad(claim.rec.Name, logger); terr != nil {
+			logger.Warn("deploy: reset-empty", progress.F("error", terr.Error()))
 		}
-		if existing == nil {
-			return fmt.Errorf("deploy: squad %q exists in registry but has no state file; run `simsquad dismiss --name %s` first", squadName, squadName)
-		}
-		plan := planDeploy(*existing, deployedIosSpecs, deployedAndroidSpecs)
-		switch {
-		case plan.refused() != "":
-			// A working platform on a different matrix — refuse to clobber it.
-			return fmt.Errorf("deploy: squad %q is not reusable with the requested %s matrix/status; run `simsquad dismiss --name %s` first", squadName, plan.refused(), squadName)
-		case plan.wholeReset:
-			// Nothing in the squad is ready or matching — e.g. a previous
-			// deploy failed at build. Reset it instead of forcing a manual
-			// dismiss in the build-debug retry loop. rec stays nil so the
-			// create branch below rebuilds it.
-			logger.Info("deploy: reset-empty", progress.F("name", existing.Name))
-			if terr := deployVia.teardownSquad(existing.Name, logger); terr != nil {
-				logger.Warn("deploy: reset-empty", progress.F("error", terr.Error()))
-			}
-		default:
-			// --clear-context wipes first. Then context layers on top — CLI
-			// flags if any are present (TOML ignored), otherwise TOML. Either
-			// way the *source* overrides matching keys in the existing
-			// context; non-matched existing keys are preserved (so "rotate
-			// one cred" stays cheap). Saved now, under the lock, so the
-			// final merge — which keeps context from disk — carries it and
-			// a set-context made during the deploy.
-			rec, err = state.UpdateRecord(existing.Name, func(r *contract.SquadRecord) error {
-				if opts.clearCtx {
-					r.Context = nil
-				}
-				r.Context = applyContextSource(r.Context, tomlCtx, ctxOverrides)
-				return nil
-			})
-			if err != nil {
-				return fmt.Errorf("deploy: save context: %w", err)
-			}
-			iosAction, androidAction = plan.ios, plan.android
-			reused = plan.allReused()
-			iosDevs, androidDevs := splitByPlatform(existing.Devices)
-			switch iosAction {
-			case actionReuse:
-				existingIOS = iosDevs
-			case actionReset:
-				resetPlatform(rec.Name, deployResult{ios: true}, iosDevs, logger)
-			}
-			switch androidAction {
-			case actionReuse:
-				existingAndroid = androidDevs
-			case actionReset:
-				resetPlatform(rec.Name, deployResult{android: true}, androidDevs, logger)
-			}
-			if reused {
-				logger.Info("deploy: reuse", progress.F("name", rec.Name))
-			}
+		co.allowWholeReset = false
+		if claim, err = claimSquad(squadName, co); err != nil {
+			return err
 		}
 	}
-
-	if rec == nil {
-		createdThisRun = true
-		rec = &contract.SquadRecord{
-			Name:      squadName,
-			CreatedAt: util.NowISO(),
-			Devices:   []contract.Device{},
-			Context:   applyContextSource(nil, tomlCtx, ctxOverrides),
-			Ports:     map[string]int{},
-		}
-		// Persist an empty record + registry entry before provisioning kicks
-		// off so concurrent simsquad invocations see our claim on ports and
-		// physical serials. The record gets a final SaveRecord after
-		// provisioning with the full Devices list.
-		if err := state.SaveRecord(rec); err != nil {
-			return fmt.Errorf("deploy: initial save: %w", err)
-		}
-		if err := state.RegisterSquad(state.RegisterSquadInput{
-			Name:      rec.Name,
-			StateFile: util.StateFileFor(rec.Name),
-		}); err != nil {
-			return fmt.Errorf("deploy: register squad: %w", err)
-		}
+	rec := claim.rec
+	createdThisRun := claim.created
+	// A squad created by this deploy has a zero plan: every platform is
+	// provisioned fresh and nothing counts as reused.
+	iosAction, androidAction := claim.plan.ios, claim.plan.android
+	reused := claim.plan.allReused()
+	var existingIOS, existingAndroid []contract.Device
+	iosDevs, androidDevs := splitByPlatform(claim.devices)
+	switch iosAction {
+	case actionReuse:
+		existingIOS = iosDevs
+	case actionReset:
+		resetPlatform(rec.Name, deployResult{ios: true}, iosDevs, logger)
+	}
+	switch androidAction {
+	case actionReuse:
+		existingAndroid = androidDevs
+	case actionReset:
+		resetPlatform(rec.Name, deployResult{android: true}, androidDevs, logger)
+	}
+	if reused {
+		logger.Info("deploy: reuse", progress.F("name", rec.Name))
 	}
 	squadName = rec.Name
 
@@ -523,6 +478,97 @@ func runDeploy(cmd *cobra.Command, opts deployOpts) error {
 		return &ExitError{Code: code}
 	}
 	return nil
+}
+
+// claimOpts is what claimSquad needs to find or create a squad and decide
+// how this deploy treats it. The matrices are the deployed platforms' only
+// (nil for a platform left out).
+type claimOpts struct {
+	iosSpecs        []contract.IosSpec
+	androidSpecs    []contract.AndroidSpec
+	clearCtx        bool
+	tomlCtx         map[string]string
+	ctxOverrides    map[string]string
+	allowWholeReset bool
+}
+
+// squadClaim is claimSquad's outcome. devices is the existing squad's device
+// list the plan was made from; created means this deploy made the squad.
+type squadClaim struct {
+	rec     *contract.SquadRecord
+	created bool
+	plan    deployPlan
+	devices []contract.Device
+}
+
+// claimSquad finds the named squad or creates it, in one block under the
+// index lock, so two deploys of a new name can't both create it: the second
+// finds the squad and takes the per-platform path. On an existing squad it
+// makes the per-platform plan, refuses when the plan does, and otherwise
+// saves this deploy's context (unless the whole squad is about to reset). A
+// new squad is saved with its context and registered before provisioning, so
+// concurrent invocations see its claim on ports and physical serials.
+func claimSquad(name string, o claimOpts) (squadClaim, error) {
+	var c squadClaim
+	err := state.WithIndexLockE(func() error {
+		idx, err := state.LoadIndexLocked()
+		if err != nil {
+			return fmt.Errorf("deploy: lookup squad: %w", err)
+		}
+		if entry, ok := idx.Squads[name]; ok {
+			existing, err := state.LoadRecord(entry.Name)
+			if err != nil {
+				return fmt.Errorf("deploy: load squad %s: %w", entry.Name, err)
+			}
+			if existing == nil {
+				return fmt.Errorf("deploy: squad %q exists in registry but has no state file; run `simsquad dismiss --name %s` first", name, name)
+			}
+			plan := planDeploy(*existing, o.iosSpecs, o.androidSpecs)
+			plan.wholeReset = plan.wholeReset && o.allowWholeReset
+			if p := plan.refused(); p != "" {
+				// A working platform on a different matrix — refuse to clobber it.
+				return fmt.Errorf("deploy: squad %q is not reusable with the requested %s matrix/status; run `simsquad dismiss --name %s` first", name, p, name)
+			}
+			c = squadClaim{rec: existing, plan: plan, devices: existing.Devices}
+			if plan.wholeReset {
+				return nil
+			}
+			// --clear-context wipes first. Then context layers on top — CLI
+			// flags if any are present (TOML ignored), otherwise TOML. Either
+			// way the *source* overrides matching keys in the existing
+			// context; non-matched existing keys are preserved (so "rotate
+			// one cred" stays cheap). Saved now so the final merge, which
+			// keeps context from disk, carries it along with any set-context
+			// made during the deploy.
+			if o.clearCtx {
+				existing.Context = nil
+			}
+			existing.Context = applyContextSource(existing.Context, o.tomlCtx, o.ctxOverrides)
+			if err := state.SaveRecord(existing); err != nil {
+				return fmt.Errorf("deploy: save context: %w", err)
+			}
+			return nil
+		}
+		rec := &contract.SquadRecord{
+			Name:      name,
+			CreatedAt: util.NowISO(),
+			Devices:   []contract.Device{},
+			Context:   applyContextSource(nil, o.tomlCtx, o.ctxOverrides),
+			Ports:     map[string]int{},
+		}
+		if err := state.SaveRecord(rec); err != nil {
+			return fmt.Errorf("deploy: initial save: %w", err)
+		}
+		if err := state.RegisterSquadLocked(state.RegisterSquadInput{
+			Name:      rec.Name,
+			StateFile: util.StateFileFor(rec.Name),
+		}); err != nil {
+			return fmt.Errorf("deploy: register squad: %w", err)
+		}
+		c = squadClaim{rec: rec, created: true}
+		return nil
+	})
+	return c, err
 }
 
 // deployResult is what one deploy produced for the platforms it deployed.
