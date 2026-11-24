@@ -212,7 +212,7 @@ func TestParseContextEntries(t *testing.T) {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := parseContextEntries(c.in)
+			got, err := parseContextEntries("--context", c.in)
 			if c.wantErr {
 				if err == nil {
 					t.Fatalf("parseContextEntries(%v) succeeded with %v, want error", c.in, got)
@@ -229,7 +229,7 @@ func TestParseContextEntries(t *testing.T) {
 	}
 }
 
-func TestApplyContextSource(t *testing.T) {
+func TestContextInputApplyTo(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -268,9 +268,14 @@ func TestApplyContextSource(t *testing.T) {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			got := applyContextSource(c.base, c.toml, c.overrides)
-			if !reflect.DeepEqual(got, c.want) {
-				t.Fatalf("applyContextSource = %v, want %v", got, c.want)
+			in, err := resolveContextInput(false, c.toml, c.overrides, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := contract.SquadRecord{Context: c.base}
+			in.applyTo(&rec)
+			if !reflect.DeepEqual(rec.Context, c.want) || rec.SecretKeys != nil {
+				t.Fatalf("context = %v secret keys %v, want %v and none", rec.Context, rec.SecretKeys, c.want)
 			}
 		})
 	}
@@ -334,7 +339,9 @@ func TestResolveSpecsCliMode(t *testing.T) {
 	})
 }
 
-func TestSpecMatches(t *testing.T) {
+// TestSpecsMatch is the golden test for the per-platform matrix comparison
+// deploy's reuse plan is made from (iosSpecsMatch, androidSpecsMatch).
+func TestSpecsMatch(t *testing.T) {
 	t.Parallel()
 
 	record := contract.SquadRecord{
@@ -376,11 +383,12 @@ func TestSpecMatches(t *testing.T) {
 		},
 	}
 
+	iosDevs, androidDevs := splitByPlatform(record.Devices)
 	cases := []struct {
-		name    string
-		ios     []contract.IosSpec
-		android []contract.AndroidSpec
-		want    bool
+		name                 string
+		ios                  []contract.IosSpec
+		android              []contract.AndroidSpec
+		wantIOS, wantAndroid bool
 	}{
 		{
 			name: "same multiset regardless of requested order",
@@ -397,7 +405,7 @@ func TestSpecMatches(t *testing.T) {
 				},
 				{Count: 1, Target: contract.TargetPhysical},
 			},
-			want: true,
+			wantIOS: true, wantAndroid: true,
 		},
 		{
 			name: "ios count mismatch",
@@ -414,7 +422,7 @@ func TestSpecMatches(t *testing.T) {
 				},
 				{Count: 1, Target: contract.TargetPhysical},
 			},
-			want: false,
+			wantIOS: false, wantAndroid: true,
 		},
 		{
 			name: "android emulator image mismatch",
@@ -431,7 +439,7 @@ func TestSpecMatches(t *testing.T) {
 				},
 				{Count: 1, Target: contract.TargetPhysical},
 			},
-			want: false,
+			wantIOS: true, wantAndroid: false,
 		},
 		{
 			name: "physical devices compare by count only",
@@ -448,7 +456,7 @@ func TestSpecMatches(t *testing.T) {
 				},
 				{Device: "ignored", Image: "ignored", Count: 2, Target: contract.TargetPhysical},
 			},
-			want: false,
+			wantIOS: true, wantAndroid: false,
 		},
 	}
 
@@ -456,14 +464,17 @@ func TestSpecMatches(t *testing.T) {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			if got := specMatches(record, c.ios, c.android); got != c.want {
-				t.Fatalf("specMatches() = %v, want %v", got, c.want)
+			if got := iosSpecsMatch(iosDevs, c.ios); got != c.wantIOS {
+				t.Fatalf("iosSpecsMatch() = %v, want %v", got, c.wantIOS)
+			}
+			if got := androidSpecsMatch(androidDevs, c.android); got != c.wantAndroid {
+				t.Fatalf("androidSpecsMatch() = %v, want %v", got, c.wantAndroid)
 			}
 		})
 	}
 }
 
-func TestSpecMatchesRejectsNonReadyDevices(t *testing.T) {
+func TestPlanDeployResetsOnlyThePlatformWithANonReadyDevice(t *testing.T) {
 	t.Parallel()
 
 	record := contract.SquadRecord{
@@ -485,7 +496,7 @@ func TestSpecMatchesRejectsNonReadyDevices(t *testing.T) {
 		},
 	}
 
-	got := specMatches(record,
+	got := planDeploy(record,
 		[]contract.IosSpec{{Device: "iPhone 17", Runtime: "iOS 26.4", Count: 1}},
 		[]contract.AndroidSpec{{
 			Device: "pixel_7",
@@ -494,8 +505,8 @@ func TestSpecMatchesRejectsNonReadyDevices(t *testing.T) {
 			Target: contract.TargetEmulator,
 		}},
 	)
-	if got {
-		t.Fatal("specMatches() = true for a squad with an errored Android device")
+	if want := (deployPlan{ios: actionReuse, android: actionReset}); got != want {
+		t.Fatalf("planDeploy() = %+v, want %+v for a squad with an errored Android device", got, want)
 	}
 }
 
@@ -528,6 +539,77 @@ func TestHasReadyDevice(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			if got := hasReadyDevice(contract.SquadRecord{Devices: c.devs}); got != c.want {
 				t.Fatalf("hasReadyDevice() = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// TestPlanDeploy is the per-platform reuse table: for each platform in the
+// deploy, no devices → add, matching devices → reuse, mismatch with nothing
+// ready → reset, mismatch with a ready device → refuse. A platform outside
+// the deploy gets no action. A resetting platform is reset on its own even
+// when its devices are all the squad holds; the squad is never reset whole.
+func TestPlanDeploy(t *testing.T) {
+	t.Parallel()
+
+	iosWant := []contract.IosSpec{{Device: "iPhone 17", Runtime: "iOS 26.4", Count: 1}}
+	andWant := []contract.AndroidSpec{{
+		Device: "pixel_7", Image: "system-images;android-34;google_apis;arm64-v8a",
+		Count: 1, Target: contract.TargetEmulator,
+	}}
+	iosReady := contract.Device{Platform: contract.PlatformIOS, UDID: "ios-1", Status: contract.StatusReady,
+		DeviceType: "iPhone 17", Runtime: "iOS 26.4"}
+	iosOtherReady := iosReady
+	iosOtherReady.DeviceType = "iPhone 16"
+	iosOtherBroken := iosOtherReady
+	iosOtherBroken.Status = contract.StatusError
+	iosBroken := iosReady
+	iosBroken.Status = contract.StatusError
+	andReady := contract.Device{Platform: contract.PlatformAndroid, UDID: "emulator-5554", Status: contract.StatusReady,
+		DeviceProfile: "pixel_7", SystemImage: "system-images;android-34;google_apis;arm64-v8a"}
+	andOtherReady := andReady
+	andOtherReady.SystemImage = "system-images;android-33;google_apis;arm64-v8a"
+	andOtherBroken := andOtherReady
+	andOtherBroken.Status = contract.StatusError
+
+	cases := []struct {
+		name    string
+		devs    []contract.Device
+		ios     []contract.IosSpec
+		android []contract.AndroidSpec
+		want    deployPlan
+	}{
+		{"no devices of the platform → add", []contract.Device{andReady}, iosWant, nil,
+			deployPlan{ios: actionAdd}},
+		{"empty squad, both platforms → add both", nil, iosWant, andWant,
+			deployPlan{ios: actionAdd, android: actionAdd}},
+		{"matching devices → reuse", []contract.Device{iosReady, andReady}, iosWant, andWant,
+			deployPlan{ios: actionReuse, android: actionReuse}},
+		{"matching platform reused, other platform untouched", []contract.Device{iosReady, andOtherReady}, iosWant, nil,
+			deployPlan{ios: actionReuse}},
+		{"mismatch, nothing ready → reset (other platform keeps the squad)", []contract.Device{iosReady, andOtherBroken}, iosWant, andWant,
+			deployPlan{ios: actionReuse, android: actionReset}},
+		{"matching but broken device → reset", []contract.Device{iosBroken, andReady}, iosWant, nil,
+			deployPlan{ios: actionReset}},
+		{"mismatch with a ready device → refuse", []contract.Device{iosOtherReady, andReady}, iosWant, andWant,
+			deployPlan{ios: actionRefuse, android: actionReuse}},
+		{"refuse even when the other platform resets", []contract.Device{iosOtherReady, andOtherBroken}, iosWant, andWant,
+			deployPlan{ios: actionRefuse, android: actionReset}},
+		{"every device on resetting platforms → both reset", []contract.Device{iosOtherBroken, andOtherBroken}, iosWant, andWant,
+			deployPlan{ios: actionReset, android: actionReset}},
+		{"reset plus an added platform", []contract.Device{iosOtherBroken}, iosWant, andWant,
+			deployPlan{ios: actionReset, android: actionAdd}},
+		{"only platform resets, its devices are all the squad has", []contract.Device{iosOtherBroken}, iosWant, nil,
+			deployPlan{ios: actionReset}},
+		{"untouched platform's devices keep the squad", []contract.Device{iosOtherBroken, andOtherBroken}, iosWant, nil,
+			deployPlan{ios: actionReset}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			got := planDeploy(contract.SquadRecord{Devices: c.devs}, c.ios, c.android)
+			if got != c.want {
+				t.Fatalf("planDeploy() = %+v, want %+v", got, c.want)
 			}
 		})
 	}

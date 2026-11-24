@@ -13,8 +13,10 @@ that only appear after a certain step.
 ## Test accounts
 
 Which accounts or personas to use on which stage, and where their
-credentials come from (for example the squad context keys `user` and
-`password`). Keep real secrets in the squad context, not here.
+credentials come from (for example the context key `user` and the secret
+`password`). Keep real secrets in `[secrets]` in `simsquad.local.toml`,
+never here: simsquad masks them as `<secret>` everywhere it prints the
+context, and a worker fetches the value when it logs in.
 
 ## Known quirks
 

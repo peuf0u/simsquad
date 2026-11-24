@@ -25,6 +25,9 @@ type Options struct {
 	Show       bool
 	AddIOS     []contract.IosSpec
 	AddAndroid []contract.AndroidSpec
+	// DeviceSet sends AddIOS / AddAndroid to this named device set (created
+	// in simsquad.toml when missing) instead of the default matrix.
+	DeviceSet string
 }
 
 // Result reports the files the wizard wrote.
@@ -34,6 +37,8 @@ type Result struct {
 	Gitignore   string
 	Summary     ConfigSummary
 	Wrote       bool
+	// Created is true when the wizard wrote a config where none was found.
+	Created bool
 }
 
 // ConfigSummary is the read-only shape emitted by `equip --show` and included
@@ -47,6 +52,7 @@ type ConfigSummary struct {
 	Context     map[string]string      `json:"context,omitempty"`
 	IOS         []contract.IosSpec     `json:"ios"`
 	Android     []contract.AndroidSpec `json:"android"`
+	DeviceSets  []DeviceSetSummary     `json:"device_sets,omitempty"`
 }
 
 type wizardState struct {
@@ -55,8 +61,19 @@ type wizardState struct {
 	iosScheme   string
 	gradleTask  string
 	testContext map[string]string
+	// localContext marks the testContext keys simsquad.local.toml sets, and
+	// sharedContext is simsquad.toml's own [context]. Saving writes each key
+	// back to its file (a local password must not reach the committed file)
+	// and keeps the shared value a local key overrides.
+	localContext  map[string]bool
+	sharedContext map[string]string
+	// secrets is [secrets] merged across both files. Saving writes it to
+	// simsquad.local.toml only, so equip moves committed secrets out of git.
+	secrets     map[string]string
 	iosSpecs    []contract.IosSpec
 	androidSpec []contract.AndroidSpec
+	// deviceSets are the named device sets, sorted by name.
+	deviceSets []deviceSet
 	// projectAgent / localAgent are the raw [agent] tables of each file.
 	// The wizard doesn't edit them, but it rewrites both files wholesale, so
 	// it carries each table back into the file it came from (a local
@@ -99,9 +116,22 @@ func RunEquipWizard(opts Options) (Result, error) {
 		}, nil
 	}
 	if len(opts.AddIOS) > 0 || len(opts.AddAndroid) > 0 {
-		state.iosSpecs = append(state.iosSpecs, opts.AddIOS...)
-		state.androidSpec = append(state.androidSpec, opts.AddAndroid...)
-		return writeState(configDir, state, true)
+		if opts.DeviceSet != "" {
+			// Only a new set's name is checked: a hand-written set with a
+			// quoted name still takes appends.
+			if findDeviceSet(state.deviceSets, opts.DeviceSet) < 0 {
+				if err := validateDeviceSetName(opts.DeviceSet); err != nil {
+					return Result{}, fmt.Errorf("equip: --device-set: %w", err)
+				}
+			}
+			addToDeviceSet(&state, opts.DeviceSet, opts.AddIOS, opts.AddAndroid)
+		} else {
+			state.iosSpecs = append(state.iosSpecs, opts.AddIOS...)
+			state.androidSpec = append(state.androidSpec, opts.AddAndroid...)
+		}
+		res, err := writeState(configDir, state, true)
+		res.Created = err == nil && !hasConfig
+		return res, err
 	}
 
 	if !stdinIsTerminal() {
@@ -114,7 +144,7 @@ func RunEquipWizard(opts Options) (Result, error) {
 		return writeState(configDir, state, true)
 	}
 
-	if err := runProjectForm(&state); err != nil {
+	if err := runProjectForm(&state, configDir); err != nil {
 		return Result{}, err
 	}
 	if err := runIOSMatrix(&state); err != nil {
@@ -123,7 +153,9 @@ func RunEquipWizard(opts Options) (Result, error) {
 	if err := runAndroidMatrix(&state); err != nil {
 		return Result{}, err
 	}
-	return writeState(configDir, state, opts.Force)
+	res, err := writeState(configDir, state, opts.Force)
+	res.Created = err == nil
+	return res, err
 }
 
 func loadState(configDir string, hasConfig bool) (wizardState, error) {
@@ -154,8 +186,20 @@ func loadState(configDir string, hasConfig bool) (wizardState, error) {
 			state.testContext[k] = v
 		}
 	}
+	shared, local := cfg.ContextLayers()
+	state.sharedContext = shared
+	for k := range local {
+		if state.localContext == nil {
+			state.localContext = make(map[string]bool, len(local))
+		}
+		state.localContext[k] = true
+	}
+	// Both files are re-rendered on save, so a secret not loaded here
+	// would be dropped.
+	state.secrets = cfg.Secrets()
 	state.iosSpecs = cfg.IOSSpecs()
 	state.androidSpec = cfg.AndroidSpecs()
+	state.deviceSets = loadDeviceSets(cfg)
 	if state.projectAgent, err = readAgentTable(filepath.Join(configDir, config.ProjectFile)); err != nil {
 		return wizardState{}, err
 	}
@@ -217,7 +261,7 @@ func writeState(configDir string, state wizardState, overwrite bool) (Result, er
 	if err := os.WriteFile(projectPath, []byte(project), 0o644); err != nil {
 		return Result{}, fmt.Errorf("equip: write %s: %w", config.ProjectFile, err)
 	}
-	if err := os.WriteFile(localPath, []byte(local), 0o644); err != nil {
+	if err := writePrivateFile(localPath, []byte(local)); err != nil {
 		return Result{}, fmt.Errorf("equip: write %s: %w", config.LocalFile, err)
 	}
 	gitignore := filepath.Join(configDir, ".gitignore")
@@ -233,6 +277,17 @@ func writeState(configDir string, state wizardState, overwrite bool) (Result, er
 	}, nil
 }
 
+// writePrivateFile writes data to path readable by the user only:
+// simsquad.local.toml holds [secrets]. An existing file (an older equip
+// wrote it 0644) is tightened before the data goes in, since WriteFile sets
+// the mode only on a file it creates.
+func writePrivateFile(path string, data []byte) error {
+	if err := os.Chmod(path, 0o600); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
+}
+
 func defaults(cwd string) wizardState {
 	iosRepo := discover.DetectIosRepo(cwd)
 	androidRepo := discover.DetectAndroidRepo(cwd)
@@ -244,7 +299,7 @@ func defaults(cwd string) wizardState {
 		iosRepo:     iosRepo,
 		androidRepo: androidRepo,
 		iosScheme:   iosScheme,
-		gradleTask:  ":app:assembleDebug",
+		gradleTask:  defaultGradleTask(cwd, androidRepo),
 	}
 }
 
@@ -266,7 +321,7 @@ func promptPhysicalAndroidSpec() (contract.AndroidSpec, error) {
 	}, nil
 }
 
-func runProjectForm(state *wizardState) error {
+func runProjectForm(state *wizardState, configDir string) error {
 	return huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().
@@ -282,6 +337,7 @@ func runProjectForm(state *wizardState) error {
 				Value(&state.iosScheme),
 			huh.NewInput().
 				Title("Gradle task").
+				DescriptionFunc(func() string { return gradleTaskHint(configDir, state.androidRepo) }, &state.androidRepo).
 				Value(&state.gradleTask),
 		),
 	).WithInput(os.Stdin).WithOutput(os.Stderr).Run()
@@ -491,13 +547,18 @@ func summarize(configDir string, state wizardState) ConfigSummary {
 	if androidSpecs == nil {
 		androidSpecs = []contract.AndroidSpec{}
 	}
-	var ctx map[string]string
-	if len(state.testContext) > 0 {
-		ctx = make(map[string]string, len(state.testContext))
-		for k, v := range state.testContext {
-			ctx[k] = v
-		}
+	// The summary is printed (equip --show, equip's result), so secrets
+	// join the context masked, like in every other output.
+	merged := make(map[string]string, len(state.testContext)+len(state.secrets))
+	secretKeys := make([]string, 0, len(state.secrets))
+	for k, v := range state.testContext {
+		merged[k] = v
 	}
+	for k, v := range state.secrets {
+		merged[k] = v
+		secretKeys = append(secretKeys, k)
+	}
+	ctx := contract.MaskContext(merged, secretKeys)
 	return ConfigSummary{
 		ConfigDir:   configDir,
 		ProjectFile: filepath.Join(configDir, config.ProjectFile),
@@ -508,9 +569,10 @@ func summarize(configDir string, state wizardState) ConfigSummary {
 			"ios_scheme":          state.iosScheme,
 			"android_gradle_task": state.gradleTask,
 		},
-		Context: ctx,
-		IOS:     iosSpecs,
-		Android: androidSpecs,
+		Context:    ctx,
+		IOS:        iosSpecs,
+		Android:    androidSpecs,
+		DeviceSets: summarizeDeviceSets(state.deviceSets),
 	}
 }
 
@@ -532,19 +594,10 @@ func validatePositiveInt(value string) error {
 func renderProjectTOML(state wizardState) (string, error) {
 	var b strings.Builder
 	b.WriteString("[project]\n")
-	b.WriteString("ios_scheme = " + strconv.Quote(state.iosScheme) + "\n")
-	b.WriteString("android_gradle_task = " + strconv.Quote(state.gradleTask) + "\n")
-	if len(state.testContext) > 0 {
-		b.WriteString("\n[context]\n")
-		keys := make([]string, 0, len(state.testContext))
-		for k := range state.testContext {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			b.WriteString(k + " = " + strconv.Quote(state.testContext[k]) + "\n")
-		}
-	}
+	b.WriteString("ios_scheme = " + tomlQuote(state.iosScheme) + "\n")
+	b.WriteString("android_gradle_task = " + tomlQuote(state.gradleTask) + "\n")
+	shared, _ := splitContext(state)
+	renderStringTable(&b, "context", shared)
 	agent, err := renderAgentTable(state.projectAgent)
 	if err != nil {
 		return "", err
@@ -552,31 +605,104 @@ func renderProjectTOML(state wizardState) (string, error) {
 	b.WriteString(agent)
 	for _, spec := range state.iosSpecs {
 		b.WriteString("\n[[ios.sims]]\n")
-		b.WriteString("device = " + strconv.Quote(spec.Device) + "\n")
-		b.WriteString("runtime = " + strconv.Quote(spec.Runtime) + "\n")
-		b.WriteString("count = " + strconv.Itoa(spec.Count) + "\n")
+		writeIOSRow(&b, spec)
 	}
 	for _, spec := range state.androidSpec {
 		b.WriteString("\n[[android.sims]]\n")
-		b.WriteString("device = " + strconv.Quote(spec.Device) + "\n")
-		b.WriteString("image = " + strconv.Quote(spec.Image) + "\n")
-		b.WriteString("count = " + strconv.Itoa(spec.Count) + "\n")
-		b.WriteString("target = " + strconv.Quote(string(spec.Target)) + "\n")
+		writeAndroidRow(&b, spec)
 	}
+	renderProjectDeviceSets(&b, state.deviceSets)
 	return b.String(), nil
+}
+
+func writeIOSRow(b *strings.Builder, spec contract.IosSpec) {
+	b.WriteString("device = " + tomlQuote(spec.Device) + "\n")
+	b.WriteString("runtime = " + tomlQuote(spec.Runtime) + "\n")
+	b.WriteString("count = " + strconv.Itoa(spec.Count) + "\n")
+}
+
+func writeAndroidRow(b *strings.Builder, spec contract.AndroidSpec) {
+	b.WriteString("device = " + tomlQuote(spec.Device) + "\n")
+	b.WriteString("image = " + tomlQuote(spec.Image) + "\n")
+	b.WriteString("count = " + strconv.Itoa(spec.Count) + "\n")
+	b.WriteString("target = " + tomlQuote(string(spec.Target)) + "\n")
 }
 
 func renderLocalTOML(state wizardState) (string, error) {
 	var b strings.Builder
 	b.WriteString("[project]\n")
-	b.WriteString("ios_repo = " + strconv.Quote(state.iosRepo) + "\n")
-	b.WriteString("android_repo = " + strconv.Quote(state.androidRepo) + "\n")
+	b.WriteString("ios_repo = " + tomlQuote(state.iosRepo) + "\n")
+	b.WriteString("android_repo = " + tomlQuote(state.androidRepo) + "\n")
+	_, local := splitContext(state)
+	renderStringTable(&b, "context", local)
+	renderStringTable(&b, "secrets", state.secrets)
 	agent, err := renderAgentTable(state.localAgent)
 	if err != nil {
 		return "", err
 	}
 	b.WriteString(agent)
+	renderLocalDeviceSets(&b, state.deviceSets)
 	return b.String(), nil
+}
+
+// splitContext divides testContext by the file each key belongs in: a key
+// simsquad.local.toml set goes back there, with the simsquad.toml value it
+// overrides (if any) kept in the shared file; every other key, including
+// one added in the editor, is shared.
+func splitContext(state wizardState) (shared, local map[string]string) {
+	shared = map[string]string{}
+	local = map[string]string{}
+	for k, v := range state.testContext {
+		if !state.localContext[k] {
+			shared[k] = v
+			continue
+		}
+		local[k] = v
+		if sv, ok := state.sharedContext[k]; ok {
+			shared[k] = sv
+		}
+	}
+	return shared, local
+}
+
+// renderStringTable writes a [name] table of string values with sorted keys,
+// preceded by a blank line; nothing for an empty table.
+func renderStringTable(b *strings.Builder, name string, table map[string]string) {
+	if len(table) == 0 {
+		return
+	}
+	b.WriteString("\n[" + name + "]\n")
+	keys := make([]string, 0, len(table))
+	for k := range table {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		b.WriteString(tomlKey(k) + " = " + tomlQuote(table[k]) + "\n")
+	}
+}
+
+// setContext replaces testContext with an edit of it. A local key the edit
+// removes takes its override out of simsquad.local.toml only: the shared
+// value it covered is what deploy reads again (as a deleted local device
+// set reverts to the shared one), so it comes back here too.
+func (s *wizardState) setContext(ctx map[string]string) {
+	// A fresh map: editor states share their maps, and only this one moves on.
+	local := make(map[string]bool, len(s.localContext))
+	for k := range s.localContext {
+		if _, kept := ctx[k]; kept {
+			local[k] = true
+			continue
+		}
+		if sv, ok := s.sharedContext[k]; ok {
+			if ctx == nil {
+				ctx = map[string]string{}
+			}
+			ctx[k] = sv
+		}
+	}
+	s.localContext = local
+	s.testContext = ctx
 }
 
 func ensureGitignoreEntry(path, entry string) error {

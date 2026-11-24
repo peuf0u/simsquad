@@ -93,6 +93,15 @@ and verdicts: [docs/agent-testing.md](docs/agent-testing.md).
   `bob-staging`, `alice-prod`) to run different personas/environments in
   parallel.
 
+- **Secrets stay out of output.** A context key from `[secrets]` (or
+  `deploy --secret`, `set-context --set-secret`), or any key whose name
+  contains `password`, `secret` or `token`, is a secret: every command
+  prints it as `"<secret>"`, its `--out` file too, and so does the test
+  report. Only `simsquad devices --name X --reveal` prints the real value
+  (refused without `--name` and with `--out`), for the worker that types
+  it into the app. The squad record under `~/.cache/simsquad/` keeps the
+  real value and is readable by you alone (`0600`).
+
 - **Naming discipline = isolation.** simsquad doesn't have lease primitives.
   Pick a unique name per consumer — `agent-{session_id}`, `ci-pr-{num}`,
   `dev-{user}` — and nothing else will touch your squad.
@@ -113,14 +122,14 @@ and verdicts: [docs/agent-testing.md](docs/agent-testing.md).
 
 | Command | Action | Key flags |
 |---|---|---|
-| `deploy` | Build + install; reuse the squad if it exists (same name+matrix), else provision fresh; emit the descriptor | `--name` (req), `--ios-repo`/`--android-repo`, `--ios-spec`/`--android-spec`, `--context KEY=VALUE`, `--no-build`, `--force-build`, `--preserve-data`, `--clear-context` |
+| `deploy` | Build + install; reuse the squad if it exists (same name+matrix), else provision fresh; emit the descriptor | `--name` (req), `--platform ios\|android`, `--device-set NAME`, `--ios-repo`/`--android-repo`, `--ios-spec`/`--android-spec`, `--context KEY=VALUE`, `--secret KEY=VALUE`, `--no-build`, `--force-build`, `--preserve-data`, `--window`, `--clear-context` |
 | `status` | Squad registry (no arg) or one full record (`--name`) | `--name` |
-| `devices` | Uniform device list — one squad (`--name`) or all (no arg) | `--name`, `--ready`, `--platform=ios\|android` |
-| `set-context` | Mutate a squad's context | `--name` (req), `--set KEY=VALUE`, `--unset KEY`, `--clear` |
+| `devices` | Uniform device list — one squad (`--name`) or all (no arg) | `--name`, `--ready`, `--platform=ios\|android`, `--reveal` (real secret values; needs `--name`, no `--out`) |
+| `set-context` | Mutate a squad's context | `--name` (req), `--set KEY=VALUE`, `--set-secret KEY=VALUE`, `--unset KEY`, `--clear` |
 | `reset` | Return apps to a clean state (terminate + wipe data) without re-provisioning | `--name` (req), `--device` (repeatable) |
 | `dismiss` | Tear down a squad (shutdown + delete its sims/AVDs) | `--name` (req) |
 | `sweep` | Dismiss squads whose repo path is gone (removed worktrees), then prune orphan `simsquad-*` sims/AVDs left by crashed deploys | — |
-| `equip` | Interactive wizard: write `simsquad.toml` / `.local.toml` | `--show`, `--force`, `--add-ios-spec`, `--add-android-spec` |
+| `equip` | Interactive wizard: write `simsquad.toml` / `.local.toml` | `--show`, `--force`, `--add-ios-spec`, `--add-android-spec`, `--device-set NAME` |
 
 Spec formats (repeatable):
 
@@ -134,8 +143,57 @@ platforms — omit a platform's flag to skip it for this run. With no spec
 flags, both `[[ios.sims]]` and `[[android.sims]]` from `simsquad.toml` are
 used.
 
+`deploy --platform ios|android` (repeatable) deploys only those equipped
+platforms; the squad's other platform keeps its devices untouched. Reuse is
+decided per platform, so a later bare deploy adds the missing platform. It
+can't be combined with spec flags.
+
+`deploy --device-set NAME` deploys a named device set instead of the default
+matrix: `[device_sets.NAME]` in the config (see
+[Configuration](#configuration)), for both platforms, the way spec flags
+replace the matrix; `--platform` filters it. The squad records the set's
+name (`device_set` in `deploy` / `status` output), so a later
+`deploy --name X` with no matrix flags deploys that set again, re-read from
+the config, and reuses the squad when its devices still match. A squad with
+no recorded set keeps using the default matrix. Combining `--device-set`
+with a spec flag, an unknown set, or a recorded set the config no longer
+defines exits `1`. A different `--device-set` on an existing squad follows
+the usual per-platform reuse rule. The squad records one set name for both
+platforms, even with `--platform`: after `deploy --device-set tablet
+--platform ios`, a bare redeploy compares the squad's Android devices
+against `tablet` too. Deploy the same set for both platforms, or `dismiss`
+the squad first. Spec flags record no set.
+
+`deploy --window` shows the devices, for a squad used by hand (the
+`simsquad` skill's dev squad always passes it; test squads never do).
+Android emulators boot with a window and `hw.keyboard=yes`, so the Mac
+keyboard types into the app, and a running headless emulator is restarted
+with a window, keeping its data. A deploy without `--window` leaves a
+running windowed emulator alone and boots new emulators headless. On iOS it
+opens Simulator.app on each device, which also shows windows for every
+other booted sim.
+
+An Android emulator is found by its port, and after a reboot another
+emulator (your own, say) can hold a squad's port. simsquad acts on an
+emulator only when it answers with the squad's AVD name (`adb emu avd
+name`): deploy fails the device rather than install on or restart any
+other emulator, and `dismiss`, `sweep` and a deploy that resets the
+platform leave it running, with a warning, and delete only the squad's
+AVD. A new emulator gets a port `adb devices` doesn't list, and deploy
+installs on it only while the emulator it started is still running on that
+port and the emulator answering there doesn't run another AVD.
+
+A recorded squad emulator can ignore `adb emu kill`, and on teardown can
+stop answering the name query. simsquad then sends SIGTERM, then SIGKILL,
+to the PID its record holds (teardown deletes the AVD only after), and only
+while that process's arguments still name the squad's AVD and port (`-avd
+<avd> -port <port>`): after a reboot the PID can belong to another emulator
+or a colima, lima or UTM qemu VM, which simsquad never signals.
+
 `deploy` exit codes: `0` = all devices ready · `2` = mixed (some ready, some
-errored) · `1` = none ready / bad args / build failed.
+errored) · `1` = none ready / bad args / build failed. Only the deployed
+platforms' devices count, and a platform whose build failed counts as not
+ready; stdout is still the whole squad.
 
 ## Agent skills
 
@@ -149,7 +207,12 @@ feature on a squad).
 | `skill install` | Write both skills into the app repo; emit `{dir, version, contract, files}` | `--dir`, `--force` |
 | `skill status` | Check the installed skills and `mobilecli` fit this binary | `--dir` |
 
-Run it from the app repo (the enclosing git work tree is the root):
+Run it from the app repo. The skills go beside the config: in the **config
+dir**, the nearest folder up from where you run it that holds
+`simsquad.toml` (or `simsquad.local.toml`), the same folder `run new` puts
+its runs under (see [Project layouts](#project-layouts)). Without config,
+install refuses: run `simsquad equip` first. A config dir outside a git
+work tree gets a warning on stderr, since nothing there is shared:
 
 ```sh
 simsquad skill install > skill-install.json
@@ -206,7 +269,8 @@ simsquad skill status > skill-status.json
 
 - Same skill contract as the binary: `in_sync: true`, exit `0`.
 - Older skills, or none installed: exit `0` with a `warning` telling you to
-  re-run `simsquad skill install`.
+  re-run `simsquad skill install`. No config: exit `0`, not installed, with
+  a `warning` to run `simsquad equip` first.
 - Newer skills: exit `1`, so a skill never calls commands this simsquad
   doesn't have. Upgrade simsquad.
 - `mobilecli` is looked up on `PATH` and its version compared with the
@@ -221,19 +285,20 @@ stdout and human progress on stderr.
 
 | Command | Action | Key flags |
 |---|---|---|
-| `run new` | Start a test run from a Gherkin feature file; emit the run descriptor | `<feature-file>`, `--fresh` |
+| `run new` | Start a test run from a Gherkin feature file; emit the run descriptor | `<feature-file>`, `--fresh`, `--worker`, `--model` |
 | `run worker` | Run one headless worker under a hard deadline; emit `{status}` | `--dir` (req), `--timeout` seconds (req), `-- <command…>` |
 | `run validate` | Check a worker's `result.json`; emit `{valid, errors}` | `<worker-dir>` |
 | `run report` | Write `report.json` + `report.md`; emit `{verdict, report_json, report_md, counts}`; exit 0/1/2 | `<run-dir>` |
 
 ### `run new` — start a test run
 
-`simsquad run new <feature-file> [--fresh]`, run from the app repo, reads a
-Gherkin feature file and sets up a test run:
+`simsquad run new <feature-file> [--fresh] [--worker claude|codex]
+[--model <id>]`, run from the app repo, reads a Gherkin feature file and
+sets up a test run:
 
 ```sh
 simsquad run new qa/features/login.feature > run-new.json
-# {"run_id", "run_dir", "squad_name", "fresh", "platforms", "deadline_seconds", "worker_model"}
+# {"run_id", "run_dir", "squad_name", "fresh", "platforms", "deadline_seconds", "worker", "worker_model", "app_notes"?}
 ```
 
 - Background steps are prepended to every scenario, Scenario Outlines expand
@@ -244,13 +309,27 @@ simsquad run new qa/features/login.feature > run-new.json
 - Squad: `qa-<repo>` (the folder holding `simsquad.toml`), or
   `[agent].test_squad`; `--fresh` adds a unique suffix for an isolated squad.
 - Platforms: the equipped platforms the tags allow. A tag naming an
-  unequipped platform, malformed Gherkin, or a squad still used by a run
-  without a `report.json` is refused before anything is written.
+  unequipped platform, malformed Gherkin, or a squad in use by a run that
+  shares a platform and has no `report.json` yet is refused before anything
+  is written.
 - Deadline per worker: `120 + Σ(60 + 30 × steps)` over the scenarios of the
   busiest platform, `+ 600` when it has an exploration.
-- Creates `.simsquad/runs/<run-id>/` with `feature.feature` (a copy) and
-  `run.json` (title, source, squad, platforms, deadline, worker model and
-  the expanded scenarios).
+- Worker model, never empty: `--model`, else `[agent].worker_model`
+  (`simsquad.local.toml` over `simsquad.toml`), else the default for
+  `--worker` (default `claude`): `sonnet` for `claude`, `gpt-6.1-sol` for
+  `codex`. Any other `--worker` exits `1`. The ids are passed on as given,
+  never validated. `worker_model` is one value for both CLIs: set it only
+  when it suits every CLI the team uses, or pass `--model` per run.
+- Creates `.simsquad/runs/<run-id>/` in the config dir with
+  `feature.feature` (a copy) and `run.json` (title, source, squad,
+  platforms, deadline, worker and worker model, `app_notes` and the
+  expanded scenarios).
+- `app_notes` is the absolute path of `qa/README.md` in the config dir, so
+  workers read the app notes without guessing which repo holds them. It is
+  omitted, in `run.json` and on stdout, when that file doesn't exist.
+- `run_dir` and `app_notes` have every symlink resolved, even when you
+  reached the repo through one: a Claude Code worker's permission rules
+  must match the path a file really lives at.
 
 ### `run worker` — run a headless worker
 
@@ -262,18 +341,35 @@ simsquad run worker --dir .simsquad/runs/<run-id>/workers/<device-id> \
 
 `run worker` starts the command in its own process group with its input
 closed (so `codex exec` can't wait for input forever) and sends the
-command's output to `<dir>/worker.log`. It deletes any `<dir>/status` left
-by an earlier attempt before starting, so a successful retry reads as a
-success. The outcome:
+command's output to `<dir>/worker.log`. The outcome:
 
 | Worker | `<dir>/status` | stdout `status` |
 |---|---|---|
-| exits 0 in time | not written | `ok` |
-| exits non-zero | `error: worker exited <code>` | same |
+| exits 0 in time, `<dir>/result.json` exists | not written | `ok` |
+| exits non-zero, or exits 0 without `<dir>/result.json`, and the end of `worker.log` holds a known Claude Code or Codex usage-limit message | `error: usage limit` | same |
+| exits 0 in time, no `<dir>/result.json` | `error: no result.json` | same |
+| exits non-zero otherwise | `error: worker exited <code>` | same |
 | still running at `--timeout` | `blocked: timeout` — the whole group, children included, is killed | same |
 
 A worker killed by a signal reports the negative signal number as its
-code (e.g. `-9`). `run worker` exits `0` whenever it recorded an outcome, so
+code (e.g. `-9`). Only these fixed texts are recorded, never lines from
+the log, which can hold credentials from the squad's context. When `--dir`
+sits in a run folder (`<run>/workers/<id>`), the squad named by
+`<run>/run.json` has its secret values replaced by `<secret>` in
+`worker.log` as it is written, raw or JSON-escaped: a Codex worker's
+output repeats the commands it ran and their output, `devices --reveal`
+included. A value secret only by its key's name is redacted there from 4
+characters on and never as `true`/`false`, so `TOKEN_TTL=5` doesn't mask
+every `5`.
+
+Running `run worker` again on the same `--dir` is a retry. Before the
+worker starts, the earlier attempt's outputs (everything except
+`prompt.md` and `attempts/`: `result.json`, `log.md`, `screenshots/`,
+`worker.log`, `status`, …) move to `<dir>/attempts/<n>/`, numbered from 1.
+A moved folder is recreated empty, so `screenshots/` is still there for the
+retry. A stale result or status is never read as the retry's: `run
+validate` and `run report` ignore `attempts/`. simsquad never retries a
+worker on its own. `run worker` exits `0` whenever it recorded an outcome, so
 one bad worker doesn't derail a fan-out; it exits `1` only on misuse (no
 command, bad flags, unwritable dir).
 
@@ -302,7 +398,8 @@ source of the device rows and context) and each ready device's
   worker status, scenarios and findings, and the counts. Paths are relative
   to the run dir.
 - `report.md`, pasteable into a PR: verdict, source link, context keys and
-  values as they are, the matrix, bugs by severity, per-device results.
+  values (secrets as `<secret>`), the matrix, bugs by severity, per-device
+  results.
 
 A status file overrides even a valid result; a missing or invalid
 `result.json` marks the worker `error` and is recorded with its
@@ -328,8 +425,55 @@ containing either:
 
 Run `simsquad equip` for an interactive setup wizard, or copy
 [`simsquad.toml.example`](simsquad.toml.example) and edit. See that file for the
-full annotated schema (`[project]`, `[context]`, `[agent]`, `[[ios.sims]]`,
-`[[android.sims]]`).
+full annotated schema (`[project]`, `[context]`, `[secrets]`, `[agent]`,
+`[[ios.sims]]`, `[[android.sims]]`, `[device_sets.<name>]`). equip rewrites
+both files on save but keeps every `[context]` key, device set and
+`[agent]` value in the file it came from, so values you keep in
+`simsquad.local.toml` stay out of git. Put credentials in `[secrets]`,
+which equip always writes to the local file.
+
+**Secrets.** Test-account passwords and tokens go in `[secrets]` in
+`simsquad.local.toml`:
+
+```toml
+[secrets]
+password = "hunter2"
+```
+
+Its keys join the squad context as secrets, shown as `"<secret>"` in every
+output (see Concepts). `[secrets]` and `[context]` are separate sources:
+`deploy --secret KEY=VALUE` replaces `[secrets]` and leaves `[context]`
+alone, `--context` leaves `[secrets]` alone, and a key in both is an
+error. A context key named like `password`, `secret` or `token` is a secret
+even in `[context]`. `[secrets]` in `simsquad.toml` works, but deploy warns
+that it is committed; `equip` saves secrets to `simsquad.local.toml`,
+which it writes `0600`.
+
+**Device sets.** Besides the default matrix, the equipment can hold named
+device matrices, deployed with `deploy --device-set NAME`:
+
+```toml
+[[device_sets.tablet.ios.sims]]
+device  = "iPad Pro 13-inch (M5)"
+runtime = "iOS 26.4"
+count   = 1
+
+[[device_sets.tablet.android.sims]]
+device = "pixel_tablet"
+image  = "system-images;android-34;google_apis;arm64-v8a"
+count  = 1
+```
+
+Rows are shaped like `[[ios.sims]]` / `[[android.sims]]`. A set is only a
+device matrix: the repos, scheme and Gradle task stay in `[project]`. A set
+in `simsquad.local.toml` replaces the `simsquad.toml` set of the same name
+wholesale (its rows don't merge). In `simsquad equip`, the editor's **Device
+sets** group creates, renames, deletes and edits sets with the same pickers
+as the default matrix; `equip --add-ios-spec … --device-set NAME` appends to
+a set (creating it in `simsquad.toml`), and `equip --show` lists the sets.
+equip keeps each set in the file it came from; deleting a local set that
+overrides a shared one removes only the override, and the shared set
+stays.
 
 **Precedence**, highest to lowest:
 
@@ -340,6 +484,87 @@ CLI flag  >  env var  >  simsquad.local.toml  >  simsquad.toml  >  built-in defa
 Environment variables: `SIMSQUAD_IOS_REPO`, `SIMSQUAD_ANDROID_REPO`,
 `SIMSQUAD_CACHE_DIR` (cache root; defaults to `~/.cache/simsquad`).
 
+### Android: APK or app bundle
+
+`[project].android_gradle_task` decides how the app is installed. Its
+project path names the module whose output simsquad picks up
+(`:mobile:assembleDebug` → the newest APK under `mobile/build/outputs/apk`;
+a task without one, like `assembleDebug`, means `app`).
+
+- **`assemble*`** (the default `:app:assembleDebug`) builds one APK,
+  installed with `adb install`.
+- **`bundle*`** (`:app:bundleDevDebug`) builds an app bundle. simsquad takes
+  the newest one in the task's variant folder (`app/build/outputs/bundle/devDebug`;
+  a bare `bundleDebug` on a flavored app has no such folder, so name the
+  variant), turns it into an APK set once per deploy (`bundletool build-apks
+  --local-testing`) and installs that on every device with `bundletool
+  install-apks`. Use it for an app with dynamic feature modules: an
+  assemble build installs only the base APK, so feature screens fail to
+  open, and deploy warns about it. `--local-testing` lets on-demand
+  modules install without Google Play. bundletool merges install-time
+  modules not marked `dist:removable` into the base APK, so `pm path` can
+  list only the base and its config splits while the features are there.
+  Data is cleared before the install, not after: `pm clear` also deletes
+  the on-demand splits `install-apks` leaves in external storage. For the
+  same reason `reset` installs the squad's APK set again after clearing.
+  Each bundle squad keeps its APK set at `~/.cache/simsquad/<squad>.apks`
+  (a hard link to the build's set where possible, else a copy), installs
+  from it and records it as `builds.android.apks_path`, so another
+  squad's deploy from the same repo doesn't change it; a deploy that
+  builds an APK instead, `dismiss` and `sweep` remove it. `reset` skips the reinstall, with a warning, only
+  when that file is gone; on-demand modules then can't install until the
+  next deploy.
+
+A bundle task needs [bundletool](https://developer.android.com/tools/bundletool),
+which simsquad doesn't install: `brew install bundletool` (it runs on the
+Java that Gradle already needs). bundletool signs the APK set with the
+default debug keystore, `~/.android/debug.keystore` (alias
+`androiddebugkey`, password `android`). Gradle signs debug builds with
+that same keystore unless the project sets its own debug `signingConfig`.
+If it does, the bundle-installed app carries a different signature than
+a Gradle-installed one: installing one over the other fails on the
+signature, which a deploy without `--preserve-data` gets past by
+uninstalling and retrying once (the app's data goes with it), and
+anything tied to the project's debug certificate (a Google sign-in or Maps API key registered for its SHA-1) won't accept the
+bundle-installed app. Register the default keystore's SHA-1 too where that
+matters. When `~/.android/debug.keystore` doesn't exist (Gradle creates
+it only for a project on the default debug signing), the deploy fails
+and prints the `keytool` command that creates it.
+
+## Project layouts
+
+simsquad has one root for everything it shares: the **config dir**, the
+folder holding `simsquad.toml`. `skill install` writes the skills there,
+`run new` puts run folders under its `.simsquad/runs/`, and workers read
+the app notes from its `qa/README.md`. Commit the config dir so colleagues
+get the config, skills, app notes and saved feature files when they clone;
+`equip` (when it creates the config) and `skill install` warn when it isn't
+inside a git work tree.
+
+| | Single repo | Umbrella workspace repo | Split repos (home repo) |
+|---|---|---|---|
+| Config (`simsquad.toml`) | the repo root, or the app's subfolder (`mobile/`) | the umbrella folder | the home repo |
+| Skills (`.agents/`, `.claude/`, `.codex/`) | beside the config | the umbrella folder | the home repo |
+| App notes and feature files (`qa/`) | beside the config | the umbrella folder | the home repo |
+| Run folders (`.simsquad/runs/`, gitignored) | beside the config | the umbrella folder | the home repo |
+| App repo paths | `ios_repo = "."` (or a relative path) in `simsquad.toml` | relative paths (`ios`, `android`) in `simsquad.toml` | `"."` for the home repo in `simsquad.toml`; the other repo's path in `simsquad.local.toml` |
+
+- **Single repo.** iOS and Android (or one of them) live in one repo.
+  Everything sits in the config dir: the repo root, or the subfolder that
+  holds the mobile apps in a monorepo. Run simsquad from that folder or
+  below it.
+- **Umbrella workspace repo.** The apps live in separate repos checked out
+  side by side in one folder (`myapp/ios/`, `myapp/android/`). Make the
+  umbrella folder a small workspace repo of its own (`git init` there) and
+  list the app repo folders in its `.gitignore`, so it tracks only the
+  config, skills and `qa/`. Run simsquad from the umbrella folder.
+- **Split repos with no shared parent.** The apps live in separate repos
+  checked out wherever each developer likes. Pick one app repo as the
+  **home repo** and run `simsquad equip` there: the config, skills and `qa/`
+  live in it, and each developer points at their checkout of the other
+  repo with an absolute path in `simsquad.local.toml`. Run simsquad from
+  the home repo.
+
 ## State
 
 simsquad keeps a per-user registry and per-squad records under
@@ -347,9 +572,11 @@ simsquad keeps a per-user registry and per-squad records under
 
 - `squads.json` — the registry, keyed by squad name.
 - `<name>.json` — one record per squad.
+- `<name>.apks` — the squad's own APK set, for an app bundle build.
 - `derived/` — xcodebuild derived-data + build logs (the expensive build cache).
 
-To wipe squad state without losing the build cache, remove the JSON files but
+To wipe squad state without losing the build cache, remove the JSON files and
+the `*.apks` files (with any `*.apks.*.tmp` left by an interrupted deploy) but
 keep `derived/`.
 
 ## Known limitations
@@ -362,6 +589,8 @@ keep `derived/`.
 - **Never `2>&1`.** It merges stderr progress into the stdout JSON contract.
   Redirect stdout only (`simsquad deploy … > squad.json`), or use
   `--out squad.json`.
+- **Android build output is looked for under `<module>/build/`.** A
+  custom `buildDir` or `projectDir` in the Gradle settings isn't followed.
 - **Physical Android devices** are claimed by adb serial; simsquad never
   deletes a physical device, only uninstalls the app on teardown.
 

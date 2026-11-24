@@ -123,12 +123,120 @@ func TestTestSkillWorkerCommandCarriesItsPermissions(t *testing.T) {
 	}
 	cmd := skill[start : start+end]
 	for _, rule := range skills.ClaudeAllow {
+		// settings.json can only hold a relative Edit rule; the worker gets
+		// its own, absolute one (TestTestSkillWorkerCommandWorksFromAnyCwd).
+		if strings.HasPrefix(rule, "Edit(") {
+			continue
+		}
 		if !strings.Contains(cmd, `"`+rule+`"`) {
 			t.Errorf("Claude worker command does not pass --allowedTools %q", rule)
 		}
 	}
 	if strings.Contains(skill, "$(") {
 		t.Error("skill uses a $(…) command substitution")
+	}
+}
+
+// TestTestSkillWorkerCommandWorksFromAnyCwd: the worker inherits the
+// orchestrator's cwd, so nothing it needs may depend on that cwd. Issue #34:
+// in a hub layout the skill folder (behind the .claude/skills symlink) and
+// the app notes lie outside it, so Claude Code refused the reads and the
+// worker wrote BLOCKED.md. Issue #35: the relative Edit(.simsquad/runs/**)
+// resolved against that cwd, so result.json couldn't be written.
+func TestTestSkillWorkerCommandWorksFromAnyCwd(t *testing.T) {
+	skill, _ := installedTestSkill(t)
+	start := strings.Index(skill, "-- claude -p")
+	if start < 0 {
+		t.Fatal("skill has no `-- claude -p` worker command")
+	}
+	cmd := skill[start : start+strings.Index(skill[start:], "```")]
+
+	// $RUN_DIR starts with "/", so one more makes Claude Code's absolute
+	// form, //<path>; a single "/" would anchor at the cwd instead.
+	if !strings.Contains(cmd, `"Edit(/$RUN_DIR/**)"`) {
+		t.Errorf("worker command does not grant Edit on the run folder by absolute path:\n%s", cmd)
+	}
+	for _, m := range regexp.MustCompile(`Edit\(([^)]*)\)`).FindAllStringSubmatch(cmd, -1) {
+		if m[1] != "/$RUN_DIR/**" {
+			t.Errorf("worker command keeps a cwd-relative rule %s", m[0])
+		}
+	}
+	if !strings.Contains(skill, "`Edit(//") {
+		t.Error("skill does not show what the Edit rule expands to")
+	}
+
+	for _, want := range []string{`--add-dir "$SKILL_DIR"`, `--add-dir "$NOTES_DIR"`} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("worker command does not pass %s", want)
+		}
+	}
+	// Allow rules must match both the path asked for and where it resolves,
+	// so the folder is granted, and worker.md named, by its real path.
+	for _, want := range []string{"realpath", "<SKILL_DIR>/worker.md", "`app_notes`"} {
+		if !strings.Contains(skill, want) {
+			t.Errorf("step 7 does not mention %q", want)
+		}
+	}
+
+	// Codex runs unsandboxed, so its command needs none of this.
+	codex := skill[strings.Index(skill, "-- codex exec"):]
+	codex = codex[:strings.Index(codex, "```")]
+	for _, unwanted := range []string{"--add-dir", "Edit("} {
+		if strings.Contains(codex, unwanted) {
+			t.Errorf("Codex worker command passes %s:\n%s", unwanted, codex)
+		}
+	}
+}
+
+// TestTestSkillAlwaysPassesTheWorkerModel: `run new` resolves a model for
+// every run (issue #32), so the skill names its host CLI to `run new` and
+// passes the resolved model to every worker, never leaving it to the host
+// CLI's machine-local default.
+func TestTestSkillAlwaysPassesTheWorkerModel(t *testing.T) {
+	skill, _ := installedTestSkill(t)
+	cmds := fencedCommands(skill, "simsquad")
+	var runNew, workers []string
+	for _, c := range cmds {
+		switch {
+		case strings.HasPrefix(c, "simsquad run new "):
+			runNew = append(runNew, c)
+		case strings.HasPrefix(c, "simsquad run worker "):
+			workers = append(workers, c)
+		}
+	}
+	if len(runNew) == 0 {
+		t.Fatal("skill has no `simsquad run new` example")
+	}
+	// The skill says to run commands exactly as shown, so a hard-coded
+	// `--worker claude` would put a Codex orchestrator's workers on a
+	// Claude model; the block carries a placeholder instead.
+	for _, c := range runNew {
+		if !strings.Contains(c, " --worker <") {
+			t.Errorf("run new example does not pass a --worker placeholder: %s", c)
+		}
+		if regexp.MustCompile(`--worker (claude|codex)\b`).MatchString(c) {
+			t.Errorf("run new example hard-codes the worker CLI: %s", c)
+		}
+	}
+	m := regexp.MustCompile(`(?s)## 4\. Start the run\n(.*?)\n## `).FindStringSubmatch(skill)
+	if m == nil {
+		t.Fatal("skill has no `## 4. Start the run` step")
+	}
+	for _, want := range []string{"--worker claude", "--worker codex"} {
+		if !strings.Contains(m[1], want) {
+			t.Errorf("step 4 does not mention %q", want)
+		}
+	}
+	if len(workers) < 2 {
+		t.Fatalf("want a Claude and a Codex `run worker` example, got %d", len(workers))
+	}
+	for _, c := range workers {
+		if !strings.Contains(c, `--model "$WORKER_MODEL"`) {
+			t.Errorf("worker command does not pass --model \"$WORKER_MODEL\": %s", c)
+		}
+	}
+	if regexp.MustCompile("(?i)leave out `--model`|worker_model` is empty").MatchString(skill) {
+		t.Error("skill still has a path that leaves out --model")
 	}
 }
 
@@ -214,6 +322,49 @@ func TestTestSkillRedeploysWhenEquipmentChanged(t *testing.T) {
 		if !strings.Contains(m[1], want) {
 			t.Errorf("deploy step does not mention %q", want)
 		}
+	}
+	// Runs on disjoint platforms can share a squad (issue #30), and dismiss
+	// tears down every device of it, so the skill must check for another
+	// unfinished run first and fall back to --fresh instead of dismissing.
+	for _, want := range []string{"report.json", "squad_name", "--fresh"} {
+		if !strings.Contains(m[1], want) {
+			t.Errorf("deploy step's dismiss branch does not mention %q", want)
+		}
+	}
+	if strings.Contains(m[1], "belongs to this run") {
+		t.Error("deploy step still says the squad belongs to this run")
+	}
+	// The runs folder is the config dir's (issue #22), so the loop finds it
+	// from the run folder, whatever folder the agent is in (via `..`: the
+	// skill avoids `$(…)`, which Claude Code asks approval for).
+	// ${RUN_DIR:?} stops the loop when the agent forgot to substitute the
+	// variable; a bare "$RUN_DIR" would walk / and print nothing, which the
+	// step reads as "dismiss".
+	if !strings.Contains(m[1], `for d in "${RUN_DIR:?}"/../*/; do`) {
+		t.Error("deploy step does not list the other runs from $RUN_DIR's parent")
+	}
+	if strings.Contains(m[1], "in .simsquad/runs/") {
+		t.Error("deploy step still lists runs relative to the working directory")
+	}
+}
+
+// A run deploys only its own platforms (issue #23), so a single-platform run
+// on a squad equipped for two neither builds nor boots the other platform.
+func TestTestSkillDeploysOnlyTheRunsPlatforms(t *testing.T) {
+	skill, _ := installedTestSkill(t)
+	m := regexp.MustCompile(`(?s)## 5\. Deploy\n(.*?)\n## `).FindStringSubmatch(skill)
+	if m == nil {
+		t.Fatal("skill has no `## 5. Deploy` step")
+	}
+	var deploy string
+	for _, line := range fencedCommands(m[1], "simsquad deploy") {
+		deploy = line
+	}
+	if !strings.Contains(deploy, "--platform") {
+		t.Errorf("deploy command %q passes no --platform", deploy)
+	}
+	if !strings.Contains(m[1], "`platforms`") {
+		t.Error("deploy step does not tie --platform to the run's `platforms`")
 	}
 }
 
@@ -389,5 +540,98 @@ func TestWorkerResultExamplePassesValidation(t *testing.T) {
 	}
 	if _, errs := agenttest.ValidateWorkerDir(dir); len(errs) > 0 {
 		t.Errorf("example result.json is invalid: %v", errs)
+	}
+}
+
+// Test squads stay headless: workers type through adb, and a hardware
+// keyboard would hide the on-screen keyboard they see (issue #33).
+func TestTestSkillNeverDeploysWithAWindow(t *testing.T) {
+	skill, worker := installedTestSkill(t)
+	for _, text := range []string{skill, worker} {
+		if strings.Contains(text, "--window") {
+			t.Error("simsquad-test mentions --window; test squads stay headless")
+		}
+	}
+}
+
+// Dry run 002: in an umbrella layout a worker looked for qa/README.md in
+// the iOS repo and found no app notes. run.json carries their absolute path
+// (issue #22), so the worker reads it from there instead of inferring it.
+func TestWorkerReadsAppNotesFromRunJSON(t *testing.T) {
+	_, worker := installedTestSkill(t)
+	m := regexp.MustCompile(`(?s)## Read first\n(.*?)\n## `).FindStringSubmatch(worker)
+	if m == nil {
+		t.Fatal("worker prompt has no `## Read first` section")
+	}
+	m[1] = strings.Join(strings.Fields(m[1]), " ")
+	if !strings.Contains(m[1], "`app_notes`") {
+		t.Error("Read first does not take the app notes from run.json's `app_notes`")
+	}
+	if !strings.Contains(m[1], "no `app_notes`") {
+		t.Error("Read first does not say what to do when run.json has no `app_notes`")
+	}
+	if strings.Contains(m[1], "in the app repo") {
+		t.Error("Read first still has the worker infer the app notes location")
+	}
+}
+
+// TestTestSkillDocumentsWorkerOutcomesAndRetry (issue #36): step 7 lists
+// every status `run worker` records, the retry reruns the unchanged step 7
+// command before validate and report, and a worker stopped before its
+// first scenario still writes result.json.
+func TestTestSkillDocumentsWorkerOutcomesAndRetry(t *testing.T) {
+	skill, worker := installedTestSkill(t)
+	m := regexp.MustCompile(`(?s)## 7\. Start the workers\n(.*?)\n## `).FindStringSubmatch(skill)
+	if m == nil {
+		t.Fatal("skill has no `## 7. Start the workers` step")
+	}
+	step7 := m[1]
+	for _, want := range []string{
+		"`" + agenttest.StatusOK + "`",
+		"`" + agenttest.StatusTimeout + "`",
+		"`" + agenttest.StatusNoResult + "`",
+		"`" + agenttest.StatusUsageLimit + "`",
+		"`error: worker exited <code>`",
+	} {
+		if !strings.Contains(step7, want) {
+			t.Errorf("step 7 does not list the status %s", want)
+		}
+	}
+	i := strings.Index(step7, "### Retry a worker")
+	if i < 0 {
+		t.Fatal("step 7 has no `### Retry a worker` section")
+	}
+	retry := step7[i:]
+	for _, want := range []string{"`simsquad run worker` command from step 7", "attempts/", "step 8", "step 9",
+		"before step 9", "`report.json`", "never retries"} {
+		if !strings.Contains(retry, want) {
+			t.Errorf("retry section does not mention %q", want)
+		}
+	}
+	for _, want := range []string{"before your first scenario", "`blocked_reason`", "`BLOCKED.md`"} {
+		if !strings.Contains(worker, want) {
+			t.Errorf("worker prompt does not mention %q", want)
+		}
+	}
+}
+
+// Issue #37: the device row a worker gets shows secrets as <secret>; it
+// fetches the real value with `devices --reveal`, types it, and keeps it out
+// of every file it writes.
+func TestWorkerFetchesSecretsWithReveal(t *testing.T) {
+	_, worker := installedTestSkill(t)
+	cmds := strings.Join(fencedCommands(worker, "simsquad"), "\n")
+	if !strings.Contains(cmds, `simsquad devices --name "$SQUAD" --reveal`) {
+		t.Errorf("worker prompt has no `simsquad devices --name \"$SQUAD\" --reveal` example:\n%s", cmds)
+	}
+	for _, want := range []string{"<secret>", "mobilecli", "log.md", "result.json", "file names"} {
+		if !strings.Contains(worker, want) {
+			t.Errorf("worker prompt does not mention %q", want)
+		}
+	}
+	for _, line := range fencedCommands(worker, "simsquad") {
+		if strings.Contains(line, "--reveal") && (strings.Contains(line, "--out") || strings.Contains(line, ">")) {
+			t.Errorf("worker prompt writes revealed secrets to a file: %s", line)
+		}
 	}
 }

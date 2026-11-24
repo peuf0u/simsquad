@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,8 +17,9 @@ type skillInstallOut struct {
 	Files    []string `json:"files"`
 }
 
-// newAppRepo chdirs into a fresh temporary app repo and returns its path.
-func newAppRepo(t *testing.T) string {
+// newBareDir chdirs into a fresh temporary folder with no simsquad config
+// and returns its path.
+func newBareDir(t *testing.T) string {
 	t.Helper()
 	t.Setenv("SIMSQUAD_CACHE_DIR", t.TempDir())
 	dir, err := filepath.EvalSymlinks(t.TempDir())
@@ -28,20 +30,45 @@ func newAppRepo(t *testing.T) string {
 	return dir
 }
 
+// newAppRepo chdirs into a fresh temporary app repo, equipped with a
+// minimal simsquad.toml so the skill commands find their root, and returns
+// its path.
+func newAppRepo(t *testing.T) string {
+	t.Helper()
+	dir := newBareDir(t)
+	writeTestFile(t, filepath.Join(dir, "simsquad.toml"), "[project]\nios_scheme = \"App\"\n")
+	return dir
+}
+
+// gitInit makes dir a git work tree.
+func gitInit(t *testing.T, dir string) {
+	t.Helper()
+	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init %s: %v\n%s", dir, err, out)
+	}
+}
+
 // runSkill executes `simsquad skill <args>` through the real root command
 // with a fixed binary version.
 func runSkill(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	out, _, err := runSkillIO(t, args...)
+	return out, err
+}
+
+// runSkillIO is runSkill that also returns stderr.
+func runSkillIO(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
 	prev := Version
 	Version = "9.9.9"
 	t.Cleanup(func() { Version = prev })
 	root := NewRootCmd()
-	out := &bytes.Buffer{}
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	root.SetOut(out)
-	root.SetErr(&bytes.Buffer{})
+	root.SetErr(errOut)
 	root.SetArgs(append([]string{"skill"}, args...))
-	err := root.Execute()
-	return out.String(), err
+	err = root.Execute()
+	return out.String(), errOut.String(), err
 }
 
 func mustInstall(t *testing.T, args ...string) skillInstallOut {
@@ -87,15 +114,15 @@ func TestSkillInstallWritesBothSkillsAndLinksClaude(t *testing.T) {
 	if got.Version != "9.9.9" {
 		t.Errorf("version = %q, want 9.9.9", got.Version)
 	}
-	if got.Contract != 3 {
-		t.Errorf("contract = %d, want 3", got.Contract)
+	if got.Contract != 4 {
+		t.Errorf("contract = %d, want 4", got.Contract)
 	}
 	for _, skill := range []string{"simsquad", "simsquad-test"} {
 		body := readFile(t, filepath.Join(wantDir, skill, "SKILL.md"))
 		if !strings.HasPrefix(body, "---\nname: "+skill+"\n") {
 			t.Errorf("%s SKILL.md lacks frontmatter naming it:\n%s", skill, body)
 		}
-		for _, want := range []string{"simsquad 9.9.9", "skill contract 3", "qa/README.md"} {
+		for _, want := range []string{"simsquad 9.9.9", "skill contract 4", "qa/README.md"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s SKILL.md header lacks %q", skill, want)
 			}
@@ -197,6 +224,7 @@ func TestSkillInstallWritesWorkerPermissionsForClaudeAndCodex(t *testing.T) {
 		"Bash(mobilecli:*)",
 		"Bash(simsquad reset:*)",
 		"Bash(simsquad run validate:*)",
+		"Bash(simsquad devices:*)",
 		"Edit(.simsquad/runs/**)",
 	}
 	if strings.Join(settings.Permissions.Allow, "|") != strings.Join(wantAllow, "|") {
@@ -208,13 +236,14 @@ func TestSkillInstallWritesWorkerPermissionsForClaudeAndCodex(t *testing.T) {
 		`prefix_rule(pattern = ["mobilecli"], decision = "allow")`,
 		`prefix_rule(pattern = ["simsquad", "reset"], decision = "allow")`,
 		`prefix_rule(pattern = ["simsquad", "run", "validate"], decision = "allow")`,
+		`prefix_rule(pattern = ["simsquad", "devices"], decision = "allow")`,
 	} {
 		if !strings.Contains(rules, want) {
 			t.Errorf("codex rules lack %s:\n%s", want, rules)
 		}
 	}
-	if n := strings.Count(rules, "prefix_rule("); n != 3 {
-		t.Errorf("codex rules allow %d commands, want only mobilecli, simsquad reset and simsquad run validate:\n%s", n, rules)
+	if n := strings.Count(rules, "prefix_rule("); n != 4 {
+		t.Errorf("codex rules allow %d commands, want only mobilecli, simsquad reset, simsquad run validate and simsquad devices:\n%s", n, rules)
 	}
 	for _, want := range []string{".claude/settings.json", ".codex/rules/simsquad.rules"} {
 		if !contains(got.Files, want) {
@@ -303,4 +332,95 @@ func TestSkillInstallNeverOverwritesAppNotes(t *testing.T) {
 	if got := readFile(t, notes); got != mine {
 		t.Errorf("qa/README.md was changed:\n%s", got)
 	}
+}
+
+// TestSkillInstallRootsAtConfigDir: with the config in a repo subfolder,
+// the skills land beside the config, where `run new` puts its runs, not at
+// the git toplevel, from the config dir and from a folder below it.
+func TestSkillInstallRootsAtConfigDir(t *testing.T) {
+	for _, sub := range []string{"", "src"} {
+		t.Run("cwd mobile/"+sub, func(t *testing.T) {
+			base := newBareDir(t)
+			gitInit(t, base)
+			mobile := filepath.Join(base, "mobile")
+			writeTestFile(t, filepath.Join(mobile, "simsquad.toml"), equipIOSOnly)
+			writeTestFile(t, filepath.Join(mobile, "qa", "features", "login.feature"), loginFeature)
+			cwd := filepath.Join(mobile, sub)
+			if err := os.MkdirAll(cwd, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Chdir(cwd)
+
+			got := mustInstall(t)
+
+			if want := filepath.Join(mobile, ".agents", "skills"); got.Dir != want {
+				t.Errorf("dir = %q, want %q", got.Dir, want)
+			}
+			readFile(t, filepath.Join(mobile, ".agents", "skills", "simsquad-test", "SKILL.md"))
+			readFile(t, filepath.Join(mobile, "qa", "README.md"))
+			if !strings.Contains(readFile(t, filepath.Join(mobile, ".gitignore")), ".simsquad/") {
+				t.Error("mobile/.gitignore lacks .simsquad/")
+			}
+			if _, err := os.Stat(filepath.Join(base, ".agents")); !os.IsNotExist(err) {
+				t.Errorf("skills also written at the git toplevel (err=%v)", err)
+			}
+
+			run := mustRunNew(t, filepath.Join(mobile, "qa", "features", "login.feature"))
+			if want := filepath.Join(mobile, ".simsquad", "runs"); filepath.Dir(run.RunDir) != want {
+				t.Errorf("run_dir = %q, want it under %q beside the skills", run.RunDir, want)
+			}
+		})
+	}
+}
+
+func TestSkillInstallWithoutConfigRefusesWithEquipHint(t *testing.T) {
+	dir := newBareDir(t)
+
+	out, err := runSkill(t, "install")
+
+	if err == nil {
+		t.Fatal("skill install without config succeeded; want refusal")
+	}
+	if !strings.Contains(err.Error(), "run `simsquad equip` first") {
+		t.Errorf("error = %v, want the equip hint", err)
+	}
+	if out != "" {
+		t.Errorf("stdout must be empty on refusal, got %s", out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".agents")); !os.IsNotExist(err) {
+		t.Errorf("refused install still wrote .agents/ (err=%v)", err)
+	}
+}
+
+// notSharedWarning is the warning for a config dir outside git.
+const notSharedWarning = "skills, app notes and feature files here won't be shared; see README › Project layouts"
+
+// TestSkillInstallWarnsOutsideGit: a config dir outside a git work tree
+// gets one stderr warning, and the install still succeeds.
+func TestSkillInstallWarnsOutsideGit(t *testing.T) {
+	t.Run("outside git", func(t *testing.T) {
+		repo := newAppRepo(t)
+		out, stderr, err := runSkillIO(t, "install")
+		if err != nil {
+			t.Fatalf("skill install: %v", err)
+		}
+		if n := strings.Count(stderr, notSharedWarning); n != 1 {
+			t.Errorf("warning printed %d times, want once; stderr:\n%s", n, stderr)
+		}
+		if strings.Contains(out, "shared") {
+			t.Errorf("warning leaked onto stdout:\n%s", out)
+		}
+		readFile(t, filepath.Join(repo, ".agents", "skills", "simsquad", "SKILL.md"))
+	})
+	t.Run("inside git", func(t *testing.T) {
+		repo := newAppRepo(t)
+		gitInit(t, repo)
+		_, stderr, err := runSkillIO(t, "install")
+		if err != nil {
+			t.Fatalf("skill install: %v", err)
+		}
+		if strings.Contains(stderr, notSharedWarning) {
+			t.Errorf("warned inside a git work tree:\n%s", stderr)
+		}
+	})
 }

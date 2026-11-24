@@ -21,6 +21,13 @@ type equipOut struct {
 // not be shown). It returns stdout and the error.
 func runEquip(t *testing.T, answer *bool, args ...string) (string, error) {
 	t.Helper()
+	out, _, err := runEquipIO(t, answer, args...)
+	return out, err
+}
+
+// runEquipIO is runEquip that also returns stderr.
+func runEquipIO(t *testing.T, answer *bool, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
 	root := NewRootCmd()
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	root.SetOut(out)
@@ -41,8 +48,8 @@ func runEquip(t *testing.T, answer *bool, args ...string) (string, error) {
 	}
 	t.Cleanup(func() { Version, offerSkillInstall = prevVersion, prevOffer })
 
-	err := root.Execute()
-	return out.String(), err
+	err = root.Execute()
+	return out.String(), errOut.String(), err
 }
 
 func decodeEquip(t *testing.T, raw string) equipOut {
@@ -114,9 +121,10 @@ func TestEquipAcceptingOfferInstallsSkillsExactlyAsSkillInstall(t *testing.T) {
 	refRepo := newAppRepo(t)
 	mustInstall(t)
 	want := tree(t, refRepo)
-	delete(want, ".gitignore") // shared with equip; checked below
+	delete(want, ".gitignore")    // shared with equip; checked below
+	delete(want, "simsquad.toml") // the reference repo's config
 
-	repo := newAppRepo(t)
+	repo := newBareDir(t)
 	yes := true
 	stdout, err := runEquip(t, &yes, "--add-ios-spec", equipSpec)
 	if err != nil {
@@ -149,7 +157,7 @@ func TestEquipAcceptingOfferInstallsSkillsExactlyAsSkillInstall(t *testing.T) {
 }
 
 func TestEquipDecliningOfferWritesNoSkillFiles(t *testing.T) {
-	repo := newAppRepo(t)
+	repo := newBareDir(t)
 	no := false
 	stdout, err := runEquip(t, &no, "--add-ios-spec", equipSpec)
 	if err != nil {
@@ -167,7 +175,7 @@ func TestEquipDecliningOfferWritesNoSkillFiles(t *testing.T) {
 }
 
 func TestEquipInstallSkillsFlagAnswersTheOfferWithoutPrompting(t *testing.T) {
-	newAppRepo(t)
+	newBareDir(t)
 	stdout, err := runEquip(t, nil, "--add-ios-spec", equipSpec, "--install-skills")
 	if err != nil {
 		t.Fatalf("equip: %v", err)
@@ -176,7 +184,7 @@ func TestEquipInstallSkillsFlagAnswersTheOfferWithoutPrompting(t *testing.T) {
 		t.Error("--install-skills did not install")
 	}
 
-	repo := newAppRepo(t)
+	repo := newBareDir(t)
 	stdout, err = runEquip(t, nil, "--add-ios-spec", equipSpec, "--install-skills=false")
 	if err != nil {
 		t.Fatalf("equip: %v", err)
@@ -202,5 +210,100 @@ func TestEquipShowNeverOffersSkills(t *testing.T) {
 	newAppRepo(t)
 	if _, err := runEquip(t, nil, "--show"); err != nil {
 		t.Fatalf("equip --show: %v", err)
+	}
+}
+
+// TestEquipInstallsSkillsAtTheConfigDir: equip creates the config in the
+// current folder, and the skills it offers land beside it, not at the git
+// toplevel above.
+func TestEquipInstallsSkillsAtTheConfigDir(t *testing.T) {
+	base := newBareDir(t)
+	gitInit(t, base)
+	mobile := filepath.Join(base, "mobile")
+	if err := os.MkdirAll(mobile, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(mobile)
+
+	stdout, err := runEquip(t, nil, "--add-ios-spec", equipSpec, "--install-skills")
+	if err != nil {
+		t.Fatalf("equip: %v", err)
+	}
+	got := decodeEquip(t, stdout)
+	if got.Skills == nil || got.Skills.Dir != filepath.Join(mobile, ".agents", "skills") {
+		t.Errorf("skills result = %+v, want dir under %s", got.Skills, mobile)
+	}
+	if _, err := os.Stat(filepath.Join(base, ".agents")); !os.IsNotExist(err) {
+		t.Errorf("skills written at the git toplevel (err=%v)", err)
+	}
+}
+
+// TestEquipWarnsOutsideGitOnlyWhenCreatingConfig: creating the config
+// outside a git work tree warns once on stderr, even when the skills are
+// installed in the same run; editing an existing config doesn't warn.
+func TestEquipWarnsOutsideGitOnlyWhenCreatingConfig(t *testing.T) {
+	t.Run("creates outside git", func(t *testing.T) {
+		newBareDir(t)
+		_, stderr, err := runEquipIO(t, nil, "--add-ios-spec", equipSpec, "--install-skills")
+		if err != nil {
+			t.Fatalf("equip: %v", err)
+		}
+		if n := strings.Count(stderr, notSharedWarning); n != 1 {
+			t.Errorf("warning printed %d times, want once; stderr:\n%s", n, stderr)
+		}
+	})
+	t.Run("creates inside git", func(t *testing.T) {
+		gitInit(t, newBareDir(t))
+		_, stderr, err := runEquipIO(t, nil, "--add-ios-spec", equipSpec, "--install-skills=false")
+		if err != nil {
+			t.Fatalf("equip: %v", err)
+		}
+		if strings.Contains(stderr, notSharedWarning) {
+			t.Errorf("warned inside a git work tree:\n%s", stderr)
+		}
+	})
+	t.Run("edits outside git", func(t *testing.T) {
+		newAppRepo(t)
+		_, stderr, err := runEquipIO(t, nil, "--add-ios-spec", equipSpec, "--install-skills=false")
+		if err != nil {
+			t.Fatalf("equip: %v", err)
+		}
+		if strings.Contains(stderr, notSharedWarning) {
+			t.Errorf("warned when editing an existing config:\n%s", stderr)
+		}
+	})
+}
+
+func TestEquipAddSpecToDeviceSet(t *testing.T) {
+	repo := newAppRepo(t)
+	if _, err := runEquip(t, nil, "--add-ios-spec", equipSpec, "--install-skills=false"); err != nil {
+		t.Fatalf("equip: %v", err)
+	}
+	out, err := runEquip(t, nil, "--add-ios-spec", "iPad Pro 13-inch (M5):iOS 26.4:1", "--device-set", "tablet", "--install-skills=false")
+	if err != nil {
+		t.Fatalf("equip --device-set: %v", err)
+	}
+	if !strings.Contains(out, `"device_sets"`) || !strings.Contains(out, `"name": "tablet"`) {
+		t.Fatalf("equip output lists no tablet set:\n%s", out)
+	}
+	project, err := os.ReadFile(filepath.Join(repo, "simsquad.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(project), "[[device_sets.tablet.ios.sims]]") {
+		t.Fatalf("simsquad.toml has no tablet set:\n%s", project)
+	}
+
+	show, err := runEquip(t, nil, "--show")
+	if err != nil || !strings.Contains(show, `"name": "tablet"`) {
+		t.Fatalf("equip --show: err %v, want the tablet set listed:\n%s", err, show)
+	}
+}
+
+func TestEquipDeviceSetNeedsAddSpec(t *testing.T) {
+	newAppRepo(t)
+	_, err := runEquip(t, nil, "--device-set", "tablet")
+	if err == nil || !strings.Contains(err.Error(), "--add-ios-spec") {
+		t.Fatalf("err = %v, want --device-set alone refused", err)
 	}
 }

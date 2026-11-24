@@ -13,16 +13,26 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
+
+	"github.com/peuf0u/simsquad/internal/contract"
 )
 
 // Worker outcomes. StatusOK is reported on stdout only; the other values are
 // also written to the worker's status file, which the report step reads and
-// which overrides even a valid result.json.
+// which overrides even a valid result.json. A non-zero exit that matches no
+// known reason is "error: worker exited <code>".
 const (
-	StatusOK      = "ok"
-	StatusTimeout = "blocked: timeout"
+	StatusOK         = "ok"
+	StatusTimeout    = "blocked: timeout"
+	StatusUsageLimit = "error: usage limit"
+	// StatusNoResult is a clean exit that left no result.json: the worker
+	// stopped without its output (it couldn't write it, or gave up). The
+	// report uses the same wording for a worker dir with neither.
+	StatusNoResult = "error: no " + contract.ResultFileName
 )
 
 // StatusFile is the worker-dir file holding a blocked/error outcome.
@@ -32,13 +42,36 @@ const StatusFile = "status"
 // stderr. simsquad's own stdout is reserved for the {status} JSON.
 const LogFile = "worker.log"
 
+// AttemptsDir is the worker-dir folder holding earlier attempts' outputs,
+// one numbered folder per attempt (attempts/1, attempts/2, …).
+const AttemptsDir = "attempts"
+
+// PromptFile is the worker's prompt, written by the orchestrator and reused
+// by every attempt.
+const PromptFile = "prompt.md"
+
 // Worker describes one supervised worker run.
 type Worker struct {
 	Dir      string        // worker dir; created if missing
 	Timeout  time.Duration // hard deadline, measured from start
 	Command  []string      // argv; Command[0] is looked up on PATH
 	Progress io.Writer     // human progress lines (stderr); may be nil
+	// Redact lists the squad's secret values. Each is replaced by
+	// contract.SecretMask in worker.log as the log is written: a Codex
+	// worker's output repeats the commands it ran and their output, a
+	// revealed secret included. With none, the output goes straight to
+	// the file. `run worker` passes contract.SquadRecord.SecretValues: every
+	// explicit secret, but a value secret only by its key's name only when
+	// it has at least 4 characters and isn't true/false (TOKEN_TTL=5 must
+	// not mask every "5", nor SECRET_MENU=true every "true").
+	// Each value is matched raw and JSON-escaped.
+	Redact []string
 }
+
+// redactGrace is how long Wait keeps reading the worker's output after the
+// worker itself exited, when the output runs through a redacting pipe: a
+// process the worker left in the background may hold the pipe open forever.
+const redactGrace = 2 * time.Second
 
 // RunWorker starts w.Command and waits for it. It returns the outcome
 // status; an error means the worker could not be supervised at all (bad
@@ -54,12 +87,12 @@ func RunWorker(ctx context.Context, w Worker) (string, error) {
 	if err := os.MkdirAll(w.Dir, 0o755); err != nil {
 		return "", fmt.Errorf("create worker dir: %w", err)
 	}
-	// A status file overrides even a valid result.json, so a line left by an
-	// earlier attempt would make a successful retry read as blocked/error.
-	if err := os.Remove(filepath.Join(w.Dir, StatusFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("clear old worker status: %w", err)
+	if err := archiveAttempt(w.Dir); err != nil {
+		return "", err
 	}
-	logf, err := os.OpenFile(filepath.Join(w.Dir, LogFile), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	// Private: redaction can't promise a clean log (it skips short name-rule
+	// values and can't recognise a value the worker's shell quoted).
+	logf, err := os.OpenFile(filepath.Join(w.Dir, LogFile), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return "", fmt.Errorf("open worker log: %w", err)
 	}
@@ -70,9 +103,27 @@ func RunWorker(ctx context.Context, w Worker) (string, error) {
 	// input, and a headless worker has nobody to talk to anyway.
 	cmd.Stdin = nil
 	// Log to a real file, not a pipe: with a pipe, Wait would also block on
-	// any grandchild still holding the write end.
-	cmd.Stdout = logf
-	cmd.Stderr = logf
+	// any grandchild still holding the write end. Redacting needs the pipe,
+	// so then WaitDelay stops Wait from waiting on such a grandchild.
+	var redactor *lineRedactor
+	if len(w.Redact) > 0 {
+		redactor = newLineRedactor(logf, w.Redact)
+		// One writer for both streams: exec then never calls it from two
+		// goroutines at once.
+		cmd.Stdout = redactor
+		cmd.Stderr = redactor
+		cmd.WaitDelay = redactGrace
+	} else {
+		cmd.Stdout = logf
+		cmd.Stderr = logf
+	}
+	// flushLog writes the redactor's last, unfinished line once Wait is
+	// done with the output, before anything reads the log.
+	flushLog := func() {
+		if redactor != nil {
+			_ = redactor.Flush()
+		}
+	}
 	// Own process group, so a kill reaches every idb/simctl/adb process the
 	// worker started, not just its top process.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -89,20 +140,40 @@ func RunWorker(ctx context.Context, w Worker) (string, error) {
 
 	select {
 	case err := <-done:
+		flushLog()
+		// The worker exited cleanly; only a grandchild kept the output
+		// open past redactGrace.
+		if errors.Is(err, exec.ErrWaitDelay) {
+			err = nil
+		}
 		// The group is not killed after a normal exit: mobilecli's per-user
 		// daemon may live in it and is shared by parallel workers.
 		if err == nil {
-			return StatusOK, nil
+			if _, statErr := os.Stat(filepath.Join(w.Dir, contract.ResultFileName)); statErr == nil {
+				return StatusOK, nil
+			}
+			// A harness may exit 0 when it stops at a usage limit, so the
+			// log decides between the two reasons for a missing result.
+			status := StatusNoResult
+			if usageLimitHit(filepath.Join(w.Dir, LogFile)) {
+				status = StatusUsageLimit
+			}
+			w.progress("%s", status)
+			return status, writeStatus(w.Dir, status)
 		}
 		var exitErr *exec.ExitError
 		if !errors.As(err, &exitErr) {
 			return "", fmt.Errorf("wait for worker: %w", err)
 		}
 		status := fmt.Sprintf("error: worker exited %d", exitCode(exitErr))
+		if usageLimitHit(filepath.Join(w.Dir, LogFile)) {
+			status = StatusUsageLimit
+		}
 		w.progress("%s", status)
 		return status, writeStatus(w.Dir, status)
 	case <-timer.C:
 		killGroup(cmd.Process.Pid, done)
+		flushLog()
 		w.progress("worker killed after %ds (timebox %ds)",
 			int(time.Since(started).Seconds()), int(w.Timeout.Seconds()))
 		return StatusTimeout, writeStatus(w.Dir, StatusTimeout)
@@ -110,8 +181,115 @@ func RunWorker(ctx context.Context, w Worker) (string, error) {
 		// simsquad itself is being interrupted: don't leave the worker
 		// running unsupervised. No status is recorded; the run is aborted.
 		killGroup(cmd.Process.Pid, done)
+		flushLog()
 		return "", ctx.Err()
 	}
+}
+
+// archiveAttempt moves an earlier attempt's outputs into the next free
+// attempts/<n>/, so a retry starts from a clean worker dir: a stale
+// result.json would be reported as the retry's, and a stale status file
+// overrides even a valid new result. Everything but the prompt and earlier
+// attempts moves. Empty directories stay where they are, so the folder the
+// orchestrator prepared (screenshots/) counts as no attempt, and a moved
+// directory is recreated empty for the same reason.
+func archiveAttempt(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("read worker dir: %w", err)
+	}
+	var move []os.DirEntry
+	for _, e := range entries {
+		if e.Name() == PromptFile || e.Name() == AttemptsDir {
+			continue
+		}
+		if e.IsDir() {
+			if sub, err := os.ReadDir(filepath.Join(dir, e.Name())); err == nil && len(sub) == 0 {
+				continue
+			}
+		}
+		move = append(move, e)
+	}
+	if len(move) == 0 {
+		return nil
+	}
+	n := 1
+	for {
+		_, err := os.Lstat(filepath.Join(dir, AttemptsDir, strconv.Itoa(n)))
+		if errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		// Any other error (attempts is a file, or unreadable) would repeat
+		// for every n, so it ends the search instead of spinning.
+		if err != nil {
+			return fmt.Errorf("archive earlier attempt: %w", err)
+		}
+		n++
+	}
+	dest := filepath.Join(dir, AttemptsDir, strconv.Itoa(n))
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return fmt.Errorf("archive earlier attempt: %w", err)
+	}
+	for _, e := range move {
+		if err := os.Rename(filepath.Join(dir, e.Name()), filepath.Join(dest, e.Name())); err != nil {
+			return fmt.Errorf("archive earlier attempt: %w", err)
+		}
+		if e.IsDir() {
+			if err := os.Mkdir(filepath.Join(dir, e.Name()), 0o755); err != nil {
+				return fmt.Errorf("archive earlier attempt: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+// usageLimitMessages are the messages a harness prints when it stops
+// because the account ran out of usage, matched case-insensitively as
+// substrings of the log tail (curly apostrophes read as straight ones).
+// Keep each entry specific enough that an app under test is unlikely to
+// show it.
+var usageLimitMessages = []string{
+	// Claude Code: "Claude AI usage limit reached|<epoch>" (older CLIs),
+	// "Claude usage limit reached. Your limit will reset at …".
+	"usage limit reached",
+	// Claude Code: "5-hour limit reached ∙ resets 3pm".
+	"5-hour limit reached",
+	// Claude Code: "Weekly limit reached ∙ resets …", "Opus weekly limit reached".
+	"weekly limit reached",
+	// Codex: "You've hit your usage limit. Upgrade to Pro … or try again …".
+	"you've hit your usage limit",
+}
+
+// usageLimitTail is how much of the end of worker.log is searched: a
+// harness prints its limit message last, and older lines may quote app
+// text that only looks like one.
+const usageLimitTail = 8 << 10
+
+// usageLimitHit reports whether the tail of the worker log holds a known
+// usage-limit message. Only the verdict leaves this function, never log
+// text: a log can hold credentials from the test context.
+func usageLimitHit(logPath string) bool {
+	f, err := os.Open(logPath)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	off := max(info.Size()-usageLimitTail, 0)
+	buf := make([]byte, info.Size()-off)
+	if _, err := f.ReadAt(buf, off); err != nil && !errors.Is(err, io.EOF) {
+		return false
+	}
+	tail := strings.ToLower(strings.ReplaceAll(string(buf), "’", "'"))
+	for _, msg := range usageLimitMessages {
+		if strings.Contains(tail, msg) {
+			return true
+		}
+	}
+	return false
 }
 
 // termGrace is how long the worker gets to exit after SIGTERM before the
@@ -121,15 +299,18 @@ const termGrace = 5 * time.Second
 // killGroup sends SIGTERM to the worker's process group, waits up to
 // termGrace for the worker to exit, then sends SIGKILL to the group
 // regardless, so children that outlive the leader or ignore SIGTERM die too.
-// ESRCH (group already gone) is not an error.
+// ESRCH (group already gone) is not an error. The worker's exit error is
+// discarded: a killed worker's outcome is the reason it was killed.
 func killGroup(pgid int, done <-chan error) {
 	_ = syscall.Kill(-pgid, syscall.SIGTERM)
 	select {
-	case <-done:
+	case err := <-done:
+		_ = err
 		_ = syscall.Kill(-pgid, syscall.SIGKILL)
 	case <-time.After(termGrace):
 		_ = syscall.Kill(-pgid, syscall.SIGKILL)
-		<-done // reap the leader
+		err := <-done // reap the leader
+		_ = err
 	}
 }
 

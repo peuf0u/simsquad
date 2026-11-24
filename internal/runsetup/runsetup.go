@@ -1,9 +1,9 @@
 // Package runsetup turns a feature file and a repo's equipment into a test
 // run: it picks the squad and platforms, refuses what can't run (unequipped
-// platforms, a squad busy with an unfinished run), computes the per-worker
-// deadline so the agent never does that arithmetic, and creates the run
-// folder `.simsquad/runs/<run-id>/` with run.json and a copy of the feature
-// file. It is the logic behind `simsquad run new`.
+// platforms, a squad whose platform an unfinished run still uses), computes
+// the per-worker deadline so the agent never does that arithmetic, and
+// creates the run folder `.simsquad/runs/<run-id>/` with run.json and a copy
+// of the feature file. It is the logic behind `simsquad run new`.
 package runsetup
 
 import (
@@ -21,6 +21,7 @@ import (
 	"github.com/peuf0u/simsquad/internal/config"
 	"github.com/peuf0u/simsquad/internal/contract"
 	"github.com/peuf0u/simsquad/internal/feature"
+	"github.com/peuf0u/simsquad/internal/skills"
 	"github.com/peuf0u/simsquad/internal/util"
 )
 
@@ -39,17 +40,45 @@ const (
 // RunsDir is the run folder root, relative to the app repo.
 var RunsDir = filepath.Join(".simsquad", "runs")
 
+// DefaultWorker is the worker CLI when `run new --worker` is not given.
+const DefaultWorker = "claude"
+
+// DefaultWorkerModels is the model each worker CLI runs on when neither
+// `--model` nor `[agent].worker_model` names one, so a run never falls back
+// to whatever the host CLI defaults to on this machine. Its keys are the
+// accepted `--worker` values. Bumping a default model is a one-line change
+// here.
+var DefaultWorkerModels = map[string]string{
+	"claude": "sonnet",
+	"codex":  "gpt-6.1-sol",
+}
+
 // Options configures New.
 type Options struct {
 	// FeaturePath is the feature file as given on the command line.
 	FeaturePath string
 	// Fresh gives the run its own uniquely named squad.
 	Fresh bool
+	// Worker is the CLI the workers run on, a key of DefaultWorkerModels;
+	// empty means DefaultWorker.
+	Worker string
+	// Model overrides the worker model for this run; empty falls back to
+	// `[agent].worker_model`, then Worker's default.
+	Model string
 }
 
 // New sets up a test run in the repo found from the working directory and
 // returns its record and run folder.
 func New(opts Options) (contract.RunRecord, string, error) {
+	worker := opts.Worker
+	if worker == "" {
+		worker = DefaultWorker
+	}
+	defaultModel, ok := DefaultWorkerModels[worker]
+	if !ok {
+		return contract.RunRecord{}, "", fmt.Errorf("unknown --worker %q: must be claude or codex", worker)
+	}
+
 	src, err := os.ReadFile(opts.FeaturePath)
 	if err != nil {
 		return contract.RunRecord{}, "", fmt.Errorf("read feature file: %w", err)
@@ -67,6 +96,14 @@ func New(opts Options) (contract.RunRecord, string, error) {
 	if err != nil {
 		return contract.RunRecord{}, "", err
 	}
+	// Run paths are handed to workers, whose Claude Code allow rules must
+	// match the path a file resolves to as well as the one asked for (issue
+	// #35); a shell in a repo reached through a symlink keeps the logical
+	// path. The squad name still comes from configDir, so it doesn't change.
+	physDir, err := filepath.EvalSymlinks(configDir)
+	if err != nil {
+		return contract.RunRecord{}, "", fmt.Errorf("resolve config dir: %w", err)
+	}
 	equipped := equippedPlatforms(cfg)
 	if len(equipped) == 0 {
 		return contract.RunRecord{}, "", errors.New("no devices equipped; add iOS or Android devices with `simsquad equip`")
@@ -77,7 +114,9 @@ func New(opts Options) (contract.RunRecord, string, error) {
 		FeatureFile:  opts.FeaturePath,
 		Source:       feat.Source,
 		Fresh:        opts.Fresh,
-		WorkerModel:  cfg.AgentWorkerModel(),
+		Worker:       worker,
+		WorkerModel:  workerModel(opts.Model, cfg.AgentWorkerModel(), defaultModel),
+		AppNotes:     appNotes(physDir),
 		Scenarios:    []contract.RunScenario{},
 	}
 	for _, s := range feat.Scenarios {
@@ -106,10 +145,10 @@ func New(opts Options) (contract.RunRecord, string, error) {
 		squad = "qa-" + filepath.Base(configDir)
 	}
 	squad = util.SanitiseName(squad)
-	runsRoot := filepath.Join(configDir, RunsDir)
+	runsRoot := filepath.Join(physDir, RunsDir)
 	if opts.Fresh {
 		squad += "-" + randomHex(3)
-	} else if err := refuseUnfinished(runsRoot, squad); err != nil {
+	} else if err := refuseUnfinished(runsRoot, squad, rec.Platforms); err != nil {
 		return contract.RunRecord{}, "", err
 	}
 	rec.SquadName = squad
@@ -128,6 +167,29 @@ func New(opts Options) (contract.RunRecord, string, error) {
 		return contract.RunRecord{}, "", err
 	}
 	return rec, runDir, nil
+}
+
+// workerModel resolves the run's model: `--model`, else the TOML value
+// (simsquad.local.toml already merged over simsquad.toml), else the worker's
+// built-in default.
+func workerModel(flag, toml, def string) string {
+	if flag != "" {
+		return flag
+	}
+	if toml != "" {
+		return toml
+	}
+	return def
+}
+
+// appNotes is the absolute path of the config dir's app notes, or "" when
+// the file doesn't exist. configDir is absolute.
+func appNotes(configDir string) string {
+	p := filepath.Join(configDir, filepath.FromSlash(skills.AppNotesFile))
+	if fi, err := os.Stat(p); err != nil || fi.IsDir() {
+		return ""
+	}
+	return p
 }
 
 func equippedPlatforms(cfg *config.Config) []string {
@@ -198,8 +260,11 @@ func deadline(rec contract.RunRecord) int {
 }
 
 // refuseUnfinished rejects a run on a squad that an earlier run in this repo
-// still uses: the two would reset each other's app state.
-func refuseUnfinished(runsRoot, squad string) error {
+// still uses on one of the same platforms: the two would reset each other's
+// app state. Runs on disjoint platforms touch different devices, so they may
+// overlap. A run.json written before `platforms` existed has none recorded;
+// it is treated as using every platform, the refusal it always got.
+func refuseUnfinished(runsRoot, squad string, platforms []string) error {
 	entries, err := os.ReadDir(runsRoot)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -219,7 +284,19 @@ func refuseUnfinished(runsRoot, squad string) error {
 		if _, err := os.Stat(filepath.Join(dir, contract.RunReportFile)); err == nil {
 			continue
 		}
-		return fmt.Errorf("squad %s is in use by unfinished run %s (no %s yet); finish it with `simsquad run report %s`, or pass --fresh", squad, other.RunID, contract.RunReportFile, dir)
+		shared := platforms
+		if len(other.Platforms) > 0 {
+			shared = nil
+			for _, p := range platforms {
+				if slices.Contains(other.Platforms, p) {
+					shared = append(shared, p)
+				}
+			}
+		}
+		if len(shared) == 0 {
+			continue
+		}
+		return fmt.Errorf("squad %s is in use by unfinished run %s on %s (no %s yet); finish it with `simsquad run report %s`, or pass --fresh", squad, other.RunID, strings.Join(shared, ", "), contract.RunReportFile, dir)
 	}
 	return nil
 }

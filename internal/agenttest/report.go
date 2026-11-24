@@ -50,7 +50,10 @@ func BuildReport(runDir string, now time.Time) (*contract.Report, error) {
 
 	squad, deployErr := readDeploy(runDir)
 	if deployErr == nil {
-		for k, v := range squad.Context {
+		// deploy.json already masks secrets; the name rule runs again for a
+		// deploy.json written before secrets existed, so a report posted on
+		// a PR never carries a password.
+		for k, v := range contract.MaskContext(squad.Context, nil) {
 			rep.Squad.Context[k] = v
 		}
 		for _, d := range squad.Devices {
@@ -125,7 +128,7 @@ func loadDevice(runDir string, v contract.DeviceView) contract.ReportDevice {
 		dev.WorkerReason = status
 	case !hasResult:
 		dev.WorkerStatus = contract.WorkerError
-		dev.WorkerReason = "error: no " + contract.ResultFileName
+		dev.WorkerReason = StatusNoResult
 	case len(errs) > 0:
 		dev.WorkerStatus = contract.WorkerError
 		dev.WorkerReason = "error: invalid result"

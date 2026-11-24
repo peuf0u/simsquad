@@ -3,7 +3,6 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -22,10 +21,11 @@ func newSetEnvCmd() *cobra.Command {
 
 func setContextCmd(use string, deprecated bool) *cobra.Command {
 	var (
-		name     string
-		setVals  []string
-		unsetKey []string
-		clear    bool
+		name       string
+		setVals    []string
+		setSecrets []string
+		unsetKey   []string
+		clear      bool
 	)
 
 	cmd := &cobra.Command{
@@ -35,47 +35,65 @@ func setContextCmd(use string, deprecated bool) *cobra.Command {
 		Hidden: deprecated,
 		Long: "Updates the context map on a squad: free-form test context such as\n" +
 			"persona, stage or test-account login. Applied in this order:\n" +
-			"  --clear   wipe all keys\n" +
-			"  --unset   remove specific keys (repeatable)\n" +
-			"  --set     add or overwrite keys (repeatable, KEY=VALUE)",
+			"  --clear        wipe all keys, secrets included\n" +
+			"  --unset        remove specific keys, secret or not (repeatable)\n" +
+			"  --set          add or overwrite keys (repeatable, KEY=VALUE)\n" +
+			"  --set-secret   add or overwrite secret keys (repeatable, KEY=VALUE)\n\n" +
+			"A secret (set with --set-secret, from [secrets] or --secret at deploy,\n" +
+			"or any key whose name holds password, secret or token) shows as\n" +
+			"\"<secret>\" in the output; `simsquad devices --name NAME --reveal`\n" +
+			"prints the real value. A secret overwritten with --set stays a secret;\n" +
+			"--unset it first to make it plain context.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if deprecated {
 				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "simsquad: set-env is deprecated; use set-context")
 			}
 			return runSetContext(cmd, setContextOpts{
-				name:     name,
-				setVals:  setVals,
-				unsetKey: unsetKey,
-				clear:    clear,
+				name:       name,
+				setVals:    setVals,
+				setSecrets: setSecrets,
+				unsetKey:   unsetKey,
+				clear:      clear,
 			})
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "squad to mutate (required)")
 	cmd.Flags().StringArrayVar(&setVals, "set", nil, "add or overwrite a context key: KEY=VALUE (repeatable)")
-	cmd.Flags().StringArrayVar(&unsetKey, "unset", nil, "remove a context key (repeatable)")
+	cmd.Flags().StringArrayVar(&setSecrets, "set-secret", nil, "add or overwrite a secret context key: KEY=VALUE, shown as \"<secret>\" (repeatable)")
+	cmd.Flags().StringArrayVar(&unsetKey, "unset", nil, "remove a context key, secret or not (repeatable)")
 	cmd.Flags().BoolVar(&clear, "clear", false, "wipe every existing key before --unset / --set apply")
 	_ = cmd.MarkFlagRequired("name")
 	return cmd
 }
 
 type setContextOpts struct {
-	name     string
-	setVals  []string
-	unsetKey []string
-	clear    bool
+	name       string
+	setVals    []string
+	setSecrets []string
+	unsetKey   []string
+	clear      bool
 }
 
 func runSetContext(cmd *cobra.Command, opts setContextOpts) error {
 	if opts.name == "" {
 		return errors.New("set-context: --name is required")
 	}
-	if !opts.clear && len(opts.setVals) == 0 && len(opts.unsetKey) == 0 {
-		return errors.New("set-context: pass --set, --unset, or --clear")
+	if !opts.clear && len(opts.setVals) == 0 && len(opts.setSecrets) == 0 && len(opts.unsetKey) == 0 {
+		return errors.New("set-context: pass --set, --set-secret, --unset, or --clear")
 	}
 
-	setMap, err := parseSetEntries(opts.setVals)
+	setMap, err := parseSetEntries("--set", opts.setVals)
 	if err != nil {
 		return err
+	}
+	secretMap, err := parseSetEntries("--set-secret", opts.setSecrets)
+	if err != nil {
+		return err
+	}
+	for k := range secretMap {
+		if _, ok := setMap[k]; ok {
+			return fmt.Errorf("set-context: key %q is given to both --set and --set-secret; pick one", k)
+		}
 	}
 
 	entry, ok, err := state.FindSquad(canonName(opts.name))
@@ -96,23 +114,18 @@ func runSetContext(cmd *cobra.Command, opts setContextOpts) error {
 			return fmt.Errorf("squad %s has no state file", entry.Name)
 		}
 		if opts.clear {
-			rec.Context = nil
+			rec.ClearContext()
 		}
 		for _, k := range opts.unsetKey {
-			delete(rec.Context, k)
+			rec.UnsetContext(k)
 		}
-		if len(setMap) > 0 {
-			if rec.Context == nil {
-				rec.Context = make(map[string]string, len(setMap))
-			}
-			for k, v := range setMap {
-				rec.Context[k] = v
-			}
+		for k, v := range setMap {
+			rec.SetContext(k, v, false)
 		}
-		if len(rec.Context) == 0 {
-			rec.Context = nil // honour omitempty
+		for k, v := range secretMap {
+			rec.SetContext(k, v, true)
 		}
-		updated = rec.Context
+		updated = rec.MaskedContext()
 		return state.SaveRecord(rec)
 	})
 	if lockErr != nil {
@@ -125,25 +138,21 @@ func runSetContext(cmd *cobra.Command, opts setContextOpts) error {
 	})
 }
 
-// parseSetEntries parses `--set KEY=VALUE` flags into a string map.
-// Duplicates within a single invocation are tolerated (last wins) since
-// interactive shell history may repeat a key intentionally. Mismatched
-// KEY=VALUE entries still error.
-func parseSetEntries(entries []string) (map[string]string, error) {
+// parseSetEntries parses `--set` / `--set-secret` KEY=VALUE flags into a
+// string map. Duplicates within a single invocation are tolerated (last
+// wins) since interactive shell history may repeat a key intentionally.
+// Mismatched KEY=VALUE entries still error, without echoing the entry.
+func parseSetEntries(flag string, entries []string) (map[string]string, error) {
 	if len(entries) == 0 {
 		return nil, nil
 	}
 	out := make(map[string]string, len(entries))
-	for _, raw := range entries {
-		idx := strings.Index(raw, "=")
-		if idx <= 0 {
-			return nil, fmt.Errorf("set-context: --set %q: expected KEY=VALUE", raw)
+	for i, raw := range entries {
+		key, value, err := splitContextEntry(flag, i, raw)
+		if err != nil {
+			return nil, fmt.Errorf("set-context: %w", err)
 		}
-		key := strings.TrimSpace(raw[:idx])
-		if key == "" {
-			return nil, fmt.Errorf("set-context: --set %q: key must be non-empty", raw)
-		}
-		out[key] = raw[idx+1:]
+		out[key] = value
 	}
 	return out, nil
 }

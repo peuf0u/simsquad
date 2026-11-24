@@ -39,9 +39,15 @@ func decodeWorkerStatus(t *testing.T, stdout string) string {
 	return got.Status
 }
 
+// writesResult is a worker shell script that writes result.json into dir by
+// absolute path (a worker runs in the caller's directory, not its own).
+func writesResult(dir string) string {
+	return "echo '{}' > '" + filepath.Join(dir, "result.json") + "'"
+}
+
 func TestRunWorkerCleanExitWritesNoStatus(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "workers", "ios-ABC")
-	stdout, _, err := runWorker(t, "--dir", dir, "--timeout", "10", "--", "sh", "-c", "echo hello; exit 0")
+	stdout, _, err := runWorker(t, "--dir", dir, "--timeout", "10", "--", "sh", "-c", "echo hello; "+writesResult(dir))
 	if err != nil {
 		t.Fatalf("run worker: %v", err)
 	}
@@ -58,7 +64,7 @@ func TestRunWorkerSuccessfulRetryClearsOldStatus(t *testing.T) {
 	if _, _, err := runWorker(t, "--dir", dir, "--timeout", "10", "--", "sh", "-c", "exit 3"); err != nil {
 		t.Fatalf("first attempt: %v", err)
 	}
-	stdout, _, err := runWorker(t, "--dir", dir, "--timeout", "10", "--", "true")
+	stdout, _, err := runWorker(t, "--dir", dir, "--timeout", "10", "--", "sh", "-c", writesResult(dir))
 	if err != nil {
 		t.Fatalf("retry: %v", err)
 	}
@@ -93,12 +99,26 @@ func TestRunWorkerNonZeroExitRecordsError(t *testing.T) {
 	}
 }
 
+func TestRunWorkerCleanExitWithoutResultRecordsError(t *testing.T) {
+	dir := t.TempDir()
+	stdout, _, err := runWorker(t, "--dir", dir, "--timeout", "10", "--", "sh", "-c", "echo done")
+	if err != nil {
+		t.Fatalf("run worker should record the missing result and succeed, got %v", err)
+	}
+	if got := decodeWorkerStatus(t, stdout); got != "error: no result.json" {
+		t.Errorf("stdout status = %q", got)
+	}
+	if got := readStatusFile(t, dir); got != "error: no result.json\n" {
+		t.Errorf("status file = %q", got)
+	}
+}
+
 func TestRunWorkerClosesInput(t *testing.T) {
 	dir := t.TempDir()
 	start := time.Now()
 	// `cat` copies its input until EOF; with an open stdin it would hang
 	// until the deadline and come back blocked.
-	stdout, _, err := runWorker(t, "--dir", dir, "--timeout", "5", "--", "cat")
+	stdout, _, err := runWorker(t, "--dir", dir, "--timeout", "5", "--", "sh", "-c", "cat; "+writesResult(dir))
 	if err != nil {
 		t.Fatalf("run worker: %v", err)
 	}
@@ -173,5 +193,82 @@ func TestRunWorkerTimeoutKillsChildProcesses(t *testing.T) {
 			t.Fatalf("child process %d survived the timeout", pid)
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// run worker finds the squad from the worker folder's run.json and redacts
+// that squad's secrets from worker.log, e.g. a revealed password a Codex
+// worker's output repeats.
+func TestRunWorkerRedactsTheSquadsSecrets(t *testing.T) {
+	t.Setenv("SIMSQUAD_CACHE_DIR", t.TempDir())
+	seedSecretSquad(t, "sq")
+	run := t.TempDir()
+	writeTestFile(t, filepath.Join(run, "run.json"), `{"run_id": "r", "squad_name": "sq"}`)
+	dir := filepath.Join(run, "workers", "udid-1")
+	script := "echo 'exec simsquad devices --name sq --reveal'; echo '\"pin\": \"4711\", \"password\": \"hunter2\", \"user\": \"alice\"'"
+	if _, _, err := runWorker(t, "--dir", dir, "--timeout", "10", "--", "sh", "-c", script); err != nil {
+		t.Fatalf("run worker: %v", err)
+	}
+	log := readFile(t, filepath.Join(dir, "worker.log"))
+	if strings.Contains(log, "4711") || strings.Contains(log, "hunter2") {
+		t.Fatalf("worker.log shows a secret:\n%s", log)
+	}
+	if !strings.Contains(log, `"pin": "<secret>"`) || !strings.Contains(log, `"user": "alice"`) {
+		t.Fatalf("worker.log lost its other text:\n%s", log)
+	}
+}
+
+// devices --reveal prints a secret JSON-escaped; a worker log that repeats
+// that output must not show it either.
+func TestRunWorkerRedactsRevealOutput(t *testing.T) {
+	t.Setenv("SIMSQUAD_CACHE_DIR", t.TempDir())
+	seedSecretSquad(t, "sq")
+	if _, code := runRoot(t, "set-context", "--name", "sq", "--set-secret", `quoted=pa"ss\1`); code != 0 {
+		t.Fatalf("set-context: exit %d", code)
+	}
+	reveal, code := runRoot(t, "devices", "--name", "sq", "--reveal")
+	if code != 0 || !strings.Contains(reveal, `pa\"ss\\1`) {
+		t.Fatalf("devices --reveal: exit %d\n%s", code, reveal)
+	}
+	run := t.TempDir()
+	writeTestFile(t, filepath.Join(run, "run.json"), `{"run_id": "r", "squad_name": "sq"}`)
+	revealFile := filepath.Join(t.TempDir(), "reveal.txt")
+	writeTestFile(t, revealFile, reveal)
+	dir := filepath.Join(run, "workers", "udid-1")
+	if _, _, err := runWorker(t, "--dir", dir, "--timeout", "10", "--", "cat", revealFile); err != nil {
+		t.Fatalf("run worker: %v", err)
+	}
+	log := readFile(t, filepath.Join(dir, "worker.log"))
+	for _, leak := range []string{`pa\"ss\\1`, "4711", "hunter2"} {
+		if strings.Contains(log, leak) {
+			t.Fatalf("worker.log shows %s:\n%s", leak, log)
+		}
+	}
+	if !strings.Contains(log, `"quoted": "<secret>"`) {
+		t.Fatalf("worker.log lacks the masked key:\n%s", log)
+	}
+}
+
+// A short value secret only by its key's name stays in worker.log, so
+// TOKEN_TTL=5 doesn't turn "5-hour limit reached" into something the
+// usage-limit check misses.
+func TestRunWorkerKeepsShortNameRuleValues(t *testing.T) {
+	t.Setenv("SIMSQUAD_CACHE_DIR", t.TempDir())
+	seedSecretSquad(t, "sq")
+	if _, code := runRoot(t, "set-context", "--name", "sq", "--set", "TOKEN_TTL=5"); code != 0 {
+		t.Fatalf("set-context: exit %d", code)
+	}
+	run := t.TempDir()
+	writeTestFile(t, filepath.Join(run, "run.json"), `{"run_id": "r", "squad_name": "sq"}`)
+	dir := filepath.Join(run, "workers", "udid-1")
+	stdout, _, err := runWorker(t, "--dir", dir, "--timeout", "10", "--", "sh", "-c", "echo 'pin 4711'; echo '5-hour limit reached ∙ resets 3pm'; exit 1")
+	if err != nil {
+		t.Fatalf("run worker: %v", err)
+	}
+	if got := decodeWorkerStatus(t, stdout); got != "error: usage limit" {
+		t.Fatalf("status = %q, want error: usage limit", got)
+	}
+	if log := readFile(t, filepath.Join(dir, "worker.log")); strings.Contains(log, "4711") {
+		t.Fatalf("worker.log shows the explicit secret:\n%s", log)
 	}
 }

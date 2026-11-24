@@ -40,12 +40,22 @@ func StateFileFor(name string) string {
 	return filepath.Join(CacheRoot(), name+".json")
 }
 
+// SquadAPKSetPath is the squad's own copy of its bundle build's APK set:
+// ~/.cache/simsquad/<name>.apks. Every deploy from a repo writes the repo's
+// set again, so reset installs this copy, which only the squad's own deploy
+// replaces.
+func SquadAPKSetPath(name string) string {
+	return filepath.Join(CacheRoot(), name+".apks")
+}
+
 // IndexLockPath is the flock target guarding squads.json writes.
 func IndexLockPath() string { return filepath.Join(CacheRoot(), ".index.lock") }
 
-// EnsureCacheRoot creates ~/.cache/simsquad if it doesn't exist.
+// EnsureCacheRoot creates ~/.cache/simsquad if it doesn't exist. It is
+// created 0700: the squad records in it hold secret context values. An
+// existing directory keeps its mode.
 func EnsureCacheRoot() error {
-	return os.MkdirAll(CacheRoot(), 0o755)
+	return os.MkdirAll(CacheRoot(), 0o700)
 }
 
 // BuildCacheRoot is the parent directory for build caches (xcodebuild derived

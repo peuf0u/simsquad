@@ -2,6 +2,7 @@ package state
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 
@@ -26,9 +27,10 @@ func loadIndex() (contract.SquadIndex, error) {
 	return idx, nil
 }
 
-// saveIndex writes the index atomically. Caller must hold the index lock.
+// saveIndex writes the index atomically, owner-only like the records it
+// lists. Caller must hold the index lock.
 func saveIndex(idx contract.SquadIndex) error {
-	return util.WriteJSON(util.SquadIndexPath(), idx)
+	return util.WritePrivateJSON(util.SquadIndexPath(), idx)
 }
 
 // ListSquads returns every squad currently registered. Result is a slice in
@@ -118,15 +120,18 @@ func TouchSquad(name string) error {
 // RemoveSquad drops the entry from the registry. Per-squad state and any
 // sidecar files are NOT removed here — the teardown package handles that.
 func RemoveSquad(name string) error {
-	_, err := withIndexLock(func() (struct{}, error) {
-		idx, err := loadIndex()
-		if err != nil {
-			return struct{}{}, err
-		}
-		delete(idx.Squads, name)
-		return struct{}{}, saveIndex(idx)
-	})
-	return err
+	return WithIndexLockE(func() error { return RemoveSquadLocked(name) })
+}
+
+// RemoveSquadLocked is the unlocked variant of RemoveSquad. Caller MUST
+// already hold the index lock (via WithIndexLockE).
+func RemoveSquadLocked(name string) error {
+	idx, err := loadIndex()
+	if err != nil {
+		return err
+	}
+	delete(idx.Squads, name)
+	return saveIndex(idx)
 }
 
 // SnapshotSquadsLocked returns every persisted squad record. Caller MUST hold
@@ -164,9 +169,49 @@ func LoadRecord(name string) (*contract.SquadRecord, error) {
 	return &rec, nil
 }
 
-// SaveRecord persists a squad record atomically.
+// SaveRecord persists a squad record atomically. The file is 0600: the
+// record keeps secret context values in clear (the only store of a secret
+// given by flag), so only the user may read it.
 func SaveRecord(rec *contract.SquadRecord) error {
-	return util.WriteJSON(util.StateFileFor(rec.Name), rec)
+	return util.WritePrivateJSON(util.StateFileFor(rec.Name), rec)
+}
+
+// ErrNoRecord is returned by UpdateRecord when the squad's record is gone,
+// e.g. the squad was dismissed while a deploy was running.
+var ErrNoRecord = errors.New("squad has no record")
+
+// UpdateRecord is a locked load-modify-save of one squad record: under the
+// index flock it reloads the record from disk, applies fn and saves the
+// result, which it returns. Callers that loaded the record earlier must apply
+// their change through fn rather than saving their copy, so a concurrent
+// deploy's devices or ports, or a set-context, written in between survive.
+// A missing record is an error; when fn errors nothing is saved.
+//
+// Don't call it from inside WithIndexLockE (it takes the lock itself); use
+// UpdateRecordLocked there.
+func UpdateRecord(name string, fn func(*contract.SquadRecord) error) (*contract.SquadRecord, error) {
+	return withIndexLock(func() (*contract.SquadRecord, error) {
+		return UpdateRecordLocked(name, fn)
+	})
+}
+
+// UpdateRecordLocked is UpdateRecord for callers already holding the index
+// lock.
+func UpdateRecordLocked(name string, fn func(*contract.SquadRecord) error) (*contract.SquadRecord, error) {
+	rec, err := LoadRecord(name)
+	if err != nil {
+		return nil, err
+	}
+	if rec == nil {
+		return nil, fmt.Errorf("state: squad %q: %w", name, ErrNoRecord)
+	}
+	if err := fn(rec); err != nil {
+		return nil, err
+	}
+	if err := SaveRecord(rec); err != nil {
+		return nil, err
+	}
+	return rec, nil
 }
 
 // RemoveRecord deletes the per-squad state file. Missing file is not an error.

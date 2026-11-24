@@ -30,16 +30,43 @@ Paths inside `result.json` are relative to your worker folder
 after every scenario, so that a run cut off by the time limit still leaves
 a valid partial result.
 
+When something on screen stops you before your first scenario (the app
+won't launch past a dialog, the credentials fail), still write
+`result.json`: every scenario for your platform `blocked`, its
+`observation` saying what stopped you and its `evidence` a screenshot of
+it, and the exploration, if the run has one for your platform, `blocked`
+with a `blocked_reason`. Write nothing else in its place, such as a
+`BLOCKED.md`: only `result.json` is read.
+
 ## Read first
 
 1. `<run folder>/run.json`: `feature_title`, `scenarios` (each with
    `name`, `steps` and `platforms`) and, when present, `exploration` (its
    `charter`, and its `platforms`). Skip every scenario whose `platforms`
    leaves out your device's platform.
-2. `qa/README.md` in the app repo: the **app notes**, with the app's
-   navigation tricks, test accounts and known quirks.
+2. The file at `run.json`'s `app_notes` (an absolute path to the
+   project's `qa/README.md`): the **app notes**, with the app's navigation
+   tricks, test accounts and known quirks. When `run.json` has no
+   `app_notes`, the project has no app notes: say so in `log.md` and go on
+   without them.
 3. Your device row's `context`: the test context (persona, API stage,
-   credentials). Use these values to log in and reach the feature.
+   credentials). Use these values to log in and reach the feature. A
+   value of `<secret>` is a secret, such as a password: see Secrets.
+
+## Secrets
+
+A context value that reads `<secret>` stands for a secret. When a step
+needs it, fetch the real value:
+
+```sh
+simsquad devices --name "$SQUAD" --reveal
+```
+
+Every row carries the same `context`. Type the value with `mobilecli io
+text` and keep it out of everything you write: never put it in `log.md`,
+`result.json` or file names. Where they need it, name the key instead
+("typed `password`"). Run the command exactly as shown, without `--out`
+or a redirect, so the value never lands in a file.
 
 ## Your tools
 

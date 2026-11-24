@@ -77,6 +77,10 @@ type Device struct {
 	SystemImage   string `json:"system_image,omitempty"`
 	Physical      bool   `json:"physical,omitempty"`
 	EmulatorPID   int    `json:"emulator_pid,omitempty"`
+	// Window records that the emulator was booted with a window (deploy
+	// --window). Reuse restarts a headless emulator to gain one, but never
+	// restarts a windowed one to drop it.
+	Window bool `json:"window,omitempty"`
 }
 
 // IosBuild is the iOS half of Builds. Either the success fields are populated
@@ -95,15 +99,18 @@ type IosBuild struct {
 }
 
 // AndroidBuild is the Android half of Builds. Either the success fields are
-// populated or Error is — never both. Repo is as on IosBuild.
+// populated or Error is — never both. Repo is as on IosBuild. A successful
+// build sets APKPath (an assemble* task) or APKSetPath (a bundle* task: the
+// .apks bundletool built from the app bundle), never both.
 type AndroidBuild struct {
-	Repo     string        `json:"repo,omitempty"`
-	APKPath  string        `json:"apk_path,omitempty"`
-	BundleID string        `json:"bundle_id,omitempty"`
-	GitSHA   string        `json:"git_sha,omitempty"`
-	Reused   bool          `json:"reused,omitempty"`
-	Specs    []AndroidSpec `json:"specs,omitempty"`
-	Error    string        `json:"error,omitempty"`
+	Repo       string        `json:"repo,omitempty"`
+	APKPath    string        `json:"apk_path,omitempty"`
+	APKSetPath string        `json:"apks_path,omitempty"`
+	BundleID   string        `json:"bundle_id,omitempty"`
+	GitSHA     string        `json:"git_sha,omitempty"`
+	Reused     bool          `json:"reused,omitempty"`
+	Specs      []AndroidSpec `json:"specs,omitempty"`
+	Error      string        `json:"error,omitempty"`
 }
 
 // Builds aggregates per-platform build outputs on a SquadRecord. Each pointer
@@ -124,24 +131,40 @@ type Builds struct {
 // values; the execution layer (ios/, android/) does not read them. Mutated via
 // `simsquad set-context`. Until 0.5.0 it was called env; records written
 // before that are read through UnmarshalJSON.
+//
+// DeviceSet is the name of the named device set (`[device_sets.<name>]`) the
+// squad was deployed from, empty for the default matrix or spec flags. Only
+// the name is kept: a bare redeploy re-resolves the set from the current
+// config.
+//
+// Context keeps real values, secrets included: the record is the only store
+// of a secret given by flag, and reveal and reuse need it. SecretKeys is the
+// explicit set of secret keys (from [secrets], --secret, --set-secret),
+// sorted and always a subset of Context's keys; keys whose name marks them
+// secret are not listed (see IsSecret). It is internal, like Ports: outputs
+// show secrets masked instead (see MaskedContext).
 type SquadRecord struct {
-	Name      string            `json:"name"`
-	CreatedAt string            `json:"created_at"`
-	Builds    Builds            `json:"builds"`
-	Devices   []Device          `json:"devices"`
-	Context   map[string]string `json:"context,omitempty"`
-	Ports     map[string]int    `json:"ports,omitempty"`
+	Name       string            `json:"name"`
+	CreatedAt  string            `json:"created_at"`
+	DeviceSet  string            `json:"device_set,omitempty"`
+	Builds     Builds            `json:"builds"`
+	Devices    []Device          `json:"devices"`
+	Context    map[string]string `json:"context,omitempty"`
+	SecretKeys []string          `json:"secret_keys,omitempty"`
+	Ports      map[string]int    `json:"ports,omitempty"`
 }
 
 // Public projects a SquadRecord into the stdout/status JSON shape. It drops
-// the internal Ports map; callers may set Reused on top.
+// the internal Ports map and secret-key set and masks secret context values;
+// callers may set Reused on top.
 func (s SquadRecord) Public() SquadPublic {
 	return SquadPublic{
 		Name:      s.Name,
 		CreatedAt: s.CreatedAt,
+		DeviceSet: s.DeviceSet,
 		Builds:    s.Builds,
 		Devices:   s.Devices,
-		Context:   s.Context,
+		Context:   s.MaskedContext(),
 	}
 }
 
@@ -168,6 +191,7 @@ func (s *SquadRecord) UnmarshalJSON(b []byte) error {
 type SquadPublic struct {
 	Name      string            `json:"name"`
 	CreatedAt string            `json:"created_at"`
+	DeviceSet string            `json:"device_set,omitempty"`
 	Builds    Builds            `json:"builds"`
 	Devices   []Device          `json:"devices"`
 	Context   map[string]string `json:"context,omitempty"`

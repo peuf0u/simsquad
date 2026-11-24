@@ -146,6 +146,11 @@ func TestRunReportPipeline(t *testing.T) {
 	if rep.Squad.Context["PERSONA"] != "alice | admin" {
 		t.Errorf("context not carried as-is: %v", rep.Squad.Context)
 	}
+	// PASSWORD arrives masked from deploy.json; api_token is raw, as a
+	// deploy.json written before secrets has it, and the name rule masks it.
+	if rep.Squad.Context["PASSWORD"] != "<secret>" || rep.Squad.Context["api_token"] != "<secret>" {
+		t.Errorf("secrets not masked: %v", rep.Squad.Context)
+	}
 	if ok := rep.device(t, "ABC-123"); ok.WorkerStatus != "ok" ||
 		ok.Findings[0].Evidence[0] != "workers/ABC-123/screenshots/step-001.png" {
 		t.Errorf("ABC-123 = %+v, want ok with evidence rewritten under workers/ABC-123/", ok)
@@ -176,9 +181,16 @@ func TestRunReportPipeline(t *testing.T) {
 		"blocked: timeout",
 		"![evidence](workers/ABC-123/screenshots/step-001.png)",
 		"| `PERSONA` | alice \\| admin |",
+		"| `PASSWORD` | `<secret>` |",
+		"| `api_token` | `<secret>` |",
 	} {
 		if !strings.Contains(md, fragment) {
 			t.Errorf("report.md missing %q:\n%s", fragment, md)
+		}
+	}
+	for _, raw := range []string{md, readFile(t, got.ReportJSON)} {
+		if strings.Contains(raw, "legacy-t0k") {
+			t.Errorf("a report shows the secret value:\n%s", raw)
 		}
 	}
 	// Non-English text survives verbatim, not as \u escapes.
@@ -491,5 +503,54 @@ func TestRunReportRecordsInvalidResult(t *testing.T) {
 	}
 	if md := readFile(t, got.ReportMD); !strings.Contains(md, "error: invalid result") {
 		t.Errorf("report.md doesn't show the invalid result:\n%s", md)
+	}
+}
+
+// TestRunReportIgnoresEarlierAttempts: a retried worker's earlier outputs
+// sit in attempts/<n>/ (run worker moves them there). The report reads only
+// the current attempt, never a stale result, and re-running it after a
+// second retry rewrites report.json with the new outcome.
+func TestRunReportIgnoresEarlierAttempts(t *testing.T) {
+	dir := copyRunFixture(t, "pipeline")
+	// ABC-123 is retried and the retry fails: its valid result and bug now
+	// belong to attempt 1.
+	abc := filepath.Join(dir, "workers/ABC-123")
+	if err := os.MkdirAll(filepath.Join(abc, "attempts/1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"result.json", "screenshots"} {
+		if err := os.Rename(filepath.Join(abc, name), filepath.Join(abc, "attempts/1", name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeWorkerFile(t, dir, "ABC-123", "status", "error: worker exited 3\n")
+
+	got, code := runReport(t, dir)
+	if got.Verdict != "infra" || code != 2 {
+		t.Fatalf("got verdict %q exit %d, want infra / 2", got.Verdict, code)
+	}
+	rep := loadReport(t, got.ReportJSON)
+	if len(rep.Devices) != 2 {
+		t.Errorf("report has %d devices, want 2", len(rep.Devices))
+	}
+	if d := rep.device(t, "ABC-123"); d.WorkerReason != "error: worker exited 3" || len(d.Findings) != 0 {
+		t.Errorf("ABC-123 = %+v, want the retry's error and none of attempt 1's findings", d)
+	}
+
+	// The second retry succeeds: its status moves to attempts/2 and a valid
+	// result takes its place; the report is simply run again.
+	if err := os.MkdirAll(filepath.Join(abc, "attempts/2"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(abc, "status"), filepath.Join(abc, "attempts/2/status")); err != nil {
+		t.Fatal(err)
+	}
+	writeWorkerFile(t, dir, "ABC-123", "result.json", passingResult("ABC-123"))
+	got, code = runReport(t, dir)
+	if got.Verdict != "failed" || code != 1 {
+		t.Fatalf("re-report: got verdict %q exit %d, want failed / 1 (DEF-456 still timed out)", got.Verdict, code)
+	}
+	if d := loadReport(t, got.ReportJSON).device(t, "ABC-123"); d.WorkerStatus != "ok" {
+		t.Errorf("re-report ABC-123 = %+v, want ok", d)
 	}
 }

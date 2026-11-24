@@ -9,7 +9,9 @@
     "name": "qa-app",
     "context": {
       "API_STAGE": "staging",
-      "PERSONA": "alice | admin"
+      "PASSWORD": "<secret>",
+      "PERSONA": "alice | admin",
+      "api_token": "<secret>"
     }
   },
   "summary": {

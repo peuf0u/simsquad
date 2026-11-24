@@ -16,6 +16,13 @@ func GitHeadSHA(dir string) string {
 	return strings.TrimSpace(r.Stdout)
 }
 
+// InGitWorkTree reports whether dir lies inside a git work tree. A missing
+// git counts as outside one.
+func InGitWorkTree(dir string) bool {
+	r, err := Run("git", []string{"-C", dir, "rev-parse", "--is-inside-work-tree"}, RunOpts{})
+	return err == nil && r.Code == 0 && strings.TrimSpace(r.Stdout) == "true"
+}
+
 // GitLSFiles returns absolute paths to every tracked file under the given
 // paths within the repo. Used by the build-cache freshness checker to compute
 // the latest mtime across tracked source files.

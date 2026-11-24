@@ -125,7 +125,7 @@ skill:
 | Check the setup | `simsquad skill status` | The skills match the binary; mobilecli is installed and new enough |
 | Draft | (the agent) | Writes the feature file to `.simsquad/drafts/<slug>.feature` |
 | Start | `simsquad run new` | Parses the Gherkin, picks the squad (`qa-<repo>`) and platforms, sets the worker time limit, creates `.simsquad/runs/<run-id>/` |
-| Deploy | `simsquad deploy --force-build` | Builds the working tree and installs it on the equipped devices, booting any that are down |
+| Deploy | `simsquad deploy --platform <p> --force-build` | One `--platform` per run platform: builds the working tree and installs it on those platforms' equipped devices, booting any that are down; the squad's other platform is left alone |
 | List devices | `simsquad devices --ready` | The device rows the workers get |
 | Workers | `simsquad run worker -- claude -p …` or `-- codex exec …` | One headless agent per device, all at once; simsquad kills each worker and everything it started at the time limit |
 | Validate | `simsquad run validate` | Checks each worker's `result.json` against the result schema |
@@ -161,6 +161,7 @@ limit still leaves a valid partial result. Its files are its only output:
     screenshots/   the evidence
     worker.log     the worker's raw output
     worker.json    {"status": "ok" | "blocked: timeout" | "error: …"}
+    attempts/<n>/  an earlier attempt's files, moved there by a retry
   report.json  report.md
 ```
 
@@ -172,8 +173,15 @@ evidence, and every screenshot it names exists in the worker folder.
 The time limit is `120 + Σ(60 + 30 × steps)` seconds over a platform's
 scenarios, plus 600 when it has the `@explore` scenario. The busiest
 platform sets it, and every worker in the run gets the same limit.
-Set the worker model with `[agent] worker_model` in `simsquad.toml`; it is
-passed to the worker command as given.
+Every worker runs on an explicit model. `run new --worker claude|codex`
+(default `claude`) names the CLI the workers run on, and the model is
+`run new --model`, else `[agent] worker_model` (`simsquad.local.toml` over
+`simsquad.toml`), else the default for that CLI: `sonnet` for `claude`,
+`gpt-6.1-sol` for `codex`. `worker_model` applies to `claude` and `codex`
+workers alike, so set it only when it suits every CLI the team uses, or
+pass `run new --model` per run. `run.json` records both as `worker` and
+`worker_model`, and the skill passes the model to the worker command as
+given.
 
 ## Verdicts
 
@@ -225,7 +233,7 @@ lever on how far it gets. Keep it short and concrete:
 - **Getting in:** which accounts or personas to use on which stage and
   which squad context keys hold their credentials, how to log in, one-time
   codes or how to skip them, onboarding screens to dismiss. Keep real
-  secrets in the squad context, not in this file.
+  secrets in `[secrets]` in `simsquad.local.toml`, not in this file.
 - **Navigation:** how to reach the main areas, hidden menus (debug menu,
   long-presses), deep links.
 - **Known quirks:** slow first launch, permission dialogs, flaky screens,
@@ -234,7 +242,14 @@ lever on how far it gets. Keep it short and concrete:
 
 Credentials and stage URLs that change per squad belong in the squad's
 `context` (`simsquad.toml [context]` or `deploy --context`), which every
-worker gets in its device row.
+worker gets in its device row. Passwords and tokens go in `[secrets]`
+(`simsquad.local.toml`, or `deploy --secret`): the device row, the
+orchestrator's files and the report show them as `<secret>`, and the
+worker fetches the value with `simsquad devices --name <squad> --reveal`
+when it logs in, types it with `mobilecli` and keeps it out of `log.md`,
+`result.json` and file names. `run worker` replaces secret values with
+`<secret>` in `worker.log`. A key named like `password`, `secret` or
+`token` is a secret even in `[context]`.
 
 ## Codex
 
@@ -247,10 +262,9 @@ mobilecli's on-device agent over the network, which Codex's default
 "danger-full-access"` in `~/.codex/config.toml`); the skill starts its
 workers with `codex exec --sandbox danger-full-access`.
 
-## Known gaps
+## Project layouts
 
-- A run restricted to one platform still builds and boots every equipped
-  platform ([#23](https://github.com/peuf0u/simsquad/issues/23)).
-- Projects whose iOS and Android apps live in separate repos have no
-  documented home for the config, skills and app notes
-  ([#22](https://github.com/peuf0u/simsquad/issues/22)).
+The config dir (the folder holding `simsquad.toml`) is the one root for the
+skills, the app notes (`qa/`) and the run folders. For where it goes when
+the iOS and Android apps live in one repo, an umbrella folder or separate
+repos, see [Project layouts](../README.md#project-layouts) in the README.

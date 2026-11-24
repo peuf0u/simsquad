@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
@@ -20,6 +21,7 @@ func newEquipCmd() *cobra.Command {
 		installSkills bool
 		iosSpecs      []string
 		androidSpec   []string
+		deviceSet     string
 	)
 
 	cmd := &cobra.Command{
@@ -33,7 +35,13 @@ func newEquipCmd() *cobra.Command {
 			"After saving, equip offers to install the agent skills into the repo (the\n" +
 			"same as `simsquad skill install`). The offer is skipped when stdin is not\n" +
 			"a terminal or the skills are already current; --install-skills answers it\n" +
-			"without asking. Redirect stdout only (> equip.json).",
+			"without asking.\n" +
+			"\n" +
+			"--add-ios-spec / --add-android-spec append rows to the default matrix\n" +
+			"without opening the editor; with --device-set NAME they append to that\n" +
+			"named device set instead, creating it in simsquad.toml when it doesn't\n" +
+			"exist. --show lists the device sets with the rest of the config.\n" +
+			"Redirect stdout only (> equip.json).",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			addIOS, err := parseEquipIOSSpecs(iosSpecs)
 			if err != nil {
@@ -43,17 +51,24 @@ func newEquipCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if deviceSet != "" && len(addIOS) == 0 && len(addAndroid) == 0 {
+				return fmt.Errorf("equip: --device-set needs --add-ios-spec or --add-android-spec; edit device sets in the equip editor")
+			}
 			res, err := wizard.RunEquipWizard(wizard.Options{
 				Force:      force,
 				Show:       show,
 				AddIOS:     addIOS,
 				AddAndroid: addAndroid,
+				DeviceSet:  deviceSet,
 			})
 			if err != nil {
 				return err
 			}
 			if !res.Wrote {
 				return writeJSON(cmd, res.Summary)
+			}
+			if res.Created {
+				warnIfNotShared(cmd.ErrOrStderr(), filepath.Dir(res.ProjectFile))
 			}
 			out := map[string]any{
 				"written": []string{res.ProjectFile, res.LocalFile},
@@ -67,7 +82,7 @@ func newEquipCmd() *cobra.Command {
 			if cmd.Flags().Changed("install-skills") {
 				answer = &installSkills
 			}
-			installed, err := maybeInstallSkills(cmd.ErrOrStderr(), answer)
+			installed, err := maybeInstallSkills(cmd.ErrOrStderr(), filepath.Dir(res.ProjectFile), answer)
 			if err != nil {
 				return err
 			}
@@ -83,6 +98,7 @@ func newEquipCmd() *cobra.Command {
 		"after saving, install the agent skills without asking (=false declines the offer)")
 	cmd.Flags().StringArrayVar(&iosSpecs, "add-ios-spec", nil, "append an iOS slot spec: 'DEVICE:RUNTIME:COUNT'")
 	cmd.Flags().StringArrayVar(&androidSpec, "add-android-spec", nil, "append an Android slot spec: 'DEVICE:IMAGE:COUNT[:TARGET]'")
+	cmd.Flags().StringVar(&deviceSet, "device-set", "", "append the --add-*-spec rows to this named device set (created in simsquad.toml if missing)")
 	return cmd
 }
 
@@ -106,12 +122,12 @@ var offerSkillInstall = func(w io.Writer) (bool, error) {
 	return install, nil
 }
 
-// maybeInstallSkills runs the post-equip skill offer. answer is the
-// --install-skills flag when given (no prompt); nil means ask, unless the
-// skills this binary would write are already installed untouched. It
-// returns the install result, or nil when nothing was installed.
-func maybeInstallSkills(w io.Writer, answer *bool) (*skills.Result, error) {
-	root := repoRoot()
+// maybeInstallSkills runs the post-equip skill offer for the config dir
+// root. answer is the --install-skills flag when given (no prompt); nil
+// means ask, unless the skills this binary would write are already
+// installed untouched. It returns the install result, or nil when nothing
+// was installed.
+func maybeInstallSkills(w io.Writer, root string, answer *bool) (*skills.Result, error) {
 	if answer == nil {
 		if skillsCurrent(root) {
 			return nil, nil

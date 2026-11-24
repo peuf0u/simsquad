@@ -11,8 +11,9 @@ import (
 
 // Headless workers can't answer permission prompts, so a prompt stalls them
 // until their deadline. Install grants the minimum a worker needs, and
-// nothing more: running mobilecli, the two simsquad commands worker.md runs
-// (reset and run validate), and writing its results under .simsquad/runs/.
+// nothing more: running mobilecli, the three simsquad commands worker.md
+// runs (reset, run validate, and devices to fetch a secret's value), and
+// writing its results under .simsquad/runs/.
 
 // ClaudeSettingsFile is the shared Claude Code project settings file. It
 // belongs to the team, so Install merges its entries in rather than owning
@@ -21,13 +22,16 @@ const ClaudeSettingsFile = ".claude/settings.json"
 
 // ClaudeAllow lists the permission rules Install adds to ClaudeSettingsFile.
 // The Edit rule also covers file writes: Claude Code never matches Write
-// rules against paths. Paths without a leading "/" resolve against the cwd,
-// which is the repo root for workers; "/path" would resolve against the
-// settings file's directory (.claude/) instead.
+// rules against paths. Paths without a leading "/" resolve against the cwd.
+// A committed file can't name the absolute run folder, so the simsquad-test
+// skill's worker command passes its own rules, with Edit by absolute path
+// (issue #35); these cover a worker started in the repo root of a trusted
+// folder.
 var ClaudeAllow = []string{
 	"Bash(mobilecli:*)",
 	"Bash(simsquad reset:*)",
 	"Bash(simsquad run validate:*)",
+	"Bash(simsquad devices:*)",
 	"Edit(.simsquad/runs/**)",
 }
 
@@ -41,6 +45,7 @@ const codexRules = `# Lets headless simsquad-test workers run the device driver 
 prefix_rule(pattern = ["mobilecli"], decision = "allow")
 prefix_rule(pattern = ["simsquad", "reset"], decision = "allow")
 prefix_rule(pattern = ["simsquad", "run", "validate"], decision = "allow")
+prefix_rule(pattern = ["simsquad", "devices"], decision = "allow")
 `
 
 func (in *installer) planCodexRules() error {

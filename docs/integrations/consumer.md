@@ -101,6 +101,7 @@ your runner uses) — it never talks back to simsquad.
 {
   "name": "qa-run-1717000000",
   "created_at": "2026-05-27T14:00:00Z",
+  "device_set": "tablet",   // only when deployed with --device-set
   "builds": { "ios": { "app_path": "…", "bundle_id": "…", "specs": [ … ] } },
   "devices": [ /* full Device records — see status output */ ],
   "context": { "user": "alice", "api": "staging" },
@@ -143,6 +144,13 @@ your runner uses) — it never talks back to simsquad.
 `id` is what you pass to `mobile-mcp`, `xcrun simctl`, `adb -s`, etc.
 `bundle_id` is the installed app — everything a per-device test agent needs
 to launch, terminate, or wipe the app without a second lookup.
+
+A secret context key (from `[secrets]`, `deploy --secret` or
+`set-context --set-secret`, or any key whose name contains `password`,
+`secret` or `token`) keeps its key and shows the value `"<secret>"` here and
+in every other output. The agent that types it into the app fetches the
+real value with `simsquad devices --name <squad> --reveal`, which needs
+`--name` and is refused with `--out`.
 
 ### `devices` with no `--name` — whole-fleet view
 
@@ -193,10 +201,16 @@ trap '
   bail.
 - **Deploy exit code 1**: nothing usable. The JSON descriptor is still
   emitted on stdout; the failure detail is inside.
-- **Reuse with a different matrix**: `deploy --name=foo` where `foo`
-  already exists with a different `--ios-spec` errors with
-  "not reusable; run `simsquad dismiss --name foo` first". Either change
-  the spec to match, or dismiss + redeploy.
+- **Which devices the exit code counts**: only the deployed platforms'
+  (`deploy --platform`), so a broken device on a platform left out doesn't
+  change it, while stdout is still the whole squad. A deployed platform
+  whose build failed counts as not ready, even when it has no devices.
+- **Reuse with a different matrix**: reuse is decided per platform. A
+  platform whose devices match is reused, one the squad lacks is added,
+  and a mismatched one is reset when none of its devices is ready; when
+  one is, `deploy --name=foo` errors with "not reusable with the requested
+  iOS matrix/status; run `simsquad dismiss --name foo` first" (or
+  Android). Either change the spec to match, or dismiss + redeploy.
 - **Crashed orchestrator**: your `trap dismiss EXIT` should fire. If
   simsquad-managed sims are left on disk anyway, `simsquad sweep` cleans
   up any orphan `simsquad-*-(ios|android)-N` sims that aren't in the

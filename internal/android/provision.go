@@ -1,6 +1,7 @@
 package android
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,13 +24,38 @@ const (
 	// Python reference and the empirical worst case on a cold M-series Mac.
 	androidBootTimeout      = 180 * time.Second
 	androidBootPollInterval = 3 * time.Second
-
-	// emulatorSettleAfterBoot is the grace window between "boot poll passes"
-	// and "ready to install" — the system_server fully settling after
-	// sys.boot_completed flips. install starts immediately after, but adb
-	// install occasionally races against pm if we move zero-wait.
-	emulatorSettleAfterBoot = 2 * time.Second
 )
+
+// emulatorSettleAfterBoot is the grace window between "boot poll passes"
+// and "ready to install" — the system_server fully settling after
+// sys.boot_completed flips. install starts immediately after, but adb
+// install occasionally races against pm if we move zero-wait.
+//
+// The emulator a boot started must stay alive through the whole window
+// (startedEmulatorSettles): one that can't lock its AVD, because another
+// instance of it holds it, exits a moment after start, while the boot poll
+// passes at once against that other instance. A single check right after
+// the poll can come before that exit. A variable so fake-SDK tests set a
+// short window.
+var emulatorSettleAfterBoot = 2 * time.Second
+
+const settleAlivePoll = 100 * time.Millisecond
+
+// startedEmulatorSettles waits out emulatorSettleAfterBoot and reports
+// whether pid stayed avd's emulator on port throughout; it returns false as
+// soon as it isn't.
+func startedEmulatorSettles(pid int, avd string, port int) bool {
+	deadline := time.Now().Add(emulatorSettleAfterBoot)
+	for {
+		if !squadEmulatorPIDAlive(pid, avd, port) {
+			return false
+		}
+		if !time.Now().Before(deadline) {
+			return true
+		}
+		time.Sleep(min(settleAlivePoll, time.Until(deadline)))
+	}
+}
 
 // dottedAPIRx matches API levels with a `.N` suffix — `android-36.1`,
 // `android-34.0`. Older cmdline-tools reject these images ("Package path is
@@ -41,13 +67,19 @@ var dottedAPIRx = regexp.MustCompile(`^android-\d+\.\d+`)
 
 // ProvisionInput is the matrix request handed to Provision.
 type ProvisionInput struct {
-	Name            string
-	Specs           []contract.AndroidSpec
-	APKPath         string
+	Name    string
+	Specs   []contract.AndroidSpec
+	APKPath string
+	// APKSetPath is set instead of APKPath for a bundle build: the APK set
+	// bundletool installs, base plus feature modules.
+	APKSetPath      string
 	BundleID        string
 	ExistingDevices []contract.Device
 	PreserveData    bool
-	Logger          *progress.Logger
+	// Window boots emulators with a window and the hardware keyboard on
+	// (deploy --window), restarting a reused headless one to get it.
+	Window bool
+	Logger *progress.Logger
 }
 
 // ProvisionResult bundles per-slot devices with the port reservations made
@@ -92,11 +124,13 @@ func Provision(in ProvisionInput) ProvisionResult {
 
 	if len(emuSpecs) > 0 {
 		emuDevices, emuPorts := provisionEmulators(emulatorContext{
-			Name:     in.Name,
-			Specs:    emuSpecs,
-			APKPath:  in.APKPath,
-			BundleID: in.BundleID,
-			Logger:   in.Logger,
+			Name:       in.Name,
+			Specs:      emuSpecs,
+			APKPath:    in.APKPath,
+			APKSetPath: in.APKSetPath,
+			BundleID:   in.BundleID,
+			Window:     in.Window,
+			Logger:     in.Logger,
 		})
 		res.Devices = append(res.Devices, emuDevices...)
 		for k, v := range emuPorts {
@@ -109,11 +143,12 @@ func Provision(in ProvisionInput) ProvisionResult {
 			total += s.Count
 		}
 		physDevices := provisionPhysical(physicalContext{
-			Name:     in.Name,
-			Count:    total,
-			APKPath:  in.APKPath,
-			BundleID: in.BundleID,
-			Logger:   in.Logger,
+			Name:       in.Name,
+			Count:      total,
+			APKPath:    in.APKPath,
+			APKSetPath: in.APKSetPath,
+			BundleID:   in.BundleID,
+			Logger:     in.Logger,
 		})
 		res.Devices = append(res.Devices, physDevices...)
 	}
@@ -134,6 +169,55 @@ func reprovisionExisting(in ProvisionInput) []contract.Device {
 	return devices
 }
 
+// reuseBoot is what reuse does with an existing device before installing.
+type reuseBoot int
+
+const (
+	reuseKeep                reuseBoot = iota // reachable: install on it as it runs
+	reuseBootHeadless                         // unreachable emulator: boot it headless
+	reuseBootWindowed                         // unreachable emulator: boot it with a window
+	reuseRestartWindowed                      // running headless, --window: restart it windowed
+	reusePhysicalUnreachable                  // a physical device simsquad can't boot
+)
+
+func (b reuseBoot) String() string {
+	switch b {
+	case reuseKeep:
+		return "keep"
+	case reuseBootHeadless:
+		return "boot-headless"
+	case reuseBootWindowed:
+		return "boot-windowed"
+	case reuseRestartWindowed:
+		return "restart-windowed"
+	case reusePhysicalUnreachable:
+		return "physical-unreachable"
+	}
+	return "reuseBoot(" + strconv.Itoa(int(b)) + ")"
+}
+
+// reuseBootDecision picks how reuse treats dev. The window switch is one
+// way on purpose (issue #33): --window restarts a running headless emulator
+// so the dev squad gains a window, while a deploy without it leaves a
+// running windowed emulator alone. An emulator that has to be booted anyway
+// gets the mode this deploy asked for.
+func reuseBootDecision(dev contract.Device, reachable, window bool) reuseBoot {
+	switch {
+	case dev.Physical && !reachable:
+		return reusePhysicalUnreachable
+	case dev.Physical:
+		return reuseKeep
+	case reachable && window && !dev.Window:
+		return reuseRestartWindowed
+	case reachable:
+		return reuseKeep
+	case window:
+		return reuseBootWindowed
+	default:
+		return reuseBootHeadless
+	}
+}
+
 func reprovisionExistingOne(existing contract.Device, in ProvisionInput) contract.Device {
 	dev := existing
 	dev.BundleID = in.BundleID
@@ -143,47 +227,225 @@ func reprovisionExistingOne(existing contract.Device, in ProvisionInput) contrac
 		dev.ErrorMessage = "reuse: no udid in reuse"
 		return dev
 	}
-	if !adbShellTrue(dev.UDID) {
-		if dev.Physical {
-			dev.ErrorMessage = "reuse-boot: physical device is not reachable"
-			return dev
-		}
-		port, err := emulatorPort(dev)
+	reachable := adbShellTrue(dev.UDID)
+	if reachable && !dev.Physical {
+		// The serial is only a port. After a reboot another emulator (the
+		// user's own, say) can hold it, and reuse must neither kill nor
+		// install on it. Booting the squad's AVD instead would hit the busy
+		// port, so the device fails with the reason.
+		running, err := RunningAVDName(dev.UDID)
 		if err != nil {
+			dev.ErrorMessage = fmt.Sprintf("reuse: could not read the AVD name of the emulator on %s (%s)",
+				portLabel(dev), err.Error())
+			return dev
+		}
+		if running != avdNameOf(dev) {
+			dev.ErrorMessage = fmt.Sprintf("reuse: %s is held by another emulator (%s), not %s",
+				portLabel(dev), running, avdNameOf(dev))
+			return dev
+		}
+	}
+	switch decision := reuseBootDecision(dev, reachable, in.Window); decision {
+	case reusePhysicalUnreachable:
+		dev.ErrorMessage = "reuse-boot: physical device is not reachable"
+		return dev
+	case reuseBootHeadless, reuseBootWindowed:
+		// adb not answering doesn't mean the squad's emulator has exited:
+		// the one a completed deploy recorded can be alive but wedged,
+		// offline or rebooting inside the guest. A second instance can't
+		// start on its locked AVD, so stop the live one.
+		if dev.EmulatorPID > 0 && SquadEmulatorAlive(dev) {
+			if err := stopEmulator(dev); err != nil {
+				dev.ErrorMessage = "reuse-boot: " + err.Error()
+				return dev
+			}
+		}
+		if err := bootReused(&dev, decision == reuseBootWindowed, in.Logger); err != nil {
 			dev.ErrorMessage = "reuse-boot: " + err.Error()
 			return dev
 		}
-		avd := dev.AVDName
-		if avd == "" {
-			avd = dev.Name
-		}
-		if !avdExists(avd) {
-			dev.ErrorMessage = "reuse-boot: AVD " + avd + " does not exist"
+	case reuseRestartWindowed:
+		if err := stopEmulator(dev); err != nil {
+			dev.ErrorMessage = "reuse-restart: " + err.Error()
 			return dev
 		}
-		cmd, err := emulatorStart(avd, port, false)
-		if err != nil {
-			dev.ErrorMessage = "reuse-boot: " + err.Error()
+		if err := bootReused(&dev, true, in.Logger); err != nil {
+			dev.ErrorMessage = "reuse-restart: " + err.Error()
 			return dev
 		}
-		if err := waitForBoot(dev.UDID); err != nil {
-			killEmulatorProcess(cmd)
-			dev.ErrorMessage = "reuse-boot: " + err.Error()
-			return dev
-		}
-		dev.EmulatorPID = cmd.Process.Pid
 	}
 	if in.PreserveData {
-		if err := installOnly(dev.UDID, in.APKPath); err != nil {
+		if err := installOnly(dev.UDID, in.pkg()); err != nil {
 			dev.ErrorMessage = "reuse-install: " + err.Error()
 			return dev
 		}
-	} else if err := installAndClear(dev.UDID, in.APKPath, in.BundleID); err != nil {
+	} else if err := installAndClear(dev.UDID, in.pkg(), in.BundleID); err != nil {
 		dev.ErrorMessage = "reuse-install: " + err.Error()
 		return dev
 	}
 	dev.Status = contract.StatusReady
 	return dev
+}
+
+// bootReused boots an existing emulator's AVD on its recorded port, without
+// wiping it, in the requested mode, and records the new process and mode on
+// dev. A windowed boot turns the hardware keyboard on first. On a boot
+// timeout the captured process is killed (landmine 5) so no qemu is left
+// running.
+func bootReused(dev *contract.Device, window bool, logger *progress.Logger) error {
+	port, err := emulatorPort(*dev)
+	if err != nil {
+		return err
+	}
+	avd := avdNameOf(*dev)
+	if !avdExists(avd) {
+		return fmt.Errorf("AVD %s does not exist", avd)
+	}
+	if window {
+		turnOnHWKeyboard(avd, logger)
+	}
+	cmd, err := emulatorStart(avd, port, window, false)
+	if err != nil {
+		return err
+	}
+	if err := waitForBoot(dev.UDID); err != nil {
+		killEmulatorProcess(cmd)
+		return err
+	}
+	// An emulator that can't lock its AVD exits a moment after start, and
+	// the boot poll then passes against whatever instance still answers on
+	// the port. Recording that boot would store a dead PID and a mode that
+	// isn't so. The settle doubles as the window it must stay alive in.
+	if !startedEmulatorSettles(cmd.Process.Pid, avd, port) {
+		killEmulatorProcess(cmd)
+		return fmt.Errorf("the emulator started for %s exited during boot; another instance of it may still be running", avd)
+	}
+	dev.EmulatorPID = cmd.Process.Pid
+	dev.Window = window
+	return nil
+}
+
+func avdNameOf(dev contract.Device) string {
+	if dev.AVDName != "" {
+		return dev.AVDName
+	}
+	return dev.Name
+}
+
+func portLabel(dev contract.Device) string {
+	if port, err := emulatorPort(dev); err == nil {
+		return "port " + strconv.Itoa(port)
+	}
+	return dev.UDID
+}
+
+// The emulator console behind `adb emu avd name` can miss a query under
+// load, so reuse asks a few times before giving up on a working emulator.
+// avdNameRetryDelay is a variable so fake-SDK tests skip the wait.
+const avdNameAttempts = 3
+
+var avdNameRetryDelay = time.Second
+
+// RunningAVDName asks the emulator on serial which AVD it runs (`adb emu
+// avd name` prints the name, then OK), retrying an empty or failed answer.
+// The error carries adb's own message from the last attempt. Reuse and
+// teardown both use it to tell the squad's emulator from another one on the
+// recorded port.
+func RunningAVDName(serial string) (string, error) {
+	adb, err := ADB()
+	if err != nil {
+		return "", err
+	}
+	var lastErr error
+	for attempt := 1; attempt <= avdNameAttempts; attempt++ {
+		if attempt > 1 {
+			time.Sleep(avdNameRetryDelay)
+		}
+		r, err := util.Run(adb, []string{"-s", serial, "emu", "avd", "name"}, util.RunOpts{Timeout: 5 * time.Second})
+		first, _, _ := strings.Cut(r.Stdout, "\n")
+		name := strings.TrimSpace(first)
+		switch {
+		case err != nil:
+			lastErr = err
+		case r.Code != 0:
+			msg := strings.TrimSpace(r.Stderr + r.Stdout)
+			if msg == "" {
+				msg = fmt.Sprintf("adb emu avd name exited %d", r.Code)
+			}
+			lastErr = errors.New(msg)
+		case name == "":
+			lastErr = errors.New("adb emu avd name printed no name")
+		default:
+			return name, nil
+		}
+	}
+	return "", lastErr
+}
+
+// stopEmulator's waits: for `adb emu kill`, then for each signal after it.
+// Variables so fake-SDK tests run in test time.
+var (
+	stopExitTimeout   = EmulatorExitTimeout
+	stopSignalTimeout = 5 * time.Second
+)
+
+// stopEmulator asks a running emulator to exit and waits until it has, so
+// the boot that follows can take its port and lock its AVD.
+func stopEmulator(dev contract.Device) error {
+	adb, err := ADB()
+	if err != nil {
+		return err
+	}
+	_ = killEmulatorADB(dev.UDID)
+	gone := EmulatorGoneProbe(dev, adb)
+	if WaitGone(gone, stopExitTimeout, EmulatorExitPoll) {
+		return nil
+	}
+	// A recorded emulator that is alive but not answering adb (wedged,
+	// offline, rebooting inside the guest) may not honour `emu kill`, and
+	// its qemu keeps the AVD locked.
+	if dev.EmulatorPID > 0 {
+		if SignalSquadEmulator(dev, gone) {
+			return nil
+		}
+		return fmt.Errorf("emulator %s (pid %d) did not exit after emu kill, SIGTERM and SIGKILL",
+			dev.UDID, dev.EmulatorPID)
+	}
+	return fmt.Errorf("emulator %s did not exit within %s", dev.UDID, stopExitTimeout)
+}
+
+// SignalSquadEmulator stops dev's recorded EmulatorPID with SIGTERM, then
+// SIGKILL, waiting up to stopSignalTimeout after each for gone, and reports
+// whether it is gone. The PID is signalled only while SquadEmulatorAlive
+// confirms it is dev's own emulator, checked right before each signal: a
+// PID that isn't (reused, or another emulator or qemu VM) is never
+// signalled and counts as gone. Reuse's stop and teardown both fall back on
+// it when `adb emu kill` didn't stop the emulator.
+func SignalSquadEmulator(dev contract.Device, gone func() bool) bool {
+	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL} {
+		if !SquadEmulatorAlive(dev) {
+			return true
+		}
+		_ = syscall.Kill(dev.EmulatorPID, sig)
+		if WaitGone(gone, stopSignalTimeout, EmulatorExitPoll) {
+			return true
+		}
+	}
+	return false
+}
+
+// turnOnHWKeyboard sets hw.keyboard=yes on avd before a windowed boot. A
+// failure only costs typing from the Mac keyboard, so it warns and the boot
+// goes on.
+func turnOnHWKeyboard(avd string, logger *progress.Logger) {
+	path, err := avdConfigPath(avd)
+	if err == nil {
+		err = enableHWKeyboard(path)
+	}
+	if err != nil && logger != nil {
+		logger.Warn("android-provision: hw-keyboard",
+			progress.F("name", avd), progress.F("error", err.Error()))
+	}
 }
 
 // preflightAPIWarn surfaces Landmine #4: when every installed system image has
@@ -223,11 +485,13 @@ func preflightAPIWarn(logger *progress.Logger) {
 // ---------------------------------------------------------------------------
 
 type emulatorContext struct {
-	Name     string
-	Specs    []contract.AndroidSpec
-	APKPath  string
-	BundleID string
-	Logger   *progress.Logger
+	Name       string
+	Specs      []contract.AndroidSpec
+	APKPath    string
+	APKSetPath string
+	BundleID   string
+	Window     bool
+	Logger     *progress.Logger
 }
 
 type emulatorSlot struct {
@@ -238,13 +502,35 @@ type emulatorSlot struct {
 }
 
 func provisionEmulators(ctx emulatorContext) ([]contract.Device, map[string]int) {
+	slots, ports := reserveEmulatorSlots(ctx)
+
+	// Phase 2: provision each slot in parallel.
+	devices := make([]contract.Device, len(slots))
+	var g errgroup.Group
+	for i, s := range slots {
+		i, s := i, s
+		g.Go(func() error {
+			devices[i] = provisionEmulatorSlot(s, ctx)
+			return nil
+		})
+	}
+	_ = g.Wait()
+	return devices, ports
+}
+
+// reserveEmulatorSlots is phase 1 of provisionEmulators: it reserves a port
+// for every emulator slot under the index lock and persists the
+// reservations to the squad's record so concurrent simsquad invocations see
+// the claim. A slot with no free port gets port -1.
+func reserveEmulatorSlots(ctx emulatorContext) ([]emulatorSlot, map[string]int) {
 	slots := make([]emulatorSlot, 0)
 	ports := map[string]int{}
 
-	// Phase 1: reserve ports under the index lock. Persist the reservations
-	// to the squad's record so concurrent simsquad invocations see our claim.
 	lockErr := state.WithIndexLockE(func() error {
-		reserved := map[int]struct{}{}
+		// Records only know simsquad's ports. After a reboot the user's own
+		// emulator can hold one no record claims any more, and a fresh boot
+		// there would install on it, so ports adb lists count as taken too.
+		reserved := adbListedEmulatorPorts()
 		idx := 0
 		for _, spec := range ctx.Specs {
 			for i := 0; i < spec.Count; i++ {
@@ -287,19 +573,35 @@ func provisionEmulators(ctx emulatorContext) ([]contract.Device, map[string]int)
 		ctx.Logger.Warn("android-provision: reserve-error",
 			progress.F("error", lockErr.Error()))
 	}
+	return slots, ports
+}
 
-	// Phase 2: provision each slot in parallel.
-	devices := make([]contract.Device, len(slots))
-	var g errgroup.Group
-	for i, s := range slots {
-		i, s := i, s
-		g.Go(func() error {
-			devices[i] = provisionEmulatorSlot(s, ctx)
-			return nil
-		})
+// adbListedEmulatorPorts returns the ports of the emulator serials
+// (emulator-<port>) `adb devices` lists, in any state: one call for a whole
+// allocation batch. Best effort: without a working adb it returns none and
+// allocation goes by the recorded ports alone.
+func adbListedEmulatorPorts() map[int]struct{} {
+	ports := map[int]struct{}{}
+	adb, err := ADB()
+	if err != nil {
+		return ports
 	}
-	_ = g.Wait()
-	return devices, ports
+	r, err := util.Run(adb, []string{"devices"}, util.RunOpts{Timeout: 5 * time.Second})
+	if err != nil || r.Code != 0 {
+		return ports
+	}
+	for _, line := range strings.Split(r.Stdout, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if p, ok := strings.CutPrefix(fields[0], "emulator-"); ok {
+			if port, err := strconv.Atoi(p); err == nil {
+				ports[port] = struct{}{}
+			}
+		}
+	}
+	return ports
 }
 
 func provisionEmulatorSlot(s emulatorSlot, ctx emulatorContext) contract.Device {
@@ -328,6 +630,9 @@ func provisionEmulatorSlot(s emulatorSlot, ctx emulatorContext) contract.Device 
 		dev.ErrorMessage = "avd-create: " + err.Error()
 		return dev
 	}
+	if ctx.Window {
+		turnOnHWKeyboard(s.name, ctx.Logger)
+	}
 
 	var lastErr error
 	bootAttempts := []struct {
@@ -335,7 +640,7 @@ func provisionEmulatorSlot(s emulatorSlot, ctx emulatorContext) contract.Device 
 		wipe bool
 	}{{1, false}, {2, true}}
 	for _, a := range bootAttempts {
-		cmd, err := emulatorStart(s.name, s.port, a.wipe)
+		cmd, err := emulatorStart(s.name, s.port, ctx.Window, a.wipe)
 		if err != nil {
 			lastErr = err
 			if ctx.Logger != nil {
@@ -360,8 +665,19 @@ func provisionEmulatorSlot(s emulatorSlot, ctx emulatorContext) contract.Device 
 			_ = killEmulatorADB(serial)
 			continue
 		}
+		// The boot poll only proves something answers on the port. Another
+		// emulator holding it (allocation can miss one that came up since)
+		// passes the poll while ours fails to bind, and installing would
+		// clear the app's data on it. Another boot attempt would meet the
+		// same emulator, so the slot fails here.
+		if err := verifyStartedEmulator(cmd, serial, s.name, s.port); err != nil {
+			killEmulatorProcess(cmd)
+			dev.ErrorMessage = "boot: " + err.Error()
+			return dev
+		}
 		// Booted. Record the PID so dismiss can SIGTERM if needed later.
 		dev.EmulatorPID = cmd.Process.Pid
+		dev.Window = ctx.Window
 		lastErr = nil
 		break
 	}
@@ -370,15 +686,36 @@ func provisionEmulatorSlot(s emulatorSlot, ctx emulatorContext) contract.Device 
 		return dev
 	}
 
-	time.Sleep(emulatorSettleAfterBoot)
-
-	if err := installAndClear(serial, ctx.APKPath, ctx.BundleID); err != nil {
+	// verifyStartedEmulator already waited out the settle.
+	if err := installAndClear(serial, appPackage{apk: ctx.APKPath, apkSet: ctx.APKSetPath}, ctx.BundleID); err != nil {
 		dev.ErrorMessage = "install: " + err.Error()
 		return dev
 	}
 
 	dev.Status = contract.StatusReady
 	return dev
+}
+
+// verifyStartedEmulator checks that the emulator answering on serial after
+// a fresh boot is the one cmd started: cmd stays alive as avd's emulator on
+// port through the settle (startedEmulatorSettles), and the emulator on
+// serial doesn't run another AVD. A name query
+// that fails (the console can miss one under a wide parallel matrix) is no
+// reason to reject a boot whose process is provably ours on our port. The
+// caller kills cmd on an error; it never touches the emulator that answered.
+func verifyStartedEmulator(cmd *exec.Cmd, serial, avd string, port int) error {
+	running, nameErr := RunningAVDName(serial)
+	if nameErr == nil && running != avd {
+		return fmt.Errorf("port %d is held by another emulator (%s), not %s", port, running, avd)
+	}
+	if !startedEmulatorSettles(cmd.Process.Pid, avd, port) {
+		if nameErr != nil {
+			return fmt.Errorf("the emulator started for %s exited during boot, and the AVD name of the emulator on port %d could not be read (%s)",
+				avd, port, nameErr.Error())
+		}
+		return fmt.Errorf("the emulator started for %s exited during boot; another instance of it holds port %d", avd, port)
+	}
+	return nil
 }
 
 func createAVD(name, image, deviceProfile string) error {
@@ -426,23 +763,12 @@ func avdExists(name string) bool {
 // always; the Day 3 landmine fix is to retain the handle for the timeout path.
 // On boot success we simply stop tracking the process — the OS keeps it
 // running because nothing reaps detached children of a now-exited parent.
-func emulatorStart(name string, port int, wipeData bool) (*exec.Cmd, error) {
+func emulatorStart(name string, port int, window, wipeData bool) (*exec.Cmd, error) {
 	emu, err := Emulator()
 	if err != nil {
 		return nil, err
 	}
-	args := []string{
-		"-avd", name,
-		"-port", strconv.Itoa(port),
-		"-no-snapshot-save",
-		"-no-window",
-		"-no-boot-anim",
-		"-gpu", "swiftshader_indirect",
-	}
-	if wipeData {
-		args = append(args, "-wipe-data")
-	}
-	cmd := exec.Command(emu, args...)
+	cmd := exec.Command(emu, emulatorArgs(name, port, window, wipeData)...)
 	// Detach from controlling terminal — emulator must survive simsquad exit.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdin = nil
@@ -452,6 +778,29 @@ func emulatorStart(name string, port int, wipeData bool) (*exec.Cmd, error) {
 		return nil, fmt.Errorf("emulator start: %w", err)
 	}
 	return cmd, nil
+}
+
+// emulatorArgs builds the emulator command line. Headless is the default
+// for test squads. A windowed boot (deploy --window, issue #33) drops
+// -no-window and uses -gpu auto, since swiftshader is a software renderer
+// meant for headless runs. It also adds -no-snapshot-load: every windowed boot
+// follows a config.ini write (hw.keyboard=yes), which the emulator reads only
+// on a cold boot.
+func emulatorArgs(name string, port int, window, wipeData bool) []string {
+	args := []string{
+		"-avd", name,
+		"-port", strconv.Itoa(port),
+		"-no-snapshot-save",
+	}
+	if window {
+		args = append(args, "-no-snapshot-load", "-no-boot-anim", "-gpu", "auto")
+	} else {
+		args = append(args, "-no-window", "-no-boot-anim", "-gpu", "swiftshader_indirect")
+	}
+	if wipeData {
+		args = append(args, "-wipe-data")
+	}
+	return args
 }
 
 func killEmulatorProcess(cmd *exec.Cmd) {
@@ -529,36 +878,75 @@ func emulatorPort(dev contract.Device) (int, error) {
 	return 0, fmt.Errorf("cannot infer emulator port from %q", dev.UDID)
 }
 
-func installOnly(serial, apk string) error {
+// appPackage is what a build installs: one APK, or for a bundle build the
+// APK set built from the app bundle.
+type appPackage struct {
+	apk, apkSet string
+}
+
+func (in ProvisionInput) pkg() appPackage {
+	return appPackage{apk: in.APKPath, apkSet: in.APKSetPath}
+}
+
+// install installs pkg on serial, replacing an installed copy: `adb install
+// -r -t` for an APK, `bundletool install-apks` for an APK set, which picks
+// the splits the device needs and, for a local-testing set, pushes the
+// on-demand modules where Play Core finds them. --allow-test-only matches
+// adb's -t.
+func install(serial string, pkg appPackage) error {
 	adb, err := ADB()
 	if err != nil {
 		return err
 	}
-	r, _ := util.Run(adb, []string{"-s", serial, "install", "-r", "-t", apk}, util.RunOpts{})
+	if pkg.apkSet == "" {
+		r, _ := util.Run(adb, []string{"-s", serial, "install", "-r", "-t", pkg.apk}, util.RunOpts{})
+		if r.Code != 0 {
+			return fmt.Errorf("adb install: %s", strings.TrimSpace(r.Stderr+r.Stdout))
+		}
+		return nil
+	}
+	bundletool, err := Bundletool()
+	if err != nil {
+		return err
+	}
+	r, _ := util.Run(bundletool, []string{
+		"install-apks", "--apks=" + pkg.apkSet, "--device-id=" + serial, "--adb=" + adb, "--allow-test-only",
+	}, util.RunOpts{})
 	if r.Code != 0 {
-		return fmt.Errorf("adb install -r: %s", strings.TrimSpace(r.Stderr+r.Stdout))
+		return fmt.Errorf("bundletool install-apks: %s", strings.TrimSpace(r.Stderr+r.Stdout))
 	}
 	return nil
 }
 
-func installAndClear(serial, apk, bundle string) error {
+func installOnly(serial string, pkg appPackage) error {
+	return install(serial, pkg)
+}
+
+// installAndClear installs pkg and leaves the app with no data. An APK is
+// cleared after the install; an APK set before it, never after: pm clear
+// also deletes the external app data, where a local-testing install-apks
+// leaves the on-demand modules' splits for Play Core to install from. The
+// clear before fails harmlessly when the app isn't installed yet.
+func installAndClear(serial string, pkg appPackage, bundle string) error {
 	adb, err := ADB()
 	if err != nil {
 		return err
 	}
-	install := func() (util.RunResult, error) {
-		return util.Run(adb, []string{"-s", serial, "install", "-r", "-t", apk}, util.RunOpts{})
+	if pkg.apkSet != "" {
+		_, _ = util.Run(adb, []string{"-s", serial, "shell", "pm", "clear", bundle}, util.RunOpts{})
 	}
-	r, _ := install()
-	if r.Code != 0 {
+	if err := install(serial, pkg); err != nil {
 		// One retry after uninstall — covers signature-mismatch on reuse.
+		// The uninstall drops the data too, so the APK set needs no clear.
 		_, _ = util.Run(adb, []string{"-s", serial, "uninstall", bundle}, util.RunOpts{})
-		r, _ = install()
-		if r.Code != 0 {
-			return fmt.Errorf("adb install: %s", strings.TrimSpace(r.Stderr+r.Stdout))
+		if err := install(serial, pkg); err != nil {
+			return err
 		}
 	}
-	r, _ = util.Run(adb, []string{"-s", serial, "shell", "pm", "clear", bundle}, util.RunOpts{})
+	if pkg.apkSet != "" {
+		return nil
+	}
+	r, _ := util.Run(adb, []string{"-s", serial, "shell", "pm", "clear", bundle}, util.RunOpts{})
 	if r.Code != 0 {
 		return fmt.Errorf("pm clear: %s", strings.TrimSpace(r.Stderr))
 	}
@@ -567,8 +955,12 @@ func installAndClear(serial, apk, bundle string) error {
 
 // ResetApp force-stops the app and clears its data on a device or emulator —
 // the Android analogue of the iOS data-container wipe, powering the `reset`
-// verb. `pm clear` already restores the app to first-install state.
-func ResetApp(serial, bundle string) error {
+// verb. `pm clear` already restores the app to first-install state. For a
+// bundle build, apkSet is the squad's APK set: the clear deletes the
+// on-demand modules' splits from external storage, so the set is installed
+// again to push them back: the squad's own copy (StageAPKSet), or "" when
+// it is gone (cli.resetAPKSet).
+func ResetApp(serial, bundle, apkSet string) error {
 	adb, err := ADB()
 	if err != nil {
 		return err
@@ -578,6 +970,11 @@ func ResetApp(serial, bundle string) error {
 	if r.Code != 0 {
 		return fmt.Errorf("pm clear: %s", strings.TrimSpace(r.Stderr+r.Stdout))
 	}
+	if apkSet != "" {
+		if err := install(serial, appPackage{apkSet: apkSet}); err != nil {
+			return fmt.Errorf("reinstall the APK set after the clear: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -586,11 +983,12 @@ func ResetApp(serial, bundle string) error {
 // ---------------------------------------------------------------------------
 
 type physicalContext struct {
-	Name     string
-	Count    int
-	APKPath  string
-	BundleID string
-	Logger   *progress.Logger
+	Name       string
+	Count      int
+	APKPath    string
+	APKSetPath string
+	BundleID   string
+	Logger     *progress.Logger
 }
 
 func provisionPhysical(ctx physicalContext) []contract.Device {
@@ -680,7 +1078,7 @@ func provisionPhysical(ctx physicalContext) []contract.Device {
 				devices[i] = dev
 				return nil
 			}
-			if err := installAndClear(c.serial, ctx.APKPath, ctx.BundleID); err != nil {
+			if err := installAndClear(c.serial, appPackage{apk: ctx.APKPath, apkSet: ctx.APKSetPath}, ctx.BundleID); err != nil {
 				dev.ErrorMessage = "install: " + err.Error()
 				devices[i] = dev
 				return nil

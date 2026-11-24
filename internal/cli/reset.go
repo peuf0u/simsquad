@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -26,7 +27,10 @@ func newResetCmd() *cobra.Command {
 		Long: "Terminates the installed app and wipes its data container on each ready\n" +
 			"device in the squad, without re-provisioning — a consumer gets a virgin\n" +
 			"app instance between test scenarios. iOS wipes the data container; Android\n" +
-			"runs `pm clear`. Restrict to specific devices with --device (repeatable);\n" +
+			"runs `pm clear`, and on a squad deployed from an app bundle installs the\n" +
+			"squad's own APK set (builds.android.apks_path) again, to put back the\n" +
+			"on-demand modules the clear removes; it warns and skips that when the\n" +
+			"set is gone. Restrict to specific devices with --device (repeatable);\n" +
 			"the default is every ready device. Emits the reset device ids as JSON.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runReset(cmd, name, devices)
@@ -103,7 +107,12 @@ func runReset(cmd *cobra.Command, name string, only []string) error {
 		case contract.PlatformIOS:
 			rerr = ios.ResetApp(dev.UDID, dev.BundleID)
 		case contract.PlatformAndroid:
-			rerr = android.ResetApp(dev.UDID, dev.BundleID)
+			set, skip := resetAPKSet(rec)
+			if skip != "" {
+				logger.Warn("reset: "+skip, progress.F("id", dev.UDID),
+					progress.F("apks", rec.Builds.Android.APKSetPath))
+			}
+			rerr = android.ResetApp(dev.UDID, dev.BundleID, set)
 		default:
 			rerr = fmt.Errorf("unknown platform %q", dev.Platform)
 		}
@@ -125,4 +134,23 @@ func runReset(cmd *cobra.Command, name string, only []string) error {
 		out["errors"] = failures
 	}
 	return writeJSON(cmd, out)
+}
+
+// resetAPKSet returns the APK set reset installs again on an Android device
+// after clearing it, since the clear deletes the on-demand modules' splits
+// that install-apks left in external storage. It is "" for a squad without a
+// bundle build, and "" with skip set to the reason (for a warning) when the
+// set is gone. The recorded set is the squad's own copy under the cache root
+// (android.StageAPKSet), which only the squad's next deploy replaces, so
+// whatever is there is the set this squad's devices run.
+func resetAPKSet(rec *contract.SquadRecord) (set, skip string) {
+	const consequence = "; on-demand modules won't install until the next deploy"
+	if rec.Builds.Android == nil || rec.Builds.Android.APKSetPath == "" {
+		return "", ""
+	}
+	path := rec.Builds.Android.APKSetPath
+	if _, err := os.Stat(path); err != nil {
+		return "", "the squad's APK set no longer exists" + consequence
+	}
+	return path, ""
 }

@@ -48,7 +48,7 @@ The progress lines on stderr are for the user; the JSON file is the answer.
 ## Put the current build on devices
 
 ```sh
-simsquad deploy --name "$SQUAD" --preserve-data --out .simsquad/dev/deploy.json
+simsquad deploy --name "$SQUAD" --preserve-data --window --out .simsquad/dev/deploy.json
 ```
 
 - Run it from the project root. It builds incrementally, installs on the
@@ -57,6 +57,10 @@ simsquad deploy --name "$SQUAD" --preserve-data --out .simsquad/dev/deploy.json
   exists, so a redeploy takes seconds once the build is warm.
 - `--preserve-data` keeps the user's app state across the reinstall. Leave
   it out when the user asks for a clean install.
+- `--window` shows the devices, since the dev squad is for hands-on use:
+  emulators get a window and take the Mac keyboard, and iOS opens
+  Simulator.app. Always pass it here. A running emulator without a window
+  is restarted once to get one; its app data stays.
 - Exit code: `0` every device ready, `2` some ready, `1` none ready or the
   build failed. On `1` or `2`, report the devices whose `status` is `error`
   with their message.
@@ -75,9 +79,10 @@ simsquad devices --name "$SQUAD" --out .simsquad/dev/devices.json
 ```
 
 Each row has `platform`, `id` (simulator UDID or emulator serial), `name`,
-`model`, `os_version`, `status` and the squad `context`. Add `--ready` for usable
-devices only, `--platform ios` or `--platform android` for one platform. For
-every squad on this machine, drop `--name`:
+`model`, `os_version`, `status` and the squad `context`. A secret, such as a
+password, shows as `<secret>`; leave it so and don't fetch it with `--reveal`.
+Add `--ready` for usable devices only, `--platform ios` or `--platform android`
+for one platform. For every squad on this machine, drop `--name`:
 
 ```sh
 simsquad devices --out .simsquad/dev/devices-all.json
@@ -116,6 +121,9 @@ simsquad set-context --name "$SQUAD" --clear --set user=alice --out .simsquad/de
 ```
 
 `--set KEY=VALUE` and `--unset KEY` repeat; `--clear` wipes every key first.
+For a secret, such as a test account's password, use `--set-secret KEY=VALUE`:
+it shows as `<secret>` in every output. The user's own secrets belong in
+`[secrets]` in `simsquad.local.toml`.
 
 ## Tear the devices down
 

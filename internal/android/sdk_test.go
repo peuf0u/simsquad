@@ -86,3 +86,28 @@ func TestHasSystemImageNeedsAnInstalledImage(t *testing.T) {
 		t.Error("an image with package.xml doesn't count as installed")
 	}
 }
+
+func TestAVDHomeHonoursAndroidAVDHome(t *testing.T) {
+	want := t.TempDir()
+	t.Setenv("ANDROID_AVD_HOME", want)
+	got, err := AVDHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("AVDHome() = %s, want %s", got, want)
+	}
+}
+
+func TestAVDHomeDefaultsToDotAndroidAVD(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ANDROID_AVD_HOME", "")
+	got, err := AVDHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(home, ".android", "avd"); got != want {
+		t.Errorf("AVDHome() = %s, want %s", got, want)
+	}
+}

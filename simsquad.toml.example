@@ -21,9 +21,11 @@
 #   ios_repo     = "~/code/myapp-ios"
 #   android_repo = "~/code/myapp-android"
 
-# xcodebuild scheme (default "App") and Gradle assemble task
-# (default ":app:assembleDebug"). Override per-invocation with
-# --ios-scheme / --gradle-task.
+# xcodebuild scheme (default "App") and Gradle task (default
+# ":app:assembleDebug"). Override per-invocation with
+# --ios-scheme / --gradle-task. A bundle* task (":app:bundleDevDebug")
+# installs dynamic feature modules too and needs bundletool
+# (brew install bundletool); see the README.
 ios_scheme          = "MyApp"
 android_gradle_task = ":app:assembleDevDebug"
 
@@ -39,11 +41,25 @@ android_gradle_task = ":app:assembleDevDebug"
 # to mutate a live squad's context after deploy. Before 0.5.0 this table was
 # [env]; that name still loads, with a deprecation warning.
 #
-# Put real secrets in simsquad.local.toml, not here.
+# Put real secrets in [secrets] in simsquad.local.toml, not here. A key whose
+# name contains password, secret or token is masked as a secret even here.
 [context]
 api = "staging"
 # user         = "alice"      # better in simsquad.local.toml
 # feature_flag = "new_ui"
+
+# ---------------------------------------------------------------------------
+# [secrets] — secret test context: test-account passwords, API tokens.
+# ---------------------------------------------------------------------------
+# Belongs in simsquad.local.toml (deploy warns when this committed file has
+# it; `simsquad equip` saves it there). Keys join the squad context as
+# secrets: kept in the squad record, printed as "<secret>" by every command
+# and in test reports. `simsquad devices --name X --reveal` prints the real
+# values. Any `deploy --secret KEY=VALUE` replaces this table and leaves
+# [context] alone; a key in both [context] and [secrets] is an error.
+#
+# [secrets]
+# password = "hunter2"
 
 # ---------------------------------------------------------------------------
 # [agent] — agent testing (`simsquad run …`, the generated skills).
@@ -52,7 +68,11 @@ api = "staging"
 # the file.
 [agent]
 # Model id for workers, passed to the worker command as given (never
-# validated). Empty = the agent tool's default.
+# validated). `run new --model` overrides it. Unset = the default for
+# `run new --worker`: "sonnet" for claude (the default worker),
+# "gpt-6.1-sol" for codex. The one value applies to claude and codex
+# workers alike: set it only when it suits every CLI the team uses, or pass
+# `run new --model` per run instead.
 # worker_model = "sonnet"
 # Squad for test runs (default "qa-<repo>") and for everyday agent use
 # (default "dev-<repo>"). Set them when two repos share a folder name.
@@ -107,3 +127,30 @@ target = "emulator"
 # image  = "physical"
 # count  = 1
 # target = "physical"
+
+# ---------------------------------------------------------------------------
+# [device_sets.<name>] — named device matrices beside the default one.
+# ---------------------------------------------------------------------------
+# Each set holds [[device_sets.<name>.ios.sims]] / [[device_sets.<name>.android.sims]]
+# rows shaped exactly like the rows above. A set is only a device matrix: the
+# repos, scheme and Gradle task stay in [project].
+#
+#   simsquad deploy --name=foo --device-set tablet    # this set, both platforms
+#   simsquad deploy --name=foo                        # the set foo recorded
+#
+# --device-set replaces the default matrix for both platforms (like spec
+# flags, with which it can't be combined); --platform filters it. The squad
+# records the set's name, so a later deploy without matrix flags re-reads the
+# set from this file. A set of the same name in simsquad.local.toml replaces
+# this one wholesale. `simsquad equip` edits sets under "Device sets…", and
+# `equip --add-ios-spec '…' --device-set tablet` appends to one.
+#
+# [[device_sets.tablet.ios.sims]]
+# device  = "iPad Pro 13-inch (M5)"
+# runtime = "iOS 26.4"
+# count   = 1
+#
+# [[device_sets.tablet.android.sims]]
+# device = "pixel_tablet"
+# image  = "system-images;android-34;google_apis;arm64-v8a"
+# count  = 1

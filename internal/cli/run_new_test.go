@@ -298,6 +298,22 @@ func TestRunNewRefusesSecondRunUntilReported(t *testing.T) {
 	}
 }
 
+func TestRunNewAllowsUnfinishedRunOnOtherPlatform(t *testing.T) {
+	repo := newEquippedRepo(t, "app", equipBoth)
+	writeTestFile(t, filepath.Join(repo, "ios.feature"), "@ios\nFeature: I\n  Scenario: one\n    Given something\n")
+	writeTestFile(t, filepath.Join(repo, "android.feature"), "@android\nFeature: A\n  Scenario: one\n    Given something\n")
+
+	first := mustRunNew(t, "ios.feature")
+	second := mustRunNew(t, "android.feature")
+	if second.SquadName != first.SquadName {
+		t.Fatalf("squads = %q, %q, want the same squad", first.SquadName, second.SquadName)
+	}
+	_, err := runRunNew(t, "ios.feature")
+	if err == nil || !strings.Contains(err.Error(), first.RunID+" on ios ") {
+		t.Fatalf("err = %v, want refusal naming %s on ios", err, first.RunID)
+	}
+}
+
 func TestRunNewFreshUsesUniqueSquadAndSkipsConcurrencyCheck(t *testing.T) {
 	repo := newEquippedRepo(t, "app", equipBoth)
 	writeTestFile(t, filepath.Join(repo, "x.feature"), "Feature: X\n  Scenario: one\n    Given something\n")
@@ -332,10 +348,88 @@ test_squad = "Team QA"
 		t.Fatalf("squad = %q, want team-qa", got.SquadName)
 	}
 	if got.WorkerModel != "some-model-that-does-not-exist" {
-		t.Fatalf("worker_model = %q", got.WorkerModel)
+		t.Fatalf("worker_model = %q, want the TOML value over the default", got.WorkerModel)
 	}
 	if readRunRecord(t, got.RunDir).WorkerModel != got.WorkerModel {
 		t.Fatal("run.json worker_model mismatch")
+	}
+
+	// The TOML value wins over the codex default too, and --model wins over
+	// the TOML value.
+	if got := mustRunNew(t, "x.feature", "--fresh", "--worker", "codex"); got.WorkerModel != "some-model-that-does-not-exist" {
+		t.Fatalf("--worker codex worker_model = %q, want the TOML value", got.WorkerModel)
+	}
+	got = mustRunNew(t, "x.feature", "--fresh", "--model", "opus")
+	if got.WorkerModel != "opus" {
+		t.Fatalf("--model worker_model = %q, want opus", got.WorkerModel)
+	}
+	if rec := readRunRecord(t, got.RunDir); rec.WorkerModel != "opus" {
+		t.Fatalf("run.json worker_model = %q, want opus", rec.WorkerModel)
+	}
+}
+
+// TestRunNewWorkerModelDefaults: with no [agent].worker_model the run still
+// names a model, the built-in default for the worker CLI, so workers never
+// fall back to whatever their host CLI defaults to on this machine.
+func TestRunNewWorkerModelDefaults(t *testing.T) {
+	cases := []struct {
+		args       []string
+		wantWorker string
+		wantModel  string
+	}{
+		{nil, "claude", "sonnet"},
+		{[]string{"--worker", "claude"}, "claude", "sonnet"},
+		{[]string{"--worker", "codex"}, "codex", "gpt-6.1-sol"},
+		{[]string{"--worker", "codex", "--model", "gpt-6.1"}, "codex", "gpt-6.1"},
+	}
+	for _, tc := range cases {
+		t.Run(strings.Join(append([]string{"args"}, tc.args...), " "), func(t *testing.T) {
+			repo := newEquippedRepo(t, "app", equipBoth)
+			writeTestFile(t, filepath.Join(repo, "x.feature"), "Feature: X\n  Scenario: one\n    Given something\n")
+
+			got := mustRunNew(t, append([]string{"x.feature"}, tc.args...)...)
+
+			if got.Worker != tc.wantWorker || got.WorkerModel != tc.wantModel {
+				t.Errorf("stdout worker/worker_model = %q/%q, want %q/%q", got.Worker, got.WorkerModel, tc.wantWorker, tc.wantModel)
+			}
+			if rec := readRunRecord(t, got.RunDir); rec.Worker != tc.wantWorker || rec.WorkerModel != tc.wantModel {
+				t.Errorf("run.json worker/worker_model = %q/%q, want %q/%q", rec.Worker, rec.WorkerModel, tc.wantWorker, tc.wantModel)
+			}
+		})
+	}
+}
+
+// TestRunNewLocalWorkerModelWinsOverShared: simsquad.local.toml overrides
+// simsquad.toml for worker_model, and both override the built-in default.
+func TestRunNewLocalWorkerModelWinsOverShared(t *testing.T) {
+	repo := newEquippedRepo(t, "app", equipBoth+"\n[agent]\nworker_model = \"shared-model\"\n")
+	writeTestFile(t, filepath.Join(repo, "simsquad.local.toml"), "[agent]\nworker_model = \"local-model\"\n")
+	writeTestFile(t, filepath.Join(repo, "x.feature"), "Feature: X\n  Scenario: one\n    Given something\n")
+
+	if got := mustRunNew(t, "x.feature"); got.WorkerModel != "local-model" {
+		t.Fatalf("worker_model = %q, want local-model", got.WorkerModel)
+	}
+}
+
+func TestRunNewRejectsUnknownWorker(t *testing.T) {
+	repo := newEquippedRepo(t, "app", equipBoth)
+	writeTestFile(t, filepath.Join(repo, "x.feature"), "Feature: X\n  Scenario: one\n    Given something\n")
+
+	_, err := runRunNew(t, "x.feature", "--worker", "gemini")
+	if err == nil {
+		t.Fatal("want an error for --worker gemini")
+	}
+	var ee *ExitError
+	if errors.As(err, &ee) {
+		t.Fatal("a bad --worker is a plain error (exit 1), not an ExitError")
+	}
+	for _, want := range []string{"gemini", "claude", "codex"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".simsquad")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a refused run must not create .simsquad/ (stat err = %v)", err)
 	}
 }
 
@@ -390,4 +484,84 @@ func TestRunNewRequiresExactlyOneArg(t *testing.T) {
 	if errors.As(err, &ee) {
 		t.Fatal("usage errors are plain errors, not ExitError")
 	}
+}
+
+// runNewRaw runs `simsquad run new <args>` and returns its raw stdout.
+// TestRunNewResolvesSymlinksInRunPaths (issue #35): a shell in a repo reached
+// through a symlink keeps the logical path in $PWD, and os.Getwd returns it.
+// Claude Code's allow rules must match the path a file resolves to as well,
+// so a worker's Edit rule built from a logical run_dir is refused. run_dir
+// and app_notes are therefore physical paths.
+func TestRunNewResolvesSymlinksInRunPaths(t *testing.T) {
+	repo := newEquippedRepo(t, "MyApp", equipIOSOnly)
+	writeTestFile(t, filepath.Join(repo, "qa", "README.md"), "# App notes\n")
+	writeTestFile(t, filepath.Join(repo, "login.feature"), loginFeature)
+	link := filepath.Join(t.TempDir(), "MyApp")
+	if err := os.Symlink(repo, link); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(link)
+	t.Setenv("PWD", link) // as a shell that cd'd through the link leaves it
+
+	got := mustRunNew(t, "login.feature")
+
+	wantDir := filepath.Join(repo, ".simsquad", "runs", got.RunID)
+	if got.RunDir != wantDir {
+		t.Errorf("run_dir = %q, want the resolved %q", got.RunDir, wantDir)
+	}
+	if want := filepath.Join(repo, "qa", "README.md"); got.AppNotes != want {
+		t.Errorf("app_notes = %q, want the resolved %q", got.AppNotes, want)
+	}
+}
+
+func runNewRaw(t *testing.T, args ...string) string {
+	t.Helper()
+	root := NewRootCmd()
+	out := &bytes.Buffer{}
+	root.SetOut(out)
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs(append([]string{"run", "new"}, args...))
+	if err := root.Execute(); err != nil {
+		t.Fatalf("run new %v: %v", args, err)
+	}
+	return out.String()
+}
+
+// TestRunNewAppNotes: the app notes path is handed to the workers through
+// run.json (and echoed on stdout) so they never guess which repo holds
+// qa/README.md; it is the config dir's, run from anywhere below it.
+func TestRunNewAppNotes(t *testing.T) {
+	t.Run("present", func(t *testing.T) {
+		repo := newEquippedRepo(t, "MyApp", equipIOSOnly)
+		writeTestFile(t, filepath.Join(repo, "qa", "README.md"), "# App notes\n")
+		writeTestFile(t, filepath.Join(repo, "qa", "features", "login.feature"), loginFeature)
+		t.Chdir(filepath.Join(repo, "qa", "features"))
+
+		got := mustRunNew(t, "login.feature")
+
+		want := filepath.Join(repo, "qa", "README.md")
+		if got.AppNotes != want {
+			t.Errorf("stdout app_notes = %q, want %q", got.AppNotes, want)
+		}
+		if rec := readRunRecord(t, got.RunDir); rec.AppNotes != want {
+			t.Errorf("run.json app_notes = %q, want %q", rec.AppNotes, want)
+		}
+	})
+	t.Run("absent", func(t *testing.T) {
+		repo := newEquippedRepo(t, "MyApp", equipIOSOnly)
+		writeTestFile(t, filepath.Join(repo, "login.feature"), loginFeature)
+
+		raw := runNewRaw(t, "login.feature")
+
+		if strings.Contains(raw, "app_notes") {
+			t.Errorf("stdout has app_notes without qa/README.md:\n%s", raw)
+		}
+		var got contract.RunNewOutput
+		if err := json.Unmarshal([]byte(raw), &got); err != nil {
+			t.Fatal(err)
+		}
+		if rec := readFile(t, filepath.Join(got.RunDir, "run.json")); strings.Contains(rec, "app_notes") {
+			t.Errorf("run.json has app_notes without qa/README.md:\n%s", rec)
+		}
+	})
 }

@@ -28,6 +28,8 @@
   ],
   "context": {
     "PERSONA": "alice | admin",
-    "API_STAGE": "staging"
+    "API_STAGE": "staging",
+    "PASSWORD": "<secret>",
+    "api_token": "legacy-t0k"
   }
 }

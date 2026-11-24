@@ -59,6 +59,20 @@ func SDKRoot() (string, error) {
 	return candidate, nil
 }
 
+// AVDHome returns the folder holding the AVDs (`<name>.ini` plus
+// `<name>.avd/`): ANDROID_AVD_HOME when set, otherwise ~/.android/avd. The
+// folder may not exist yet.
+func AVDHome() (string, error) {
+	if dir := os.Getenv("ANDROID_AVD_HOME"); dir != "" {
+		return dir, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".android", "avd"), nil
+}
+
 // whichOrUnder returns the absolute path to binary by first consulting $PATH
 // and then walking the given roots. roots are tolerated when missing.
 func whichOrUnder(binary string, roots ...string) string {
@@ -242,6 +256,45 @@ func ADB() (string, error) {
 	}
 	return "", sdkErr("adb not found under %s/platform-tools", root)
 }
+
+// Bundletool locates bundletool on $PATH. It isn't part of the SDK, and only
+// a bundle* Gradle task needs it: it turns the app bundle into the APK set
+// that holds the base and every feature module, and installs that set.
+func Bundletool() (string, error) {
+	if p, err := exec.LookPath("bundletool"); err == nil {
+		return p, nil
+	}
+	return "", sdkErr("bundletool not found on $PATH. A bundle* Gradle task builds an app bundle, " +
+		"which simsquad installs with bundletool. Install it with: brew install bundletool")
+}
+
+// DebugKeystore returns the keystore bundletool signs an APK set with when
+// it gets no --ks: $ANDROID_SDK_HOME/.android/debug.keystore, then
+// ~/.android/debug.keystore, the order of bundletool's DebugKeystoreUtils.
+// "" when neither exists, in which case bundletool writes unsigned APKs that
+// no device installs.
+func DebugKeystore() string {
+	var dirs []string
+	if d := os.Getenv("ANDROID_SDK_HOME"); d != "" {
+		dirs = append(dirs, d)
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		dirs = append(dirs, home)
+	}
+	for _, d := range dirs {
+		if p := filepath.Join(d, ".android", "debug.keystore"); isFile(p) {
+			return p
+		}
+	}
+	return ""
+}
+
+// DebugKeystoreHint says how to get the keystore DebugKeystore looks for:
+// the alias and passwords are the ones bundletool and Gradle assume.
+const DebugKeystoreHint = "bundletool signs the APK set with ~/.android/debug.keystore, and there is none. " +
+	"Gradle creates it on the first debug build of a project that keeps the default debug signing; or create it with:\n" +
+	"  keytool -genkeypair -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey " +
+	"-keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname \"CN=Android Debug,O=Android,C=US\""
 
 // HasSystemImage checks for an installed image matching the avdmanager-style
 // id ("system-images;android-34;google_apis;arm64-v8a"). Returns false on any

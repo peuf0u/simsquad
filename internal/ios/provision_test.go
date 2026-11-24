@@ -1,9 +1,14 @@
 package ios
 
 import (
+	"errors"
+	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/peuf0u/simsquad/internal/contract"
 )
 
 // TestWaitForInstalld_Ready exercises the success path: the probe flips to
@@ -98,5 +103,36 @@ func TestInstalldListed(t *testing.T) {
 		if got := installdListed(tc.out); got != tc.want {
 			t.Errorf("%s: installdListed = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// With --window, each ready device this deploy touched is shown in
+// Simulator.app; a failed open is only a warning (issue #33).
+func TestShowInSimulator(t *testing.T) {
+	t.Parallel()
+
+	devices := []contract.Device{
+		{Name: "a", UDID: "UDID-A", Status: contract.StatusReady},
+		{Name: "b", UDID: "UDID-B", Status: contract.StatusError},
+		{Name: "c", UDID: "", Status: contract.StatusReady},
+		{Name: "d", UDID: "UDID-D", Status: contract.StatusReady},
+	}
+	var calls []string
+	failed := showInSimulator(devices, func(name string, args []string) error {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		if args[len(args)-1] == "UDID-D" {
+			return errors.New("open failed")
+		}
+		return nil
+	})
+	want := []string{
+		"open -a Simulator --args -CurrentDeviceUDID UDID-A",
+		"open -a Simulator --args -CurrentDeviceUDID UDID-D",
+	}
+	if !slices.Equal(calls, want) {
+		t.Fatalf("calls = %q, want %q", calls, want)
+	}
+	if len(failed) != 1 || failed[0].udid != "UDID-D" {
+		t.Fatalf("failed = %+v, want UDID-D only", failed)
 	}
 }

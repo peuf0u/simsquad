@@ -189,8 +189,10 @@ func RenderReport(rep *contract.Report) string {
 	return b.String()
 }
 
-// renderContext shows the squad context keys and values exactly as deployed,
-// so the reader sees which account and stage were tested.
+// renderContext shows the squad context keys and values as deployed, so the
+// reader sees which account and stage were tested. A secret shows as
+// `<secret>` in code style: bare, a Markdown renderer would take it for an
+// HTML tag and drop it.
 func renderContext(line func(string, ...any), ctx map[string]string) {
 	line("")
 	line("## Context")
@@ -207,7 +209,11 @@ func renderContext(line func(string, ...any), ctx map[string]string) {
 	line("| Key | Value |")
 	line("|---|---|")
 	for _, k := range keys {
-		line("| `%s` | %s |", k, cell(ctx[k]))
+		v := cell(ctx[k])
+		if ctx[k] == contract.SecretMask {
+			v = "`" + contract.SecretMask + "`"
+		}
+		line("| `%s` | %s |", k, v)
 	}
 }
 

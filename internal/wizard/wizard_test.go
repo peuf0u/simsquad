@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/peuf0u/simsquad/internal/config"
 	"github.com/peuf0u/simsquad/internal/contract"
 	"github.com/peuf0u/simsquad/internal/discover"
 )
@@ -284,4 +285,62 @@ func readTestFile(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+// equip --show masks a context key whose name marks it a secret.
+func TestRunEquipWizardShowMasksSecretNamedContext(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "simsquad.toml"), `[project]
+ios_scheme = "App"
+android_gradle_task = ":app:assembleDebug"
+
+[context]
+user = "alice"
+Password = "hunter2"
+`)
+	res, err := RunEquipWizard(Options{CWD: dir, Show: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"user": "alice", "Password": contract.SecretMask}
+	if !reflect.DeepEqual(res.Summary.Context, want) {
+		t.Fatalf("Summary.Context = %+v, want %+v", res.Summary.Context, want)
+	}
+}
+
+// Every key and string equip writes is TOML: a dotted or spaced context key
+// stays one key, and control characters in values and project paths survive
+// the next load (strconv.Quote's \a and \v aren't TOML escapes).
+func TestEquipSaveRoundTripsKeysAndValuesAsTOML(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	state := wizardState{
+		iosRepo:     "ios\vrepo",
+		androidRepo: "android \"repo\"",
+		iosScheme:   "My\aApp",
+		gradleTask:  ":app:assemble\x7fDebug",
+		testContext: map[string]string{"api.url": "https://staging\a", "test user": "al\vice"},
+	}
+	if _, err := writeState(dir, state, true); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("load after save: %v", err)
+	}
+	for key, want := range map[string]string{
+		"project.ios_repo":            state.iosRepo,
+		"project.android_repo":        state.androidRepo,
+		"project.ios_scheme":          state.iosScheme,
+		"project.android_gradle_task": state.gradleTask,
+	} {
+		if got := cfg.GetString(key); got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+	if ctx, _ := cfg.Context(); !reflect.DeepEqual(ctx, state.testContext) {
+		t.Errorf("Context() = %q, want %q", ctx, state.testContext)
+	}
 }
